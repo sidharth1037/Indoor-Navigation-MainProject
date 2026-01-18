@@ -5,13 +5,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -19,6 +15,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.drawscope.translate
 import kotlin.math.abs
 import `in`.project.enroute.data.model.FloorPlanData
+import `in`.project.enroute.feature.floorplan.rendering.renderers.drawBoundary
 import `in`.project.enroute.feature.floorplan.rendering.renderers.drawEntrances
 import `in`.project.enroute.feature.floorplan.rendering.renderers.drawRoomLabels
 import `in`.project.enroute.feature.floorplan.rendering.renderers.drawStairwells
@@ -35,7 +32,8 @@ data class FloorPlanDisplayConfig(
     val showRoomLabels: Boolean = true,
     val wallColor: Color = Color.Black,
     val stairwellColor: Color = Color(0xFFADD8E6),
-    val backgroundColor: Color = Color.White
+    val backgroundColor: Color = Color.White,
+    val boundaryColor: Color = Color(0xFFF5F5F5)
 )
 
 /**
@@ -55,25 +53,20 @@ data class CanvasState(
  * @param floorPlanData The floor plan data to render
  * @param canvasState Current canvas transformation state
  * @param onCanvasStateChange Callback when canvas state changes (gestures)
- * @param displayConfig Configuration for what to show and how
  * @param modifier Modifier for the canvas
+ * @param displayConfig Configuration for what to show and how
  */
 @Composable
 fun FloorPlanCanvas(
     floorPlanData: FloorPlanData,
     canvasState: CanvasState,
     onCanvasStateChange: (CanvasState) -> Unit,
-    displayConfig: FloorPlanDisplayConfig = FloorPlanDisplayConfig(),
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    displayConfig: FloorPlanDisplayConfig = FloorPlanDisplayConfig()
 ) {
     // Get scale and rotation from metadata
     val floorPlanScale = floorPlanData.metadata.scale
     val floorPlanRotation = floorPlanData.metadata.rotation
-
-    // Calculate content bounds for background sizing
-    val contentBounds = remember(floorPlanData.walls, floorPlanScale, floorPlanRotation) {
-        calculateContentBounds(floorPlanData, floorPlanScale, floorPlanRotation)
-    }
 
     // Use rememberUpdatedState to capture latest state without restarting gesture handler
     val currentCanvasState = rememberUpdatedState(canvasState)
@@ -147,12 +140,12 @@ fun FloorPlanCanvas(
         val centerY = size.height / 2
 
         translate(left = centerX, top = centerY) {
-            // Draw background for content area
-            val padding = 500f
-            drawRect(
-                color = displayConfig.backgroundColor,
-                topLeft = Offset(contentBounds.left - padding, contentBounds.top - padding),
-                size = Size(contentBounds.width + padding * 2, contentBounds.height + padding * 2)
+            // Draw boundary polygon instead of background rectangle
+            drawBoundary(
+                boundaryPoints = floorPlanData.boundaryPoints,
+                scale = floorPlanScale,
+                rotationDegrees = floorPlanRotation,
+                color = displayConfig.boundaryColor
             )
 
             // Draw stairwells first (below walls)
@@ -197,50 +190,5 @@ fun FloorPlanCanvas(
                 )
             }
         }
-    }
-}
-
-/**
- * Calculates the bounding box for all floor plan content.
- */
-private fun calculateContentBounds(
-    floorPlanData: FloorPlanData,
-    scale: Float,
-    rotationDegrees: Float
-): Rect {
-    if (floorPlanData.walls.isEmpty()) {
-        return Rect(-500f, -500f, 500f, 500f)
-    }
-
-    var minX = Float.POSITIVE_INFINITY
-    var minY = Float.POSITIVE_INFINITY
-    var maxX = Float.NEGATIVE_INFINITY
-    var maxY = Float.NEGATIVE_INFINITY
-
-    val angleRad = Math.toRadians(rotationDegrees.toDouble()).toFloat()
-    val cosAngle = kotlin.math.cos(angleRad)
-    val sinAngle = kotlin.math.sin(angleRad)
-
-    for (wall in floorPlanData.walls) {
-        val x1 = wall.x1 * scale
-        val y1 = wall.y1 * scale
-        val x2 = wall.x2 * scale
-        val y2 = wall.y2 * scale
-
-        val rotatedX1 = x1 * cosAngle - y1 * sinAngle
-        val rotatedY1 = x1 * sinAngle + y1 * cosAngle
-        val rotatedX2 = x2 * cosAngle - y2 * sinAngle
-        val rotatedY2 = x2 * sinAngle + y2 * cosAngle
-
-        minX = minOf(minX, rotatedX1, rotatedX2)
-        minY = minOf(minY, rotatedY1, rotatedY2)
-        maxX = maxOf(maxX, rotatedX1, rotatedX2)
-        maxY = maxOf(maxY, rotatedY1, rotatedY2)
-    }
-
-    return if (minX == Float.POSITIVE_INFINITY) {
-        Rect(-500f, -500f, 500f, 500f)
-    } else {
-        Rect(minX, minY, maxX, maxY)
     }
 }

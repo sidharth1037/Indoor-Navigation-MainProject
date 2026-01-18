@@ -11,6 +11,7 @@ import `in`.project.enroute.data.model.Room
 import `in`.project.enroute.data.model.StairLine
 import `in`.project.enroute.data.model.Stairwell
 import `in`.project.enroute.data.model.Wall
+import `in`.project.enroute.data.model.BoundaryPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.InputStreamReader
@@ -31,6 +32,7 @@ class LocalFloorPlanRepository(
         val stairwells = loadStairwells("${floorId}_stairs.json")
         val entrances = loadEntrances("${floorId}_entrances.json")
         val rooms = loadRooms("${floorId}_rooms.json")
+        val boundaryPoints = loadBoundaryPoints("${floorId}_boundary.json")
 
         FloorPlanData(
             floorId = floorId,
@@ -38,7 +40,8 @@ class LocalFloorPlanRepository(
             walls = walls,
             stairwells = stairwells,
             entrances = entrances,
-            rooms = rooms
+            rooms = rooms,
+            boundaryPoints = boundaryPoints
         )
     }
 
@@ -190,5 +193,24 @@ class LocalFloorPlanRepository(
         val inputStream = context.assets.open(fileName)
         val reader = InputStreamReader(inputStream)
         return gson.fromJson(reader, FloorPlanMetadata::class.java)
+    }
+
+    /**
+     * Loads boundary points from JSON file.
+     */
+    private fun loadBoundaryPoints(fileName: String): List<BoundaryPoint> {
+        return try {
+            val inputStream = context.assets.open(fileName)
+            val reader = InputStreamReader(inputStream)
+
+            val jsonObject = gson.fromJson(reader, JsonObject::class.java)
+            val boundaryArray = jsonObject.getAsJsonArray("boundary_points")
+
+            val boundaryListType = object : TypeToken<List<BoundaryPoint>>() {}.type
+            gson.fromJson(boundaryArray, boundaryListType)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
     }
 }
