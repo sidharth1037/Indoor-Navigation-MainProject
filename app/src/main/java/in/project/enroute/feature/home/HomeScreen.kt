@@ -25,7 +25,7 @@ fun HomeScreen(
 
     // Load all floors on first composition
     LaunchedEffect(Unit) {
-        floorPlanViewModel.loadAllFloors("building_1", listOf("floor_1", "floor_1.5"))
+        floorPlanViewModel.loadAllFloors("building_1", listOf("floor_1", "floor_1.5","floor_2","floor_2.5"))
     }
 
     Box(

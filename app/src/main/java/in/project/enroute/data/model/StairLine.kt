@@ -15,5 +15,5 @@ data class StairLine(
     @SerializedName("stair_polygon_id")
     val stairPolygonId: Int,
     @SerializedName("floors_connected")
-    val floorsConnected: List<Int> = emptyList()
+    val floorsConnected: List<Float> = emptyList()
 )

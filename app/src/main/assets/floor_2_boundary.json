@@ -1,0 +1,124 @@
+{
+  "floor": "2",
+  "total_polygons": 2,
+  "polygons": [
+    {
+      "name": "Polygon 1",
+      "points": [
+        {
+          "id": 0,
+          "x": 701,
+          "y": 4179,
+          "source_point_id": "21"
+        },
+        {
+          "id": 1,
+          "x": 900,
+          "y": 4179,
+          "source_point_id": "25"
+        },
+        {
+          "id": 2,
+          "x": 900,
+          "y": 4021,
+          "source_point_id": "24"
+        },
+        {
+          "id": 3,
+          "x": 1512,
+          "y": 4021,
+          "source_point_id": "37"
+        },
+        {
+          "id": 4,
+          "x": 1512,
+          "y": 2062,
+          "source_point_id": "36"
+        },
+        {
+          "id": 5,
+          "x": 1229,
+          "y": 1776,
+          "source_point_id": "85"
+        },
+        {
+          "id": 6,
+          "x": 816,
+          "y": 1776,
+          "source_point_id": "23"
+        },
+        {
+          "id": 7,
+          "x": 816,
+          "y": 1504,
+          "source_point_id": "22"
+        },
+        {
+          "id": 8,
+          "x": 95,
+          "y": 1504,
+          "source_point_id": "0"
+        },
+        {
+          "id": 9,
+          "x": 95,
+          "y": 4021,
+          "source_point_id": "1"
+        },
+        {
+          "id": 10,
+          "x": 701,
+          "y": 4021,
+          "source_point_id": "20"
+        }
+      ]
+    },
+    {
+      "name": "Polygon 2",
+      "points": [
+        {
+          "id": 0,
+          "x": 1786,
+          "y": 1222,
+          "source_point_id": "39"
+        },
+        {
+          "id": 1,
+          "x": 2075,
+          "y": 1504,
+          "source_point_id": "83"
+        },
+        {
+          "id": 2,
+          "x": 4038,
+          "y": 1504,
+          "source_point_id": "59"
+        },
+        {
+          "id": 3,
+          "x": 4038,
+          "y": 70,
+          "source_point_id": "58"
+        },
+        {
+          "id": 4,
+          "x": 1512,
+          "y": 70,
+          "source_point_id": "34"
+        },
+        {
+          "id": 5,
+          "x": 1512,
+          "y": 806,
+          "source_point_id": "73"
+        },
+        {
+          "id": 6,
+          "x": 1786,
+          "y": 806,
+          "source_point_id": "74"
+        }
+      ]
+    }
+  ]
+}

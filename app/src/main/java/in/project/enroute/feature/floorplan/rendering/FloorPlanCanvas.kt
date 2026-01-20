@@ -8,15 +8,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.graphics.ClipOp
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
@@ -146,14 +142,11 @@ fun FloorPlanCanvas(
 
         translate(left = centerX, top = centerY) {
             // Render floors from bottom to top (stacked)
+            // Each floor's boundary naturally occludes floors below it
             for ((index, floorData) in floorsToRender.withIndex()) {
                 val isCurrentFloor = index == floorsToRender.size - 1
                 val floorPlanScale = floorData.metadata.scale
                 val floorPlanRotation = floorData.metadata.rotation
-
-                // Get clip path from all floors above this one
-                val floorsAbove = floorsToRender.subList(index + 1, floorsToRender.size)
-                val clipPathFromAbove = buildClipPathFromFloors(floorsAbove)
 
                 // Draw boundary polygons to mask floors below
                 drawBoundary(
@@ -163,100 +156,199 @@ fun FloorPlanCanvas(
                     color = displayConfig.boundaryColor
                 )
 
-                // Apply clipping to hide content covered by floors above
-                val drawFloorContent: () -> Unit = {
-                    // Draw stairwells
-                    if (displayConfig.showStairwells) {
-                        drawStairwells(
-                            stairwells = floorData.stairwells,
-                            scale = floorPlanScale,
-                            rotationDegrees = floorPlanRotation,
-                            color = displayConfig.stairwellColor
-                        )
-                    }
-
-                    // Draw walls
-                    if (displayConfig.showWalls) {
-                        drawWalls(
-                            walls = floorData.walls,
-                            scale = floorPlanScale,
-                            rotationDegrees = floorPlanRotation,
-                            color = displayConfig.wallColor
-                        )
-                    }
-
-                    // Draw entrances for current floor only
-                    if (isCurrentFloor && displayConfig.showEntrances) {
-                        drawEntrances(
-                            entrances = floorData.entrances,
-                            scale = floorPlanScale,
-                            rotationDegrees = floorPlanRotation,
-                            canvasScale = canvasState.scale,
-                            canvasRotation = canvasState.rotation
-                        )
-                    }
-
-                    // Draw room labels for all floors
-                    if (displayConfig.showRoomLabels) {
-                        drawRoomLabels(
-                            rooms = floorData.rooms,
-                            scale = floorPlanScale,
-                            rotationDegrees = floorPlanRotation,
-                            canvasScale = canvasState.scale,
-                            canvasRotation = canvasState.rotation
-                        )
-                    }
+                // Draw stairwells with auto-generated light color based on floor number
+                if (displayConfig.showStairwells) {
+                    val stairwellColor = getFloorStairwellColor(floorData.floorId)
+                    drawStairwells(
+                        stairwells = floorData.stairwells,
+                        scale = floorPlanScale,
+                        rotationDegrees = floorPlanRotation,
+                        color = stairwellColor
+                    )
                 }
 
-                // If there are floors above, clip out their boundary areas
-                if (clipPathFromAbove != null) {
-                    clipPath(clipPathFromAbove, clipOp = ClipOp.Difference) {
-                        drawFloorContent()
-                    }
-                } else {
-                    drawFloorContent()
+                // Draw walls
+                if (displayConfig.showWalls) {
+                    drawWalls(
+                        walls = floorData.walls,
+                        scale = floorPlanScale,
+                        rotationDegrees = floorPlanRotation,
+                        color = displayConfig.wallColor
+                    )
+                }
+
+                // Draw entrances for current floor only
+                if (isCurrentFloor && displayConfig.showEntrances) {
+                    drawEntrances(
+                        entrances = floorData.entrances,
+                        scale = floorPlanScale,
+                        rotationDegrees = floorPlanRotation,
+                        canvasScale = canvasState.scale,
+                        canvasRotation = canvasState.rotation
+                    )
+                }
+
+                // Draw room labels, but filter out rooms covered by floors above
+                if (displayConfig.showRoomLabels) {
+                    val floorsAbove = floorsToRender.subList(index + 1, floorsToRender.size)
+                    val visibleRooms = filterVisibleRooms(
+                        rooms = floorData.rooms,
+                        roomFloorScale = floorPlanScale,
+                        roomFloorRotation = floorPlanRotation,
+                        floorsAbove = floorsAbove
+                    )
+                    
+                    drawRoomLabels(
+                        rooms = visibleRooms,
+                        scale = floorPlanScale,
+                        rotationDegrees = floorPlanRotation,
+                        canvasScale = canvasState.scale,
+                        canvasRotation = canvasState.rotation
+                    )
                 }
             }
         }
+    }
+}
+
+
+
+/**
+ * Generates a unique light color for each floor based on floor number.
+ * Cycles through a palette of light colors.
+ */
+private fun getFloorStairwellColor(floorId: String): Color {
+    // Extract floor number from floorId (e.g., "floor_1" -> 1, "floor_1.5" -> 1.5)
+    val floorNumber = floorId.removePrefix("floor_").toFloatOrNull() ?: 1f
+    
+    // Palette of light colors
+    val lightColors = listOf(
+        "#FFB6C1", // Light pink
+        "#B0E0E6", // Powder blue
+        "#90EE90", // Light green
+        "#FFE4B5", // Moccasin (light orange)
+        "#DDA0DD", // Plum
+        "#98D8C8", // Mint
+        "#F7DC6F", // Light yellow
+        "#BB8FCE"  // Light purple
+    )
+    
+    // Use floor number to index into palette
+    val index = (floorNumber * 10).toInt() % lightColors.size
+    return parseHexColor(lightColors[index])
+}
+
+/**
+ * Parses a hex color string (e.g., "#FFB6C1" or "#ADD8E6") to a Color object.
+ */
+private fun parseHexColor(hexColor: String): Color {
+    return try {
+        val hex = hexColor.removePrefix("#")
+        Color(hex.toLong(16) or 0xFF000000)
+    } catch (e: Exception) {
+        Color(0xFFADD8E6) // Fallback to light blue
     }
 }
 
 /**
- * Builds a combined clip path from all boundary polygons of the given floors.
+ * Filters rooms to only include those not covered by floors above.
+ * A room is considered covered if its center point is inside any boundary polygon of a floor above.
  */
-private fun buildClipPathFromFloors(floors: List<FloorPlanData>): Path? {
-    if (floors.isEmpty()) return null
+private fun filterVisibleRooms(
+    rooms: List<`in`.project.enroute.data.model.Room>,
+    roomFloorScale: Float,
+    roomFloorRotation: Float,
+    floorsAbove: List<FloorPlanData>
+): List<`in`.project.enroute.data.model.Room> {
+    if (floorsAbove.isEmpty()) {
+        return rooms
+    }
 
-    val combinedPath = Path()
-    
-    for (floorData in floors) {
-        val scale = floorData.metadata.scale
-        val rotationDegrees = floorData.metadata.rotation
+    val angleRad = Math.toRadians(roomFloorRotation.toDouble()).toFloat()
+    val cosAngle = cos(angleRad)
+    val sinAngle = sin(angleRad)
+
+    return rooms.filter { room ->
+        // Transform room center point to canvas coordinates
+        val x = room.x * roomFloorScale
+        val y = room.y * roomFloorScale
+        val rotatedX = x * cosAngle - y * sinAngle
+        val rotatedY = x * sinAngle + y * cosAngle
+
+        // Check if this point is covered by any floor above
+        !isPointCoveredByFloors(rotatedX, rotatedY, floorsAbove)
+    }
+}
+
+/**
+ * Checks if a point (in canvas coordinates) is inside any boundary polygon from the given floors.
+ */
+private fun isPointCoveredByFloors(
+    x: Float,
+    y: Float,
+    floors: List<FloorPlanData>
+): Boolean {
+    for (floor in floors) {
+        val scale = floor.metadata.scale
+        val rotationDegrees = floor.metadata.rotation
         val angleRad = Math.toRadians(rotationDegrees.toDouble()).toFloat()
         val cosAngle = cos(angleRad)
         val sinAngle = sin(angleRad)
 
-        for (polygon in floorData.boundaryPolygons) {
+        for (polygon in floor.boundaryPolygons) {
             if (polygon.points.isEmpty()) continue
-            
+
+            // Transform polygon points to canvas coordinates
             val sortedPoints = polygon.points.sortedBy { it.id }
             val transformedPoints = sortedPoints.map { point ->
-                val x = point.x * scale
-                val y = point.y * scale
-                val rotatedX = x * cosAngle - y * sinAngle
-                val rotatedY = x * sinAngle + y * cosAngle
-                Offset(rotatedX, rotatedY)
+                val px = point.x * scale
+                val py = point.y * scale
+                val rotatedX = px * cosAngle - py * sinAngle
+                val rotatedY = px * sinAngle + py * cosAngle
+                Pair(rotatedX, rotatedY)
             }
 
-            if (transformedPoints.isNotEmpty()) {
-                combinedPath.moveTo(transformedPoints[0].x, transformedPoints[0].y)
-                for (i in 1 until transformedPoints.size) {
-                    combinedPath.lineTo(transformedPoints[i].x, transformedPoints[i].y)
-                }
-                combinedPath.close()
+            // Check if point is inside this polygon using ray casting algorithm
+            if (isPointInPolygon(x, y, transformedPoints)) {
+                return true
             }
         }
     }
-
-    return if (combinedPath.isEmpty) null else combinedPath
+    return false
 }
+
+/**
+ * Ray casting algorithm to check if a point is inside a polygon.
+ * Casts a ray from the point to the right and counts intersections with polygon edges.
+ * Odd number of intersections = inside, even = outside.
+ */
+private fun isPointInPolygon(
+    x: Float,
+    y: Float,
+    polygon: List<Pair<Float, Float>>
+): Boolean {
+    if (polygon.size < 3) return false
+
+    var inside = false
+    var j = polygon.size - 1
+
+    for (i in polygon.indices) {
+        val xi = polygon[i].first
+        val yi = polygon[i].second
+        val xj = polygon[j].first
+        val yj = polygon[j].second
+
+        // Check if ray from point (x,y) to the right intersects edge (i,j)
+        val intersect = ((yi > y) != (yj > y)) &&
+                (x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+
+        if (intersect) {
+            inside = !inside
+        }
+
+        j = i
+    }
+
+    return inside
+}
+

@@ -7,5 +7,5 @@ package `in`.project.enroute.data.model
 data class Stairwell(
     val polygonId: Int,
     val points: List<Pair<Float, Float>>,
-    val floorsConnected: List<Int> = emptyList()
+    val floorsConnected: List<Float> = emptyList()
 )

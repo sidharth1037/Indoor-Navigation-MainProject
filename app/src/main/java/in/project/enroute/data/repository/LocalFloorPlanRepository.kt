@@ -52,7 +52,7 @@ class LocalFloorPlanRepository(
 
     override suspend fun getAvailableFloors(buildingId: String): List<String> = withContext(Dispatchers.IO) {
         // For now, return hardcoded list. Later can scan assets or get from backend
-        listOf("floor_1", "floor_1.5")
+        listOf("floor_1", "floor_1.5", "floor_2")
     }
 
     /**

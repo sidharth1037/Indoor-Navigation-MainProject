@@ -1,0 +1,66 @@
+[
+  {
+    "type": "stair",
+    "x1": 667,
+    "y1": 1504,
+    "x2": 667,
+    "y2": 1776,
+    "stair_polygon_id": 1
+  },
+  {
+    "type": "stair",
+    "x1": 816,
+    "y1": 1504,
+    "x2": 816,
+    "y2": 1776,
+    "stair_polygon_id": 1
+  },
+  {
+    "type": "stair",
+    "x1": 667,
+    "y1": 1504,
+    "x2": 816,
+    "y2": 1504,
+    "stair_polygon_id": 1
+  },
+  {
+    "type": "stair",
+    "x1": 667,
+    "y1": 1776,
+    "x2": 816,
+    "y2": 1776,
+    "stair_polygon_id": 1
+  },
+  {
+    "type": "stair",
+    "x1": 1512,
+    "y1": 649,
+    "x2": 1512,
+    "y2": 806,
+    "stair_polygon_id": 2
+  },
+  {
+    "type": "stair",
+    "x1": 1786,
+    "y1": 649,
+    "x2": 1786,
+    "y2": 806,
+    "stair_polygon_id": 2
+  },
+  {
+    "type": "stair",
+    "x1": 1512,
+    "y1": 649,
+    "x2": 1786,
+    "y2": 649,
+    "stair_polygon_id": 2
+  },
+  {
+    "type": "stair",
+    "x1": 1512,
+    "y1": 806,
+    "x2": 1786,
+    "y2": 806,
+    "stair_polygon_id": 2
+  }
+]

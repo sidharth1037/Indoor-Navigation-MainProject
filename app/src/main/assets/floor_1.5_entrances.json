@@ -1,0 +1,74 @@
+{
+  "entrances": [
+    {
+      "id": 1,
+      "x": 881.0,
+      "y": 1776.0,
+      "available": true,
+      "name": null,
+      "room_no": null,
+      "stairs": true
+    },
+    {
+      "id": 2,
+      "x": 881.0,
+      "y": 1504.0,
+      "available": true,
+      "name": null,
+      "room_no": null,
+      "stairs": true
+    },
+    {
+      "id": 3,
+      "x": 741.5,
+      "y": 1504.0,
+      "available": true,
+      "name": null,
+      "room_no": null,
+      "stairs": true
+    },
+    {
+      "id": 4,
+      "x": 667.0,
+      "y": 1273.5,
+      "available": true,
+      "name": "MTB Department Library",
+      "room_no": "201"
+    },
+    {
+      "id": 5,
+      "x": 1385.0,
+      "y": 649.0,
+      "available": true,
+      "name": "Department Library Electrical Engg",
+      "room_no": "214"
+    },
+    {
+      "id": 6,
+      "x": 1786.0,
+      "y": 870.5,
+      "available": true,
+      "name": null,
+      "room_no": null,
+      "stairs": true
+    },
+    {
+      "id": 7,
+      "x": 1512.0,
+      "y": 870.5,
+      "available": true,
+      "name": null,
+      "room_no": null,
+      "stairs": true
+    },
+    {
+      "id": 8,
+      "x": 1089.5,
+      "y": 1063.0,
+      "available": true,
+      "name": null,
+      "room_no": null,
+      "stairs": true
+    }
+  ]
+}

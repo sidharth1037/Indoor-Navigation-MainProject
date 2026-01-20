@@ -8,5 +8,6 @@ package `in`.project.enroute.data.model
 data class FloorPlanMetadata(
     val floorId: String,
     val scale: Float,
-    val rotation: Float
+    val rotation: Float,
+    val stairwellColor: String = "#ADD8E6" // Light blue by default
 )
