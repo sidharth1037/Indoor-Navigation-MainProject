@@ -13,6 +13,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import `in`.project.enroute.feature.floorplan.FloorPlanViewModel
@@ -51,6 +52,7 @@ fun HomeScreen(
         // Delegate to content composable
         HomeScreenContent(
             uiState = uiState,
+            maxWidth = maxWidth,
             onCanvasStateChange = { floorPlanViewModel.updateCanvasState(it) },
             onFloorChange = { floorPlanViewModel.setCurrentFloor(it) }
         )
@@ -60,6 +62,7 @@ fun HomeScreen(
 @Composable
 private fun HomeScreenContent(
     uiState: FloorPlanUiState,
+    maxWidth: Dp,
     onCanvasStateChange: (CanvasState) -> Unit,
     onFloorChange: (Float) -> Unit
 ) {
@@ -101,12 +104,14 @@ private fun HomeScreenContent(
                         isVisible = uiState.showFloorSlider,
                         modifier = Modifier
                             .align(Alignment.TopStart)
-                            .padding(end = 56.dp) // Leave space for search button
+                            .padding(end = 56.dp) // Leave space for search button when visible
                     )
                     
-                    // Search button - fixed at top end, stays in place when slider hides
+                    // Search button - fixed at top end
+                    // When slider hides, it expands to fill the full width (maxWidth - horizontal padding)
                     SearchButton(
                         isSliderVisible = uiState.showFloorSlider,
+                        containerWidth = maxWidth - 16.dp, // Accounting for 8dp horizontal padding on Box
                         modifier = Modifier.align(Alignment.TopEnd)
                     )
                 }
