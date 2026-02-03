@@ -31,6 +31,7 @@ import `in`.project.enroute.feature.floorplan.rendering.CanvasState
 import `in`.project.enroute.feature.home.components.FloorSlider
 import `in`.project.enroute.feature.home.components.SearchButton
 import `in`.project.enroute.feature.home.components.SearchScreen
+import `in`.project.enroute.feature.home.components.AimButton
 import `in`.project.enroute.feature.floorplan.rendering.FloorPlanCanvas
 
 @Composable
@@ -64,7 +65,8 @@ fun HomeScreen(
             uiState = uiState,
             maxWidth = maxWidth,
             onCanvasStateChange = { floorPlanViewModel.updateCanvasState(it) },
-            onFloorChange = { floorPlanViewModel.setCurrentFloor(it) }
+            onFloorChange = { floorPlanViewModel.setCurrentFloor(it) },
+            onCenterView = { x, y, scale -> floorPlanViewModel.centerOnCoordinate(x, y, scale) }
         )
     }
 }
@@ -74,7 +76,8 @@ private fun HomeScreenContent(
     uiState: FloorPlanUiState,
     maxWidth: Dp,
     onCanvasStateChange: (CanvasState) -> Unit,
-    onFloorChange: (Float) -> Unit
+    onFloorChange: (Float) -> Unit,
+    onCenterView: (x: Float, y: Float, scale: Float) -> Unit
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var isMorphingToSearch by remember { mutableStateOf(false) }
@@ -137,6 +140,17 @@ private fun HomeScreenContent(
                         }
                     )
                 }
+                
+                // Aim button positioned at bottom right
+                AimButton(
+                    onClick = {
+                        // Center view on hardcoded coordinate
+                        onCenterView(1338f, 1328f, 0.48f)
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 16.dp, end = 16.dp)
+                )
                 
                 // Animated transition for SearchScreen
                 AnimatedVisibility(

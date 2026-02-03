@@ -10,6 +10,9 @@ import `in`.project.enroute.data.repository.LocalFloorPlanRepository
 import `in`.project.enroute.feature.floorplan.rendering.CanvasState
 import `in`.project.enroute.feature.floorplan.rendering.FloorPlanDisplayConfig
 import `in`.project.enroute.feature.floorplan.state.BuildingState
+import `in`.project.enroute.feature.floorplan.utils.CanvasAnimationConfig
+import `in`.project.enroute.feature.floorplan.utils.CanvasAnimator
+import `in`.project.enroute.feature.floorplan.utils.CanvasTarget
 import `in`.project.enroute.feature.floorplan.utils.ViewportUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -338,5 +341,37 @@ class FloorPlanViewModel(
      */
     fun resetCanvas() {
         _uiState.update { it.copy(canvasState = CanvasState()) }
+    }
+    
+    /**
+     * Animates the canvas to center on a specific coordinate with a target zoom level.
+     * Similar to how Google Maps centers on a location.
+     *
+     * @param x The x coordinate in canvas/world space
+     * @param y The y coordinate in canvas/world space
+     * @param scale The target zoom scale
+     * @param animationConfig Configuration for animation duration and smoothness
+     */
+    fun centerOnCoordinate(
+        x: Float,
+        y: Float,
+        scale: Float,
+        animationConfig: CanvasAnimationConfig = CanvasAnimationConfig()
+    ) {
+        viewModelScope.launch {
+            val currentState = _uiState.value
+            val target = CanvasTarget(x = x, y = y, scale = scale)
+            
+            CanvasAnimator.animateToTarget(
+                currentState = currentState.canvasState,
+                target = target,
+                screenWidth = currentState.screenWidth,
+                screenHeight = currentState.screenHeight,
+                config = animationConfig,
+                onStateUpdate = { newState ->
+                    updateCanvasState(newState)
+                }
+            )
+        }
     }
 }
