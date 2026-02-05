@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,9 +37,13 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import `in`.project.enroute.feature.home.utils.searchMultiFloor
+import `in`.project.enroute.feature.home.utils.DestinationButton
+import `in`.project.enroute.feature.home.utils.SearchResult
 
 /**
  * Full-screen search page showing an input box at the top.
@@ -45,11 +51,22 @@ import kotlinx.coroutines.delay
  */
 @Composable
 fun SearchScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onCenterView: (x: Float, y: Float, scale: Float) -> Unit = { _, _, _ -> }
 ) {
     val query = remember { mutableStateOf("") }
+    val searchResults = remember { mutableStateOf<List<SearchResult>>(emptyList()) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
+    
+    // Search across all available floors when query changes
+    LaunchedEffect(query.value) {
+        searchResults.value = searchMultiFloor(
+            context = context,
+            query = query.value
+        )
+    }
 
     // Automatically focus the text field and show the keyboard when the screen is shown.
     LaunchedEffect(Unit) {
@@ -141,13 +158,34 @@ fun SearchScreen(
             }
         }
 
-        // Placeholder: search results area
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp)
-        ) {
-            Text("No results yet", color = MaterialTheme.colorScheme.onBackground)
+        // Search results area
+        if (searchResults.value.isEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp)
+            ) {
+                Text("No results found", color = MaterialTheme.colorScheme.onBackground)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(searchResults.value) { result ->
+                    DestinationButton(
+                        coordinates = Pair(result.x, result.y),
+                        onNavigate = { x, y ->
+                            onCenterView(x, y, 0.48f)
+                            onBack()
+                        },
+                        label = result.label,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
         }
     }
 }

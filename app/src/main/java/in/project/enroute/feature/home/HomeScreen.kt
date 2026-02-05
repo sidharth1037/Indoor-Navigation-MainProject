@@ -33,12 +33,21 @@ import `in`.project.enroute.feature.home.components.SearchButton
 import `in`.project.enroute.feature.home.components.SearchScreen
 import `in`.project.enroute.feature.home.components.AimButton
 import `in`.project.enroute.feature.floorplan.rendering.FloorPlanCanvas
+import `in`.project.enroute.feature.pdr.PdrViewModel
+import `in`.project.enroute.feature.pdr.PdrUiState
+import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionDialog
+import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionOverlay
+import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionTapHandler
+import `in`.project.enroute.feature.pdr.ui.components.PdrDebugButtons
+import `in`.project.enroute.feature.pdr.ui.components.PdrPathOverlay
 
 @Composable
 fun HomeScreen(
-    floorPlanViewModel: FloorPlanViewModel = viewModel()
+    floorPlanViewModel: FloorPlanViewModel = viewModel(),
+    pdrViewModel: PdrViewModel = viewModel()
 ) {
     val uiState by floorPlanViewModel.uiState.collectAsState()
+    val pdrUiState by pdrViewModel.uiState.collectAsState()
 
     // Load all floors on first composition
     LaunchedEffect(Unit) {
@@ -63,10 +72,17 @@ fun HomeScreen(
         // Delegate to content composable
         HomeScreenContent(
             uiState = uiState,
+            pdrUiState = pdrUiState,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight,
             maxWidth = maxWidth,
             onCanvasStateChange = { floorPlanViewModel.updateCanvasState(it) },
             onFloorChange = { floorPlanViewModel.setCurrentFloor(it) },
-            onCenterView = { x, y, scale -> floorPlanViewModel.centerOnCoordinate(x, y, scale) }
+            onCenterView = { x, y, scale -> floorPlanViewModel.centerOnCoordinate(x, y, scale) },
+            onSetOriginClick = { pdrViewModel.startOriginSelection() },
+            onClearPdrClick = { pdrViewModel.clearAndStop() },
+            onOriginSelected = { pdrViewModel.setOrigin(it) },
+            onCancelOriginSelection = { pdrViewModel.cancelOriginSelection() }
         )
     }
 }
@@ -74,13 +90,21 @@ fun HomeScreen(
 @Composable
 private fun HomeScreenContent(
     uiState: FloorPlanUiState,
+    pdrUiState: PdrUiState,
+    screenWidth: Float,
+    screenHeight: Float,
     maxWidth: Dp,
     onCanvasStateChange: (CanvasState) -> Unit,
     onFloorChange: (Float) -> Unit,
-    onCenterView: (x: Float, y: Float, scale: Float) -> Unit
+    onCenterView: (x: Float, y: Float, scale: Float) -> Unit,
+    onSetOriginClick: () -> Unit,
+    onClearPdrClick: () -> Unit,
+    onOriginSelected: (androidx.compose.ui.geometry.Offset) -> Unit,
+    onCancelOriginSelection: () -> Unit
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var isMorphingToSearch by remember { mutableStateOf(false) }
+    var showOriginDialog by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -152,16 +176,69 @@ private fun HomeScreenContent(
                         .padding(bottom = 16.dp, end = 16.dp)
                 )
                 
+                // PDR path overlay
+                if (pdrUiState.pdrState.path.isNotEmpty()) {
+                    PdrPathOverlay(
+                        path = pdrUiState.pdrState.path,
+                        currentHeading = pdrUiState.pdrState.heading,
+                        canvasState = uiState.canvasState,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                
+                // Origin selection tap handler (when in selection mode)
+                if (pdrUiState.isSelectingOrigin) {
+                    OriginSelectionTapHandler(
+                        canvasState = uiState.canvasState,
+                        screenWidth = screenWidth,
+                        screenHeight = screenHeight,
+                        onPointSelected = onOriginSelected,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    
+                    // Selection mode overlay with instructions
+                    OriginSelectionOverlay(
+                        onCancel = onCancelOriginSelection,
+                        modifier = Modifier.align(Alignment.TopCenter)
+                    )
+                }
+                
+                // PDR debug buttons (bottom left)
+                PdrDebugButtons(
+                    isTracking = pdrUiState.pdrState.isTracking,
+                    onSetOriginClick = { showOriginDialog = true },
+                    onClearClick = onClearPdrClick,
+                    modifier = Modifier.align(Alignment.BottomStart)
+                )
+                
+                // Origin selection dialog
+                if (showOriginDialog) {
+                    OriginSelectionDialog(
+                        onDismiss = { showOriginDialog = false },
+                        onSelectPoint = {
+                            showOriginDialog = false
+                            onSetOriginClick()
+                        },
+                        onSelectLocation = {
+                            // TODO: Implement location selection
+                            showOriginDialog = false
+                        }
+                    )
+                }
+                
                 // Animated transition for SearchScreen
                 AnimatedVisibility(
                     visible = showSearch,
                     enter = fadeIn(tween(300)),
                     exit = fadeOut(tween(500))
                 ) {
-                    SearchScreen(onBack = { 
-                        showSearch = false 
-                        isMorphingToSearch = false
-                    })
+                    SearchScreen(
+                        onBack = { 
+                            showSearch = false 
+                            isMorphingToSearch = false
+                        },
+                        onCenterView = onCenterView
+                    )
                 }
             }
         }
