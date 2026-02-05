@@ -158,10 +158,13 @@ private fun HomeScreenContent(
                     enter = fadeIn(tween(300)),
                     exit = fadeOut(tween(500))
                 ) {
-                    SearchScreen(onBack = { 
-                        showSearch = false 
-                        isMorphingToSearch = false
-                    })
+                    SearchScreen(
+                        onBack = { 
+                            showSearch = false 
+                            isMorphingToSearch = false
+                        },
+                        onCenterView = onCenterView
+                    )
                 }
             }
         }
