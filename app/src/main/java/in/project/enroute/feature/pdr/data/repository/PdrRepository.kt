@@ -21,7 +21,7 @@ class PdrRepository {
 
     private var strideConfig = StrideConfig()
     private val recentCadences = mutableListOf<Float>()
-    
+
     // Conversion factor: pixels per centimeter (can be calibrated)
     private val pixelsPerCm = 0.5f
 
@@ -64,7 +64,7 @@ class PdrRepository {
         // Origin point with initial heading
         val originPoint = PathPoint(position = origin, heading = _pdrState.value.heading)
         val path = listOf(originPoint)
-        
+
         _pdrState.value = PdrState(
             isTracking = true,
             origin = origin,
@@ -91,7 +91,7 @@ class PdrRepository {
 
         // Calculate cadence (steps per second)
         val cadence = if (stepIntervalMs > 0) 1000f / stepIntervalMs else 0f
-        
+
         // Update cadence average
         recentCadences.add(cadence)
         while (recentCadences.size > strideConfig.cadenceAverageSize) {
@@ -104,13 +104,13 @@ class PdrRepository {
         }
 
         // Calculate dynamic stride length based on cadence and height
-        val strideLengthCm = calculateStrideLength(cadence)
+        val strideLengthCm = calculateStrideLength(cadence,averageCadence)
         val strideInPixels = strideLengthCm * pixelsPerCm
 
         // Calculate new position using heading
         // heading is in radians: 0 = North, positive = clockwise
         stepCount++
-        
+
         // First step stays at origin
         val newPosition = if (stepCount == 1) {
             Offset(currentX, currentY)
@@ -189,13 +189,31 @@ class PdrRepository {
      * @param cadence Steps per second
      * @return Stride length in centimeters
      */
-    private fun calculateStrideLength(cadence: Float): Float {
-        // Formula: stride = height * (k * cadence + c)
-        // This gives reasonable stride lengths based on walking speed
+    private fun calculateStrideLength(instantCadence: Float, averageCadence: Float): Float {
         val heightInMeters = strideConfig.heightCm / 100f
-        val stride = heightInMeters * (strideConfig.kValue * cadence + strideConfig.cValue)
-        
-        // Convert to cm and clamp to reasonable range (30-120 cm)
+
+        // SMOOTHING: Blending instant cadence (30%) with history (70%)
+        // to prevent jittery movement on the map.
+        val smoothedCadence = (instantCadence * 0.3f) + (averageCadence * 0.7f)
+
+        // DYNAMIC K: Standard gait research suggests k is ~0.157 for walking.
+        // If the user is moving fast (cadence > 2.0), we slightly increase K.
+        val adjustedK = if (smoothedCadence > 2.0f) strideConfig.kValue * 1.15f else strideConfig.kValue
+
+        val stride = heightInMeters * (adjustedK * smoothedCadence + strideConfig.cValue)
+
+        // Convert to cm and clamp to human limits (30cm - 120cm)
         return (stride * 100f).coerceIn(30f, 120f)
     }
 }
+
+//first calculation with fixed k
+//private fun calculateStrideLength(cadence: Float): Float {
+//    // Formula: stride = height * (k * cadence + c)
+//    // This gives reasonable stride lengths based on walking speed
+//    val heightInMeters = strideConfig.heightCm / 100f
+//    val stride = heightInMeters * (strideConfig.kValue * cadence + strideConfig.cValue)
+//
+//    // Convert to cm and clamp to reasonable range (30-120 cm)
+//    return (stride * 100f).coerceIn(30f, 120f)
+//}
