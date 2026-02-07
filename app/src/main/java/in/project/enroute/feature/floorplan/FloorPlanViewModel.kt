@@ -10,11 +10,9 @@ import `in`.project.enroute.data.repository.LocalFloorPlanRepository
 import `in`.project.enroute.feature.floorplan.rendering.CanvasState
 import `in`.project.enroute.feature.floorplan.rendering.FloorPlanDisplayConfig
 import `in`.project.enroute.feature.floorplan.state.BuildingState
-import `in`.project.enroute.feature.floorplan.utils.CanvasAnimationConfig
-import `in`.project.enroute.feature.floorplan.utils.CanvasAnimator
-import `in`.project.enroute.feature.floorplan.utils.CanvasTarget
 import `in`.project.enroute.feature.floorplan.utils.FollowingAnimator
 import `in`.project.enroute.feature.floorplan.utils.FollowingConfig
+import `in`.project.enroute.feature.floorplan.utils.CenteringConfig
 import `in`.project.enroute.feature.floorplan.utils.ViewportUtils
 import androidx.compose.ui.geometry.Offset
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -449,23 +447,27 @@ class FloorPlanViewModel(
         x: Float,
         y: Float,
         scale: Float,
-        animationConfig: CanvasAnimationConfig = CanvasAnimationConfig()
+        animationConfig: CenteringConfig = CenteringConfig()
     ) {
         viewModelScope.launch {
             val currentState = _uiState.value
-            val target = CanvasTarget(x = x, y = y, scale = scale)
-            
-            // Get current floor plan metadata for transformations
-            val dominantBuildingState = currentState.dominantBuildingState
-            val currentFloorNumber = dominantBuildingState?.currentFloorNumber ?: 1f
-            val currentFloorData = dominantBuildingState?.floors?.get(currentFloorNumber)
+
+            // Use dominant building when available; otherwise fall back to any loaded building
+            val buildingState = currentState.dominantBuildingState
+                ?: currentState.buildingStates.values.firstOrNull()
+                ?: return@launch
+
+            val currentFloorNumber = buildingState.currentFloorNumber
+            val currentFloorData = buildingState.floors[currentFloorNumber]
             
             val floorPlanScale = currentFloorData?.metadata?.scale ?: 1f
             val floorPlanRotation = currentFloorData?.metadata?.rotation ?: 0f
             
-            CanvasAnimator.animateToTarget(
+            FollowingAnimator.animateToFloorPlanCoordinate(
                 currentState = currentState.canvasState,
-                target = target,
+                targetX = x,
+                targetY = y,
+                targetScale = scale,
                 floorPlanScale = floorPlanScale,
                 floorPlanRotation = floorPlanRotation,
                 screenWidth = currentState.screenWidth,

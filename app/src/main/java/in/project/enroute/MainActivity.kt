@@ -4,8 +4,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
@@ -49,40 +52,43 @@ fun MainScreen() {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
-            NavigationBar(
-                modifier = Modifier.height(64.dp)
-            ) {
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                    label = { Text("Home", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
-                    selected = currentDestination?.hierarchy?.any { it.route == Screen.Home.route } == true,
-                    onClick = {
-                        navController.navigate(Screen.Home.route) {
-                            popUpTo(navController.graph.startDestinationId) {
-                                saveState = true
+            Box(modifier = Modifier.navigationBarsPadding()) {
+                NavigationBar(
+                    modifier = Modifier.height(64.dp),
+                    windowInsets = WindowInsets(0, 0, 0, 0)
+                ) {
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
+                        label = { Text("Home", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
+                        selected = currentDestination?.hierarchy?.any { it.route == Screen.Home.route } == true,
+                        onClick = {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(navController.graph.startDestinationId) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
                             }
-                            launchSingleTop = true
-                            restoreState = true
                         }
-                    }
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                    label = { Text("Settings", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
-                    selected = currentDestination?.hierarchy?.any { it.route == Screen.Settings.route } == true,
-                    onClick = {
-                        navController.navigate(Screen.Settings.route) {
-                            popUpTo(navController.graph.startDestinationId) {
-                                saveState = true
+                    )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
+                        label = { Text("Settings", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
+                        selected = currentDestination?.hierarchy?.any { it.route == Screen.Settings.route } == true,
+                        onClick = {
+                            navController.navigate(Screen.Settings.route) {
+                                popUpTo(navController.graph.startDestinationId) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
                             }
-                            launchSingleTop = true
-                            restoreState = true
                         }
-                    }
-                )
+                    )
+                }
             }
         }
-    )  { innerPadding ->
+    ) { innerPadding ->
         NavigationGraph(
             navController = navController,
             modifier = Modifier.padding(innerPadding)

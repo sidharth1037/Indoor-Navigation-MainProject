@@ -20,39 +20,24 @@ data class FollowingConfig(
 )
 
 /**
- * Utility for "follow me" following mode, similar to Google Maps navigation.
- * 
- * In following mode:
- * - The view centers on the user's current position
- * - The canvas rotates so the user's heading always points up (north = top of screen)
- * - Updates smoothly as the user walks
+ * Animation timing for centering/zooming on a floor-plan coordinate.
+ */
+data class CenteringConfig(
+    val durationMs: Long = 500L,
+    val frameDelayMs: Long = 16L
+)
+
+/**
+ * Utility for following mode and general canvas centering animations.
  *
- * Key difference from CanvasAnimator: This works with PDR path coordinates
- * which are in "inner canvas space" (after the center translate but before
- * graphicsLayer transforms). Floor plan metadata transforms are NOT applied.
+ * In following mode:
+ * - Centers on the user's current position and rotates so heading points up.
+ *
+ * For search centering:
+ * - Centers a floor-plan coordinate while preserving the current canvas rotation.
  */
 object FollowingAnimator {
-    
-    /**
-     * Calculates the canvas state to center on a world position with heading pointing up.
-     *
-     * The coordinate system:
-     * - PDR path points are in "world space" relative to the canvas center
-     * - graphicsLayer applies: scale -> rotate -> translate (with TransformOrigin(0,0))
-     * - Inner translate(centerX, centerY) shifts drawing origin to screen center
-     *
-     * To center a world point on screen with heading pointing up:
-     * 1. Calculate where the point ends up after all transforms
-     * 2. Set offset so that position equals screen center
-     * 3. Set rotation so heading (radians, 0=north, clockwise) points up
-     *
-     * @param worldPosition The position to center on (in world/PDR coordinates)
-     * @param headingRadians The heading direction in radians (0 = north, positive = clockwise)
-     * @param scale The target zoom scale
-     * @param screenWidth Screen width in pixels
-     * @param screenHeight Screen height in pixels
-     * @return CanvasState that centers the position with heading pointing up
-     */
+
     fun calculateFollowingState(
         worldPosition: Offset,
         headingRadians: Float,
@@ -60,13 +45,8 @@ object FollowingAnimator {
         screenWidth: Float,
         screenHeight: Float
     ): CanvasState {
-        // Convert heading to canvas rotation (negative to make heading point up)
-        // Heading: 0 = north (up), positive = clockwise
-        // Canvas rotation: positive = clockwise
-        // To make heading point up, rotate canvas by -heading
         val rotationDegrees = -Math.toDegrees(headingRadians.toDouble()).toFloat()
-        
-        // Calculate offset to center the world position on screen
+
         val (offsetX, offsetY) = calculateCenterOffset(
             worldX = worldPosition.x,
             worldY = worldPosition.y,
@@ -75,7 +55,7 @@ object FollowingAnimator {
             screenWidth = screenWidth,
             screenHeight = screenHeight
         )
-        
+
         return CanvasState(
             scale = scale,
             offsetX = offsetX,
@@ -83,18 +63,7 @@ object FollowingAnimator {
             rotation = rotationDegrees
         )
     }
-    
-    /**
-     * Calculates the canvas state to center on a world position without changing rotation.
-     * Used when aim button is pressed but rotation following is not enabled.
-     *
-     * @param worldPosition The position to center on (in world/PDR coordinates)
-     * @param currentRotation The current canvas rotation to maintain
-     * @param scale The target zoom scale
-     * @param screenWidth Screen width in pixels
-     * @param screenHeight Screen height in pixels
-     * @return CanvasState that centers the position
-     */
+
     fun calculateCenterState(
         worldPosition: Offset,
         currentRotation: Float,
@@ -110,7 +79,7 @@ object FollowingAnimator {
             screenWidth = screenWidth,
             screenHeight = screenHeight
         )
-        
+
         return CanvasState(
             scale = scale,
             offsetX = offsetX,
@@ -118,25 +87,107 @@ object FollowingAnimator {
             rotation = currentRotation
         )
     }
-    
-    /**
-     * Calculates the offset needed to center a world coordinate on screen.
-     *
-     * Transform order in graphicsLayer (TransformOrigin(0,0)):
-     * 1. Scale around (0,0)
-     * 2. Rotate around (0,0)  
-     * 3. Translate by (offsetX, offsetY)
-     *
-     * Plus the inner translate(centerX, centerY) before drawing.
-     *
-     * @param worldX World X coordinate (relative to canvas center)
-     * @param worldY World Y coordinate (relative to canvas center)
-     * @param scale Canvas zoom scale
-     * @param rotationDegrees Canvas rotation in degrees
-     * @param screenWidth Screen width in pixels
-     * @param screenHeight Screen height in pixels
-     * @return Pair of (offsetX, offsetY)
-     */
+
+    fun calculateFloorPlanCenterState(
+        targetX: Float,
+        targetY: Float,
+        targetScale: Float,
+        currentRotation: Float,
+        floorPlanScale: Float,
+        floorPlanRotation: Float,
+        screenWidth: Float,
+        screenHeight: Float
+    ): CanvasState {
+        val (offsetX, offsetY) = calculateFloorPlanCenterOffset(
+            targetX = targetX,
+            targetY = targetY,
+            canvasScale = targetScale,
+            canvasRotation = currentRotation,
+            floorPlanScale = floorPlanScale,
+            floorPlanRotation = floorPlanRotation,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight
+        )
+
+        return CanvasState(
+            scale = targetScale,
+            offsetX = offsetX,
+            offsetY = offsetY,
+            rotation = currentRotation
+        )
+    }
+
+    suspend fun animateToState(
+        currentState: CanvasState,
+        targetState: CanvasState,
+        config: FollowingConfig = FollowingConfig(),
+        onStateUpdate: (CanvasState) -> Unit
+    ) {
+        animateToState(
+            currentState = currentState,
+            targetState = targetState,
+            durationMs = config.animationDurationMs,
+            frameDelayMs = config.frameDelayMs,
+            onStateUpdate = onStateUpdate
+        )
+    }
+
+    suspend fun animateToState(
+        currentState: CanvasState,
+        targetState: CanvasState,
+        durationMs: Long,
+        frameDelayMs: Long,
+        onStateUpdate: (CanvasState) -> Unit
+    ) {
+        val startTime = System.currentTimeMillis()
+        var elapsed = 0L
+
+        while (elapsed < durationMs) {
+            val progress = (elapsed.toFloat() / durationMs).coerceIn(0f, 1f)
+            val easedProgress = easeInOutCubic(progress)
+
+            val interpolatedState = interpolate(currentState, targetState, easedProgress)
+            onStateUpdate(interpolatedState)
+
+            delay(frameDelayMs)
+            elapsed = System.currentTimeMillis() - startTime
+        }
+
+        onStateUpdate(targetState)
+    }
+
+    suspend fun animateToFloorPlanCoordinate(
+        currentState: CanvasState,
+        targetX: Float,
+        targetY: Float,
+        targetScale: Float,
+        floorPlanScale: Float,
+        floorPlanRotation: Float,
+        screenWidth: Float,
+        screenHeight: Float,
+        config: CenteringConfig = CenteringConfig(),
+        onStateUpdate: (CanvasState) -> Unit
+    ) {
+        val targetState = calculateFloorPlanCenterState(
+            targetX = targetX,
+            targetY = targetY,
+            targetScale = targetScale,
+            currentRotation = currentState.rotation,
+            floorPlanScale = floorPlanScale,
+            floorPlanRotation = floorPlanRotation,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight
+        )
+
+        animateToState(
+            currentState = currentState,
+            targetState = targetState,
+            durationMs = config.durationMs,
+            frameDelayMs = config.frameDelayMs,
+            onStateUpdate = onStateUpdate
+        )
+    }
+
     private fun calculateCenterOffset(
         worldX: Float,
         worldY: Float,
@@ -147,68 +198,68 @@ object FollowingAnimator {
     ): Pair<Float, Float> {
         val centerX = screenWidth / 2f
         val centerY = screenHeight / 2f
-        
-        // Step 1: Apply inner translate (drawing at world coords + center)
+
         val localX = worldX + centerX
         val localY = worldY + centerY
-        
-        // Step 2: Apply scale (around origin 0,0)
+
         val scaledX = localX * scale
         val scaledY = localY * scale
-        
-        // Step 3: Apply rotation (around origin 0,0)
+
         val rotationRad = Math.toRadians(rotationDegrees.toDouble())
         val cosR = cos(rotationRad).toFloat()
         val sinR = sin(rotationRad).toFloat()
-        
+
         val rotatedX = scaledX * cosR - scaledY * sinR
         val rotatedY = scaledX * sinR + scaledY * cosR
-        
-        // Step 4: Calculate offset so point ends up at screen center
-        // Final position = rotated + offset = center
-        // offset = center - rotated
+
         val offsetX = centerX - rotatedX
         val offsetY = centerY - rotatedY
-        
+
         return Pair(offsetX, offsetY)
     }
-    
-    /**
-     * Smoothly animates from current state to a target state.
-     * Uses ease-out interpolation for natural deceleration.
-     *
-     * @param currentState Starting canvas state
-     * @param targetState Target canvas state
-     * @param config Following configuration
-     * @param onStateUpdate Callback for each animation frame
-     */
-    suspend fun animateToState(
-        currentState: CanvasState,
-        targetState: CanvasState,
-        config: FollowingConfig = FollowingConfig(),
-        onStateUpdate: (CanvasState) -> Unit
-    ) {
-        val startTime = System.currentTimeMillis()
-        var elapsed = 0L
-        
-        while (elapsed < config.animationDurationMs) {
-            val progress = (elapsed.toFloat() / config.animationDurationMs).coerceIn(0f, 1f)
-            val easedProgress = easeInOutCubic(progress)
-            
-            val interpolatedState = interpolate(currentState, targetState, easedProgress)
-            onStateUpdate(interpolatedState)
-            
-            delay(config.frameDelayMs)
-            elapsed = System.currentTimeMillis() - startTime
-        }
-        
-        // Ensure we end exactly at target
-        onStateUpdate(targetState)
+
+    private fun calculateFloorPlanCenterOffset(
+        targetX: Float,
+        targetY: Float,
+        canvasScale: Float,
+        canvasRotation: Float,
+        floorPlanScale: Float,
+        floorPlanRotation: Float,
+        screenWidth: Float,
+        screenHeight: Float
+    ): Pair<Float, Float> {
+        val centerX = screenWidth / 2f
+        val centerY = screenHeight / 2f
+
+        val fpScaledX = targetX * floorPlanScale
+        val fpScaledY = targetY * floorPlanScale
+
+        val fpRotationRad = Math.toRadians(floorPlanRotation.toDouble())
+        val fpCos = cos(fpRotationRad).toFloat()
+        val fpSin = sin(fpRotationRad).toFloat()
+
+        val fpTransformedX = fpScaledX * fpCos - fpScaledY * fpSin
+        val fpTransformedY = fpScaledX * fpSin + fpScaledY * fpCos
+
+        val localX = fpTransformedX + centerX
+        val localY = fpTransformedY + centerY
+
+        val canvasRotationRad = Math.toRadians(canvasRotation.toDouble())
+        val canvasCos = cos(canvasRotationRad).toFloat()
+        val canvasSin = sin(canvasRotationRad).toFloat()
+
+        val canvasScaledX = localX * canvasScale
+        val canvasScaledY = localY * canvasScale
+
+        val canvasRotatedX = canvasScaledX * canvasCos - canvasScaledY * canvasSin
+        val canvasRotatedY = canvasScaledX * canvasSin + canvasScaledY * canvasCos
+
+        val offsetX = centerX - canvasRotatedX
+        val offsetY = centerY - canvasRotatedY
+
+        return Pair(offsetX, offsetY)
     }
-    
-    /**
-     * Interpolates between two canvas states.
-     */
+
     private fun interpolate(
         start: CanvasState,
         end: CanvasState,
@@ -221,29 +272,18 @@ object FollowingAnimator {
             rotation = lerpAngle(start.rotation, end.rotation, progress)
         )
     }
-    
-    /**
-     * Linear interpolation.
-     */
+
     private fun lerp(start: Float, end: Float, fraction: Float): Float {
         return start + (end - start) * fraction
     }
-    
-    /**
-     * Interpolates angles, taking the shortest path around the circle.
-     */
+
     private fun lerpAngle(start: Float, end: Float, fraction: Float): Float {
-        // Normalize difference to [-180, 180]
         var diff = end - start
         while (diff > 180f) diff -= 360f
         while (diff < -180f) diff += 360f
         return start + diff * fraction
     }
 
-    /**
-     * Ease-in-out cubic easing function.
-     * Smooth acceleration and deceleration.
-     */
     private fun easeInOutCubic(t: Float): Float {
         return if (t < 0.5f) {
             4f * t * t * t
