@@ -60,6 +60,8 @@ fun HomeScreen(
 ) {
     val uiState by floorPlanViewModel.uiState.collectAsState()
     val pdrUiState by pdrViewModel.uiState.collectAsState()
+    // Heading collected separately so compass changes don't recompose entire tree
+    val heading by pdrViewModel.heading.collectAsState()
     val view = LocalView.current
 
     // Load all floors on first composition
@@ -97,20 +99,24 @@ fun HomeScreen(
         // Compute effective canvas state for following mode inline during composition.
         // This ensures FloorPlanCanvas and PdrPathOverlay see the same state in the same frame,
         // eliminating the brief cone flash at new step positions.
+        //
+        // IMPORTANT: heading is read INSIDE derivedStateOf (not as a remember key)
+        // so that heading changes only re-evaluate the lambda, not recreate it.
         val effectiveCanvasState by remember(
             uiState.isFollowingMode,
+            uiState.isFollowingAnimating,
             uiState.canvasState,
             pdrUiState.pdrState.path,
-            pdrUiState.pdrState.heading,
+            heading,
             screenWidth,
             screenHeight
         ) {
             derivedStateOf {
-                if (uiState.isFollowingMode && pdrUiState.pdrState.path.isNotEmpty()) {
+                if (uiState.isFollowingMode && !uiState.isFollowingAnimating && pdrUiState.pdrState.path.isNotEmpty()) {
                     val currentPosition = pdrUiState.pdrState.path.last().position
                     FollowingAnimator.calculateFollowingState(
                         worldPosition = currentPosition,
-                        headingRadians = pdrUiState.pdrState.heading,
+                        headingRadians = heading,
                         scale = uiState.canvasState.scale,
                         screenWidth = screenWidth,
                         screenHeight = screenHeight
@@ -125,22 +131,31 @@ fun HomeScreen(
         HomeScreenContent(
             uiState = uiState,
             pdrUiState = pdrUiState,
+            heading = heading,
             effectiveCanvasState = effectiveCanvasState,
             screenWidth = screenWidth,
             screenHeight = screenHeight,
             maxWidth = maxWidth,
-            onCanvasStateChange = { floorPlanViewModel.updateCanvasState(it) },
+            onCanvasStateChange = {
+                // If gesture cancels following mode, switch heading back to compass rate
+                if (uiState.isFollowingMode) {
+                    pdrViewModel.setHeadingTrackingMode(false)
+                }
+                floorPlanViewModel.updateCanvasState(it)
+            },
             onFloorChange = { floorPlanViewModel.setCurrentFloor(it) },
             onCenterView = { x, y, scale -> floorPlanViewModel.centerOnCoordinate(x, y, scale) },
             onRoomTap = { room -> floorPlanViewModel.pinRoom(room) },
             onBackgroundTap = { floorPlanViewModel.clearPin() },
             onEnableTracking = { position, heading ->
-                // Use ViewModel default following zoom unless caller specifies otherwise
+                // Switch heading sensor to fast tracking for smooth rotation
+                pdrViewModel.setHeadingTrackingMode(true)
                 floorPlanViewModel.enableFollowingMode(position, heading)
             },
             onSetOriginClick = { pdrViewModel.startOriginSelection() },
             onClearPdrClick = {
                 // Commit current following position before clearing PDR
+                pdrViewModel.setHeadingTrackingMode(false)
                 floorPlanViewModel.disableFollowingMode(effectiveCanvasState)
                 pdrViewModel.clearAndStop()
             },
@@ -154,6 +169,7 @@ fun HomeScreen(
 private fun HomeScreenContent(
     uiState: FloorPlanUiState,
     pdrUiState: PdrUiState,
+    heading: Float,
     effectiveCanvasState: CanvasState,
     screenWidth: Float,
     screenHeight: Float,
@@ -212,94 +228,16 @@ private fun HomeScreenContent(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Floor slider and search button positioned at top, layered over canvas
-                // Hidden during origin selection mode
-                if (!pdrUiState.isSelectingOrigin) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.TopCenter)
-                            .padding(top = 8.dp, end = 8.dp, start = 8.dp)
-                    ) {
-                        // Floor slider - animated exit when search button is pressed
-                        AnimatedVisibility(
-                            visible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
-                            enter = fadeIn(tween(300)) + slideInHorizontally(tween(300)) { -it },
-                            exit = fadeOut(tween(300)) + slideOutHorizontally(tween(300)) { -it },
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .padding(end = 56.dp)
-                        ) {
-                            FloorSlider(
-                                buildingName = uiState.sliderBuildingName,
-                                availableFloors = uiState.sliderFloorNumbers,
-                                currentFloor = uiState.sliderCurrentFloor,
-                                onFloorChange = onFloorChange,
-                                isVisible = true, // Visibility managed by AnimatedVisibility
-                            )
-                        }
-                        
-                        // Search button
-                        SearchButton(
-                            isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
-                            isSearching = isMorphingToSearch,
-                            containerWidth = maxWidth - 16.dp,
-                            modifier = Modifier.align(Alignment.TopEnd),
-                            onClick = { isMorphingToSearch = true },
-                            onAnimationFinished = {
-                                showSearch = true
-                            }
-                        )
-                        
-                        // Compass button positioned at top right, below search button
-                        // Always shows north direction, rotates with device heading
-                        CompassButton(
-                            headingRadians = pdrUiState.pdrState.heading,
-                            onClick = { /* TODO: Could reset canvas rotation to north-up */ },
-                            isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
-                            isSearching = isMorphingToSearch,
-                            modifier = Modifier.align(Alignment.TopEnd)
-                        )
-                    }
-                }
-                
-                // Aim button positioned at bottom right
-                // Hidden during origin selection mode or when following is enabled
-                // Shows origin dialog if origin not set, otherwise enables following mode
-                AimButton(
-                    isVisible = !pdrUiState.isSelectingOrigin && !uiState.isFollowingMode && !aimPressed,
-                    onClick = {
-                        if (pdrUiState.pdrState.origin == null) {
-                            // Show origin selection dialog if origin not set
-                            showOriginDialog = true
-                        } else {
-                            // Hide immediately on press only when we actually enter following
-                            aimPressed = true
-                            // Enable following mode - centers on user and rotates with heading
-                            val currentPosition = if (pdrUiState.pdrState.path.isNotEmpty()) {
-                                pdrUiState.pdrState.path.last().position
-                            } else {
-                                pdrUiState.pdrState.origin
-                            }
-                            onEnableTracking(currentPosition, pdrUiState.pdrState.heading)
-                        }
-                    },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = 16.dp, end = 8.dp)
-                )
-                
-                // PDR path overlay
-                // Hidden during origin selection mode
-                if (pdrUiState.pdrState.path.isNotEmpty() && !pdrUiState.isSelectingOrigin) {
+                // PDR path overlay sits above the canvas but below controls
+                if (pdrUiState.pdrState.path.isNotEmpty()) {
                     PdrPathOverlay(
                         path = pdrUiState.pdrState.path,
-                        currentHeading = pdrUiState.pdrState.heading,
+                        currentHeading = heading,
                         canvasState = effectiveCanvasState,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
-                
+
                 // Origin selection tap handler (when in selection mode)
                 if (pdrUiState.isSelectingOrigin) {
                     OriginSelectionTapHandler(
@@ -316,6 +254,74 @@ private fun HomeScreenContent(
                         modifier = Modifier.align(Alignment.TopCenter)
                     )
                 }
+
+                // Floor slider and search button positioned at top, layered over canvas
+                // Hidden during origin selection mode
+                if (!pdrUiState.isSelectingOrigin) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter)
+                            .padding(top = 8.dp, end = 8.dp, start = 8.dp)
+                    ) {
+                        AnimatedVisibility(
+                            visible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
+                            enter = fadeIn(tween(300)) + slideInHorizontally(tween(300)) { -it },
+                            exit = fadeOut(tween(300)) + slideOutHorizontally(tween(300)) { -it },
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(end = 56.dp)
+                        ) {
+                            FloorSlider(
+                                buildingName = uiState.sliderBuildingName,
+                                availableFloors = uiState.sliderFloorNumbers,
+                                currentFloor = uiState.sliderCurrentFloor,
+                                onFloorChange = onFloorChange,
+                                isVisible = true,
+                            )
+                        }
+
+                        SearchButton(
+                            isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
+                            isSearching = isMorphingToSearch,
+                            containerWidth = maxWidth - 16.dp,
+                            modifier = Modifier.align(Alignment.TopEnd),
+                            onClick = { isMorphingToSearch = true },
+                            onAnimationFinished = { showSearch = true }
+                        )
+
+                        CompassButton(
+                            headingRadians = heading,
+                            onClick = { /* Could reset canvas rotation */ },
+                            isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
+                            isSearching = isMorphingToSearch,
+                            modifier = Modifier.align(Alignment.TopEnd)
+                        )
+                    }
+                }
+
+                // Aim button positioned at bottom right
+                // Hidden during origin selection mode or when following is enabled
+                // Shows origin dialog if origin not set, otherwise enables following mode
+                AimButton(
+                    isVisible = !pdrUiState.isSelectingOrigin && !uiState.isFollowingMode && !aimPressed,
+                    onClick = {
+                        if (pdrUiState.pdrState.origin == null) {
+                            showOriginDialog = true
+                        } else {
+                            aimPressed = true
+                            val currentPosition = if (pdrUiState.pdrState.path.isNotEmpty()) {
+                                pdrUiState.pdrState.path.last().position
+                            } else {
+                                pdrUiState.pdrState.origin
+                            }
+                            onEnableTracking(currentPosition, heading)
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 16.dp, end = 8.dp)
+                )
                 
                 // Set My Location / Stop Tracking button positioned at bottom left
                 // Shows "Set My Location" before origin is set, "Stop Tracking" after

@@ -66,6 +66,12 @@ data class FloorPlanUiState(
      * Whether following mode is enabled (canvas follows user position/heading)
      */
     val isFollowingMode: Boolean = false,
+
+    /**
+     * True while the initial follow animation is running.
+     * Allows UI to stay in "following" state without overriding the in-flight animation.
+     */
+    val isFollowingAnimating: Boolean = false,
     
     /**
      * Currently pinned room (shown as a pin on the canvas).
@@ -283,6 +289,7 @@ class FloorPlanViewModel(
         _uiState.update { currentState ->
             // Disable following mode if user manually pans/zooms
             val newFollowingMode = if (isFromGesture) false else currentState.isFollowingMode
+            val newFollowingAnimating = if (isFromGesture) false else currentState.isFollowingAnimating
             val screenWidth = currentState.screenWidth
             val screenHeight = currentState.screenHeight
             
@@ -307,7 +314,8 @@ class FloorPlanViewModel(
                 canvasState = canvasState,
                 dominantBuildingId = dominantBuildingId,
                 showFloorSlider = showFloorSlider,
-                isFollowingMode = newFollowingMode
+                isFollowingMode = newFollowingMode,
+                isFollowingAnimating = newFollowingAnimating
             )
         }
     }
@@ -328,6 +336,8 @@ class FloorPlanViewModel(
     ) {
         viewModelScope.launch {
             val currentState = _uiState.value
+            // Mark following as active immediately so gestures can cleanly cancel it
+            _uiState.update { it.copy(isFollowingMode = true, isFollowingAnimating = true) }
             
             val targetState = FollowingAnimator.calculateFollowingState(
                 worldPosition = position,
@@ -343,12 +353,20 @@ class FloorPlanViewModel(
                 targetState = targetState,
                 config = FollowingConfig(scale = scale),
                 onStateUpdate = { newState ->
-                    _uiState.update { it.copy(canvasState = newState) }
+                    // Only apply animation frames while following is still enabled
+                    _uiState.update { state ->
+                        if (!state.isFollowingMode) state else state.copy(canvasState = newState)
+                    }
                 }
             )
 
             // Ensure final state and enable following mode after animation completes
-            _uiState.update { it.copy(canvasState = targetState, isFollowingMode = true) }
+            _uiState.update { state ->
+                if (!state.isFollowingMode) state else state.copy(
+                    canvasState = targetState,
+                    isFollowingAnimating = false
+                )
+            }
         }
     }
     
@@ -387,7 +405,8 @@ class FloorPlanViewModel(
         _uiState.update { 
             it.copy(
                 canvasState = finalCanvasState ?: it.canvasState,
-                isFollowingMode = false
+                isFollowingMode = false,
+                isFollowingAnimating = false
             ) 
         }
     }

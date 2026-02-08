@@ -16,6 +16,9 @@ import kotlin.math.sin
  * Repository for PDR (Pedestrian Dead Reckoning) path calculation logic.
  * Handles stride calculation, path tracking, and state management.
  * Uses StateFlow for reactive data emission.
+ *
+ * Heading is stored in a **separate** StateFlow so that high-frequency
+ * compass updates don't trigger copies of the path list inside [PdrState].
  */
 class PdrRepository {
 
@@ -31,10 +34,18 @@ class PdrRepository {
     private var stepCount = 0
 
     /**
-     * The overall PDR tracking state.
+     * The overall PDR tracking state (path, origin, cadence, etc.).
+     * Does NOT include heading — see [heading] for that.
      */
     private val _pdrState = MutableStateFlow(PdrState())
     val pdrState: StateFlow<PdrState> = _pdrState.asStateFlow()
+
+    /**
+     * Current heading in radians, updated independently from [pdrState]
+     * so compass-only changes don't trigger path-related recompositions.
+     */
+    private val _heading = MutableStateFlow(0f)
+    val heading: StateFlow<Float> = _heading.asStateFlow()
 
     /**
      * Emits individual step events for observers that need per-step updates.
@@ -62,14 +73,13 @@ class PdrRepository {
         recentCadences.clear()
 
         // Origin point with initial heading
-        val originPoint = PathPoint(position = origin, heading = _pdrState.value.heading)
+        val originPoint = PathPoint(position = origin, heading = _heading.value)
         val path = listOf(originPoint)
 
         _pdrState.value = PdrState(
             isTracking = true,
             origin = origin,
             currentPosition = origin,
-            heading = _pdrState.value.heading,
             path = path,
             cadenceState = CadenceState()
         )
@@ -141,10 +151,9 @@ class PdrRepository {
             heading = heading
         )
 
-        // Update PDR state
+        // Update PDR state (heading is stored separately)
         _pdrState.value = currentState.copy(
             currentPosition = newPosition,
-            heading = heading,
             path = updatedPath,
             cadenceState = cadenceState
         )
@@ -153,11 +162,11 @@ class PdrRepository {
     }
 
     /**
-     * Updates the current heading without processing a step.
-     * Used for continuous heading updates from the sensor.
+     * Updates the current heading without touching PdrState.
+     * This avoids copying the entire path list on every compass tick.
      */
     fun updateHeading(heading: Float) {
-        _pdrState.value = _pdrState.value.copy(heading = heading)
+        _heading.value = heading
     }
 
     /**
@@ -174,10 +183,10 @@ class PdrRepository {
             isTracking = false,
             origin = null,
             currentPosition = null,
-            heading = 0f,
             path = emptyList(),
             cadenceState = CadenceState()
         )
+        _heading.value = 0f
 
         _stepEvents.value = null
     }
@@ -186,7 +195,7 @@ class PdrRepository {
      * Calculates stride length dynamically based on cadence and user height.
      * Uses the formula: stride = height * (k * cadence + c)
      *
-     * @param cadence Steps per second
+     * @param averageCadence Steps per second
      * @return Stride length in centimeters
      */
     private fun calculateStrideLength(instantCadence: Float, averageCadence: Float): Float {

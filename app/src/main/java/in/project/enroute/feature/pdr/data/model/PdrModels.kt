@@ -76,18 +76,18 @@ data class PathPoint(
 
 /**
  * The overall PDR tracking state.
+ * Heading is stored separately in PdrUiState to avoid copying the path
+ * list on every compass tick.
  *
  * @param isTracking Whether PDR tracking is currently active
  * @param origin The starting point for the current tracking session
  * @param currentPosition The current calculated position
- * @param heading Current heading in radians
  * @param path List of all path points since origin was set (with heading at each step)
  */
 data class PdrState(
     val isTracking: Boolean = false,
     val origin: Offset? = null,
     val currentPosition: Offset? = null,
-    val heading: Float = 0f,
     val path: List<PathPoint> = emptyList(),
     val cadenceState: CadenceState = CadenceState()
 )

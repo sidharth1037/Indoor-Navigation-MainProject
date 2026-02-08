@@ -19,6 +19,8 @@ import kotlinx.coroutines.launch
 
 /**
  * UI state for PDR feature.
+ * Heading is stored separately from [pdrState] so high-frequency compass
+ * updates don't trigger copies of the path list.
  */
 data class PdrUiState(
     val pdrState: PdrState = PdrState(),
@@ -44,16 +46,13 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(PdrUiState())
     val uiState: StateFlow<PdrUiState> = _uiState.asStateFlow()
 
-    // Current heading (updated continuously by sensor)
-    private var currentHeading = 0f
+    /**
+     * Current heading exposed as a separate flow so compass-only changes
+     * don't cause full HomeScreen recomposition.
+     */
+    val heading: StateFlow<Float> = repository.heading
 
     init {
-        // Set up heading detector callback
-        headingDetector.onHeadingChanged = { heading ->
-            currentHeading = heading
-            repository.updateHeading(heading)
-        }
-        
         // Start heading detector immediately for compass functionality
         // (step detector only starts when tracking begins)
         headingDetector.start()
@@ -62,11 +61,18 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         stepDetector.onStepDetected = { stepIntervalMs ->
             // Only process steps if we're tracking (origin is set)
             if (_uiState.value.pdrState.isTracking) {
-                repository.processStep(stepIntervalMs, currentHeading)
+                repository.processStep(stepIntervalMs, headingDetector.heading.value)
             }
         }
 
-        // Observe repository state and update UI state
+        // Forward heading from sensor → repository (for step calculations)
+        viewModelScope.launch {
+            headingDetector.heading.collect { heading ->
+                repository.updateHeading(heading)
+            }
+        }
+
+        // Observe repository PDR state (path, origin, cadence)
         viewModelScope.launch {
             repository.pdrState.collect { pdrState ->
                 _uiState.update { it.copy(pdrState = pdrState) }
@@ -135,6 +141,14 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     fun updateStrideConfig(config: StrideConfig) {
         _uiState.update { it.copy(strideConfig = config) }
         repository.updateStrideConfig(config)
+    }
+
+    /**
+     * Switches the heading sensor between compass mode (slow, low CPU)
+     * and tracking mode (fast, for smooth following-mode canvas rotation).
+     */
+    fun setHeadingTrackingMode(enabled: Boolean) {
+        headingDetector.setTrackingMode(enabled)
     }
 
     /**
