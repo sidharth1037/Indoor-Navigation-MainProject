@@ -51,7 +51,10 @@ import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionOverlay
 import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionTapHandler
 import `in`.project.enroute.feature.pdr.ui.components.PdrPathOverlay
 import `in`.project.enroute.feature.home.components.SetLocationButton
+import `in`.project.enroute.feature.home.components.RoomInfoPanel
 import `in`.project.enroute.feature.home.components.StopTrackingButton
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween as dpTween
 
 @Composable
 fun HomeScreen(
@@ -190,6 +193,14 @@ private fun HomeScreenContent(
     var showOriginDialog by remember { mutableStateOf(false) }
     var aimPressed by remember { mutableStateOf(false) }
 
+    // Animate bottom button offset when room info panel is visible
+    val panelVisible = uiState.pinnedRoom != null
+    val bottomButtonPadding by animateDpAsState(
+        targetValue = if (panelVisible) 16.dp + screenHeight.dp / 9f else 16.dp,
+        animationSpec = dpTween(durationMillis = 350),
+        label = "bottomButtonPadding"
+    )
+
     // Reset local pressed state when following mode is turned off so button reappears
     LaunchedEffect(uiState.isFollowingMode) {
         if (!uiState.isFollowingMode) aimPressed = false
@@ -320,7 +331,7 @@ private fun HomeScreenContent(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(bottom = 16.dp, end = 8.dp)
+                        .padding(bottom = bottomButtonPadding, end = 8.dp)
                 )
                 
                 // Set My Location / Stop Tracking button positioned at bottom left
@@ -333,7 +344,7 @@ private fun HomeScreenContent(
                         onClick = { showOriginDialog = true },
                         modifier = Modifier
                             .align(Alignment.BottomStart)
-                            .padding(start = 8.dp, bottom = 16.dp)
+                            .padding(start = 8.dp, bottom = bottomButtonPadding)
                     )
                 } else if (pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin) {
                     StopTrackingButton(
@@ -341,9 +352,15 @@ private fun HomeScreenContent(
                         onClick = onClearPdrClick,
                         modifier = Modifier
                             .align(Alignment.BottomStart)
-                            .padding(start = 8.dp, bottom = 16.dp)
+                            .padding(start = 8.dp, bottom = bottomButtonPadding)
                     )
                 }
+
+                // Room info panel slides up from bottom when a room label is tapped
+                RoomInfoPanel(
+                    room = uiState.pinnedRoom,
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
                 
                 // Origin selection dialog
                 if (showOriginDialog) {
