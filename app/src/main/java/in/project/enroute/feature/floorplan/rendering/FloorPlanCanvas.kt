@@ -102,66 +102,95 @@ fun FloorPlanCanvas(
                     val size = canvasSize.value
                     if (size.width == 0 || size.height == 0) return@detectTapGestures
 
-                    // Map tap (screen) -> room coordinates
-                    val tapX = tapOffset.x
-                    val tapY = tapOffset.y
+                    // Labels are hidden below this zoom – no hit detection needed
+                    if (cs.scale < 0.48f) {
+                        onBackgroundTap()
+                        return@detectTapGestures
+                    }
 
-                    // Step A: remove canvas translation
-                    val tx = tapX - cs.offsetX
-                    val ty = tapY - cs.offsetY
-
-                    // Step B: rotate by -canvasRotation
-                    val rotRad = Math.toRadians(-cs.rotation.toDouble()).toFloat()
-                    val cosR = cos(rotRad)
-                    val sinR = sin(rotRad)
-                    val rtx = tx * cosR - ty * sinR
-                    val rty = tx * sinR + ty * cosR
-
-                    // Step C: remove canvas scale
-                    val localX = rtx / cs.scale
-                    val localY = rty / cs.scale
+                    val topFloor = floorsToRender.lastOrNull() ?: return@detectTapGestures
+                    val fpScale = topFloor.metadata.scale
+                    val fpRotRad = Math.toRadians(topFloor.metadata.rotation.toDouble()).toFloat()
+                    val fpCos = cos(fpRotRad)
+                    val fpSin = sin(fpRotRad)
 
                     val centerX = size.width / 2f
                     val centerY = size.height / 2f
 
-                    // Step D: remove center translate
-                    val rotatedX = localX - centerX
-                    val rotatedY = localY - centerY
+                    val canvasRotRad = Math.toRadians(cs.rotation.toDouble()).toFloat()
+                    val canvasCos = cos(canvasRotRad)
+                    val canvasSin = sin(canvasRotRad)
 
-                    // Use top floor for label hit-testing
-                    val topFloor = floorsToRender.lastOrNull() ?: return@detectTapGestures
-                    val fpScale = topFloor.metadata.scale
-                    val fpRotation = topFloor.metadata.rotation
+                    // ---------- dynamic hitbox sizing (matches RoomLabelRenderer) ----------
+                    val textSize = 30f
+                    val minZoomConst = 0.76f
+                    val effectiveTextSize = if (cs.scale >= minZoomConst) {
+                        textSize / minZoomConst
+                    } else {
+                        textSize / cs.scale
+                    }
+                    // Effective size in screen pixels
+                    val screenTextSize = effectiveTextSize * cs.scale
+                    // Approximate average character width & line height on screen
+                    val charWidthPx = screenTextSize * 0.5f
+                    val lineHeightPx = screenTextSize * 1.3f
+                    // Small padding around the label so it's not pixel-perfect
+                    val hitPadX = screenTextSize * 0.3f
+                    val hitPadY = screenTextSize * 0.4f
+                    val maxCharsPerLine = 15
 
-                    // Reverse floor-plan rotation
-                    val fpRotRad = Math.toRadians(-fpRotation.toDouble()).toFloat()
-                    val fpCos = cos(fpRotRad)
-                    val fpSin = sin(fpRotRad)
-                    val preScaledX = rotatedX * fpCos - rotatedY * fpSin
-                    val preScaledY = rotatedX * fpSin + rotatedY * fpCos
+                    // Forward-transform each room to screen space and compare
+                    // against the raw tap position. The rectangular hitbox is
+                    // always axis-aligned with the screen, matching the upright labels.
+                    val candidates = topFloor.rooms.mapNotNull { room ->
+                        if (room.name == null) return@mapNotNull null
 
-                    // Remove floor-plan scale to get original room coords
-                    val tappedRoomX = preScaledX / fpScale
-                    val tappedRoomY = preScaledY / fpScale
-
-                    // Tolerance in room units (approx 24 pixels visually)
-                    val tolerance = 24f / fpScale
-
-                    // Find nearest room within tolerance
-                    var nearest: Room? = null
-                    var nearestDist = Float.MAX_VALUE
-                    for (room in topFloor.rooms) {
-                        val dx = tappedRoomX - room.x
-                        val dy = tappedRoomY - room.y
-                        val dist = hypot(dx, dy)
-                        if (dist < nearestDist) {
-                            nearestDist = dist
-                            nearest = room
+                        // Build label text (same as renderer)
+                        val labelText = if (room.number != null) {
+                            "${room.number}: ${room.name}"
+                        } else {
+                            room.name
                         }
+
+                        // Estimate line metrics
+                        val numLines = if (labelText.length <= maxCharsPerLine) 1
+                                       else ((labelText.length + maxCharsPerLine - 1) / maxCharsPerLine)
+                        val maxLineChars = minOf(labelText.length, maxCharsPerLine)
+
+                        // Hitbox half-dimensions in screen pixels
+                        val halfW = (maxLineChars * charWidthPx) / 2f + hitPadX
+                        val halfH = (numLines * lineHeightPx) / 2f + hitPadY
+
+                        // Floor-plan transform (scale + rotation from metadata)
+                        val rx = room.x * fpScale
+                        val ry = room.y * fpScale
+                        val fprX = rx * fpCos - ry * fpSin
+                        val fprY = rx * fpSin + ry * fpCos
+
+                        // Center translate (matches translate(centerX, centerY) in draw)
+                        val cx = fprX + centerX
+                        val cy = fprY + centerY
+
+                        // Canvas scale
+                        val sx = cx * cs.scale
+                        val sy = cy * cs.scale
+
+                        // Canvas rotation (around origin 0,0) + translation
+                        val screenX = sx * canvasCos - sy * canvasSin + cs.offsetX
+                        val screenY = sx * canvasSin + sy * canvasCos + cs.offsetY
+
+                        // Screen-pixel rectangle, always axis-aligned
+                        val dx = tapOffset.x - screenX
+                        val dy = tapOffset.y - screenY
+                        if (abs(dx) <= halfW && abs(dy) <= halfH) {
+                            Pair(room, hypot(dx, dy))
+                        } else null
                     }
 
-                    if (nearest != null && nearestDist <= tolerance) {
-                        onRoomTap(nearest)
+                    val chosen = candidates.minByOrNull { it.second }?.first
+
+                    if (chosen != null) {
+                        onRoomTap(chosen)
                     } else {
                         onBackgroundTap()
                     }

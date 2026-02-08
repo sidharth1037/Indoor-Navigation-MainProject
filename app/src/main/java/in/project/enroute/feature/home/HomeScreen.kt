@@ -196,7 +196,7 @@ private fun HomeScreenContent(
     // Animate bottom button offset when room info panel is visible
     val panelVisible = uiState.pinnedRoom != null
     val bottomButtonPadding by animateDpAsState(
-        targetValue = if (panelVisible) 16.dp + screenHeight.dp / 9f else 16.dp,
+        targetValue = if (panelVisible) 16.dp + 130.dp else 16.dp,
         animationSpec = dpTween(durationMillis = 350),
         label = "bottomButtonPadding"
     )
@@ -359,6 +359,7 @@ private fun HomeScreenContent(
                 // Room info panel slides up from bottom when a room label is tapped
                 RoomInfoPanel(
                     room = uiState.pinnedRoom,
+                    onDismiss = onBackgroundTap,
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
                 
@@ -388,7 +389,8 @@ private fun HomeScreenContent(
                             showSearch = false 
                             isMorphingToSearch = false
                         },
-                        onCenterView = onCenterView
+                        onCenterView = onCenterView,
+                        onRoomTap = onRoomTap
                     )
                 }
             }

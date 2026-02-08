@@ -26,13 +26,14 @@ import java.io.InputStreamReader
 
 /**
  * Represents a single search result.
- * Contains the location (x, y coordinates) and the label (room name/number) of the result.
+ * Contains the location (x, y coordinates), the label (room name/number), and the Room object.
  */
 data class SearchResult(
     val x: Float,
     val y: Float,
     val label: String?,
-    val roomNo: Int?
+    val roomNo: Int?,
+    val room: Room
 )
 
 /**
@@ -118,7 +119,8 @@ fun search(context: Context, floorId: String, query: String): List<SearchResult>
                     x = room.x,
                     y = room.y,
                     label = room.name,
-                    roomNo = room.number
+                    roomNo = room.number,
+                    room = room
                 )
             }
             .sortedBy { it.roomNo ?: Int.MAX_VALUE }
@@ -134,7 +136,8 @@ fun search(context: Context, floorId: String, query: String): List<SearchResult>
                     x = room.x,
                     y = room.y,
                     label = room.name,
-                    roomNo = room.number
+                    roomNo = room.number,
+                    room = room
                 )
             }
             .sortedBy { it.label ?: "" }
@@ -180,7 +183,8 @@ fun searchMultiFloor(context: Context, query: String): List<SearchResult> {
                             x = room.x,
                             y = room.y,
                             label = room.name,
-                            roomNo = room.number
+                            roomNo = room.number,
+                            room = room
                         )
                     )
                 }
@@ -197,7 +201,8 @@ fun searchMultiFloor(context: Context, query: String): List<SearchResult> {
                             x = room.x,
                             y = room.y,
                             label = room.name,
-                            roomNo = room.number
+                            roomNo = room.number,
+                            room = room
                         )
                     )
                 }

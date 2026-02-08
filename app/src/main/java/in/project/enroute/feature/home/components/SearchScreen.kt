@@ -45,6 +45,7 @@ import kotlinx.coroutines.delay
 import `in`.project.enroute.feature.home.utils.searchMultiFloor
 import `in`.project.enroute.feature.home.utils.DestinationButton
 import `in`.project.enroute.feature.home.utils.SearchResult
+import `in`.project.enroute.data.model.Room
 
 /**
  * Full-screen search page showing an input box at the top.
@@ -53,7 +54,8 @@ import `in`.project.enroute.feature.home.utils.SearchResult
 @Composable
 fun SearchScreen(
     onBack: () -> Unit,
-    onCenterView: (x: Float, y: Float, scale: Float) -> Unit = { _, _, _ -> }
+    onCenterView: (x: Float, y: Float, scale: Float) -> Unit = { _, _, _ -> },
+    onRoomTap: (Room) -> Unit = { _ -> }
 ) {
     val query = remember { mutableStateOf("") }
     val searchResults = remember { mutableStateOf<List<SearchResult>>(emptyList()) }
@@ -197,6 +199,8 @@ fun SearchScreen(
                     DestinationButton(
                         coordinates = Pair(result.x, result.y),
                         onNavigate = { x, y ->
+                            // Pin the room first
+                            onRoomTap(result.room)
                             // Hide keyboard immediately
                             focusManager.clearFocus()
                             // Schedule navigation after keyboard hide animation completes
