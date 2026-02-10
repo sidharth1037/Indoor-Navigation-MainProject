@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * UI state for the floor plan feature.
@@ -235,7 +237,15 @@ class FloorPlanViewModel(
             val updatedBuildingStates = currentState.buildingStates.toMutableMap()
             updatedBuildingStates[buildingId] = updatedBuildingState
             
-            currentState.copy(buildingStates = updatedBuildingStates)
+            val newState = currentState.copy(buildingStates = updatedBuildingStates)
+            
+            // Check if the pinned room is still visible after floor change
+            // If not, unpin it
+            if (newState.pinnedRoom != null && !isRoomVisibleInFloorsToRender(newState.pinnedRoom, newState.allFloorsToRender)) {
+                newState.copy(pinnedRoom = null)
+            } else {
+                newState
+            }
         }
     }
 
@@ -246,6 +256,106 @@ class FloorPlanViewModel(
     fun setCurrentFloor(floorNumber: Float) {
         val dominantBuildingId = _uiState.value.dominantBuildingId ?: return
         setCurrentFloor(dominantBuildingId, floorNumber)
+    }
+
+    /**
+     * Checks if a room is visible in the given list of floors to render.
+     * A room is visible if it exists in one of the floors and is not covered
+     * by any floor above it.
+     */
+    private fun isRoomVisibleInFloorsToRender(room: Room, floorsToRender: List<FloorPlanData>): Boolean {
+        if (floorsToRender.isEmpty()) return false
+        
+        for ((index, floorData) in floorsToRender.withIndex()) {
+            // Check if room is in this floor
+            if (room !in floorData.rooms) continue
+            
+            // Room is in this floor - now check if it's covered by floors above
+            val floorsAbove = floorsToRender.subList(index + 1, floorsToRender.size)
+            if (floorsAbove.isEmpty()) {
+                // No floors above, so room is visible
+                return true
+            }
+            
+            // Check if room center point is covered by any floor above
+            if (!isRoomCoveredByFloorsAbove(room, floorData, floorsAbove)) {
+                return true
+            }
+        }
+        
+        return false
+    }
+
+    /**
+     * Checks if a room's center point is covered by any of the given floors.
+     * Uses the same point-in-polygon logic as the rendering system.
+     */
+    private fun isRoomCoveredByFloorsAbove(room: Room, roomFloor: FloorPlanData, floorsAbove: List<FloorPlanData>): Boolean {
+        if (floorsAbove.isEmpty()) return false
+        
+        // Transform room center to canvas coordinates
+        val angleRad = Math.toRadians(roomFloor.metadata.rotation.toDouble()).toFloat()
+        val cosAngle = cos(angleRad)
+        val sinAngle = sin(angleRad)
+        
+        val x = room.x * roomFloor.metadata.scale
+        val y = room.y * roomFloor.metadata.scale
+        val rotatedX = x * cosAngle - y * sinAngle
+        val rotatedY = x * sinAngle + y * cosAngle
+        
+        // Check if this point is inside any boundary polygon of floors above
+        for (floor in floorsAbove) {
+            val scale = floor.metadata.scale
+            val rotationDegrees = floor.metadata.rotation
+            val floorAngleRad = Math.toRadians(rotationDegrees.toDouble()).toFloat()
+            val floorCosAngle = cos(floorAngleRad)
+            val floorSinAngle = sin(floorAngleRad)
+            
+            for (polygon in floor.boundaryPolygons) {
+                if (polygon.points.isEmpty()) continue
+                
+                // Transform polygon points to canvas coordinates
+                val transformedPoints = polygon.points.sortedBy { it.id }.map { point ->
+                    val px = point.x * scale
+                    val py = point.y * scale
+                    val rotatedPx = px * floorCosAngle - py * floorSinAngle
+                    val rotatedPy = px * floorSinAngle + py * floorCosAngle
+                    Pair(rotatedPx, rotatedPy)
+                }
+                
+                // Check if room center point is inside this polygon
+                if (isPointInPolygon(rotatedX, rotatedY, transformedPoints)) {
+                    return true
+                }
+            }
+        }
+        
+        return false
+    }
+
+    /**
+     * Ray casting algorithm to check if a point is inside a polygon.
+     */
+    private fun isPointInPolygon(x: Float, y: Float, polygon: List<Pair<Float, Float>>): Boolean {
+        if (polygon.size < 3) return false
+        
+        var inside = false
+        var j = polygon.size - 1
+        
+        for (i in polygon.indices) {
+            val xi = polygon[i].first
+            val yi = polygon[i].second
+            val xj = polygon[j].first
+            val yj = polygon[j].second
+            
+            val intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+            if (intersect) {
+                inside = !inside
+            }
+            j = i
+        }
+        
+        return inside
     }
 
     /**
