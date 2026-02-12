@@ -201,7 +201,8 @@ class PdrRepository {
      * @return Stride length in centimeters
      */
     private fun calculateStrideLength(instantCadence: Float, averageCadence: Float): Float {
-        val heightInMeters = strideConfig.heightCm / 100f
+        val heightCm = strideConfig.heightCm ?: return 0f
+        val heightInMeters = heightCm / 100f
 
         // SMOOTHING: Blending instant cadence (30%) with history (70%)
         // to prevent jittery movement on the map.
@@ -217,14 +218,3 @@ class PdrRepository {
         return (stride * 100f).coerceIn(30f, 120f)
     }
 }
-
-//first calculation with fixed k
-//private fun calculateStrideLength(cadence: Float): Float {
-//    // Formula: stride = height * (k * cadence + c)
-//    // This gives reasonable stride lengths based on walking speed
-//    val heightInMeters = strideConfig.heightCm / 100f
-//    val stride = heightInMeters * (strideConfig.kValue * cadence + strideConfig.cValue)
-//
-//    // Convert to cm and clamp to reasonable range (30-120 cm)
-//    return (stride * 100f).coerceIn(30f, 120f)
-//}

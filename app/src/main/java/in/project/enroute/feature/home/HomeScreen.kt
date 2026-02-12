@@ -50,6 +50,7 @@ import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionDialog
 import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionOverlay
 import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionTapHandler
 import `in`.project.enroute.feature.pdr.ui.components.PdrPathOverlay
+import `in`.project.enroute.feature.pdr.ui.components.HeightRequiredDialog
 import `in`.project.enroute.feature.home.components.SetLocationButton
 import `in`.project.enroute.feature.home.components.RoomInfoPanel
 import `in`.project.enroute.feature.home.components.StopTrackingButton
@@ -194,6 +195,8 @@ fun HomeScreen(
                 pdrViewModel.setOrigin(origin, currentFloor)
             },
             onCancelOriginSelection = { pdrViewModel.cancelOriginSelection() },
+            onDismissHeightRequired = { pdrViewModel.dismissHeightRequired() },
+            onSaveHeight = { height -> pdrViewModel.saveHeightAndProceed(height) },
             onDirectionsClick = { room ->
                 val origin = pdrUiState.pdrState.origin
                 val currentPosition = if (pdrUiState.pdrState.path.isNotEmpty()) {
@@ -230,6 +233,8 @@ private fun HomeScreenContent(
     onClearPdrClick: () -> Unit,
     onOriginSelected: (androidx.compose.ui.geometry.Offset) -> Unit,
     onCancelOriginSelection: () -> Unit,
+    onDismissHeightRequired: () -> Unit,
+    onSaveHeight: (Float) -> Unit,
     onDirectionsClick: (Room) -> Unit
 ) {
     var showSearch by remember { mutableStateOf(false) }
@@ -450,6 +455,14 @@ private fun HomeScreenContent(
                             // TODO: Implement location selection
                             showOriginDialog = false
                         }
+                    )
+                }
+                
+                // Height required dialog
+                if (pdrUiState.showHeightRequired) {
+                    HeightRequiredDialog(
+                        onDismiss = onDismissHeightRequired,
+                        onSave = onSaveHeight
                     )
                 }
                 

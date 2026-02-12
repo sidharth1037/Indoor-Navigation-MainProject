@@ -117,7 +117,7 @@ fun HeightSettingItem(
                     )
                 } else {
                     Text(
-                        text = "${uiState.value.currentHeight} cm",
+                        text = if (uiState.value.currentHeight != null) "${uiState.value.currentHeight} cm" else "Not set",
                         fontSize = 16.sp,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )

@@ -56,6 +56,7 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.datastore.preferences)
     implementation(libs.gson)
     implementation(libs.androidx.compose.animation)
     testImplementation(libs.junit)

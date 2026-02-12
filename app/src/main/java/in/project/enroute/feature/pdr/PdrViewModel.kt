@@ -11,6 +11,7 @@ import `in`.project.enroute.feature.pdr.data.model.StrideConfig
 import `in`.project.enroute.feature.pdr.data.repository.PdrRepository
 import `in`.project.enroute.feature.pdr.sensor.HeadingDetector
 import `in`.project.enroute.feature.pdr.sensor.StepDetector
+import `in`.project.enroute.feature.settings.data.SettingsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +26,7 @@ import kotlinx.coroutines.launch
 data class PdrUiState(
     val pdrState: PdrState = PdrState(),
     val isSelectingOrigin: Boolean = false,
+    val showHeightRequired: Boolean = false,
     val stepDetectionConfig: StepDetectionConfig = StepDetectionConfig(),
     val strideConfig: StrideConfig = StrideConfig()
 )
@@ -40,6 +42,7 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     private val sensorManager = application.getSystemService(SensorManager::class.java)
     
     private val repository = PdrRepository()
+    private val settingsRepository = SettingsRepository(application.applicationContext)
     private val headingDetector = HeadingDetector(sensorManager)
     private val stepDetector = StepDetector(sensorManager)
 
@@ -56,6 +59,17 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         // Start heading detector immediately for compass functionality
         // (step detector only starts when tracking begins)
         headingDetector.start()
+
+        // Load height from settings and update stride config
+        viewModelScope.launch {
+            settingsRepository.height.collect { height ->
+                if (height != null) {
+                    val updatedConfig = _uiState.value.strideConfig.copy(heightCm = height)
+                    _uiState.update { it.copy(strideConfig = updatedConfig) }
+                    repository.updateStrideConfig(updatedConfig)
+                }
+            }
+        }
 
         // Set up step detector callback
         stepDetector.onStepDetected = { stepIntervalMs ->
@@ -82,10 +96,39 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Enters origin selection mode.
-     * In this mode, the user can tap on the canvas to set the starting point.
+     * Shows height dialog first if height is not set.
      */
     fun startOriginSelection() {
-        _uiState.update { it.copy(isSelectingOrigin = true) }
+        if (_uiState.value.strideConfig.heightCm == null) {
+            _uiState.update { it.copy(showHeightRequired = true) }
+        } else {
+            _uiState.update { it.copy(isSelectingOrigin = true) }
+        }
+    }
+
+    /**
+     * Dismisses the height required dialog.
+     */
+    fun dismissHeightRequired() {
+        _uiState.update { it.copy(showHeightRequired = false) }
+    }
+
+    /**
+     * Saves height from the dialog and proceeds to origin selection.
+     */
+    fun saveHeightAndProceed(heightCm: Float) {
+        viewModelScope.launch {
+            settingsRepository.saveHeight(heightCm)
+        }
+        val updatedConfig = _uiState.value.strideConfig.copy(heightCm = heightCm)
+        _uiState.update {
+            it.copy(
+                strideConfig = updatedConfig,
+                showHeightRequired = false,
+                isSelectingOrigin = true
+            )
+        }
+        repository.updateStrideConfig(updatedConfig)
     }
 
     /**

@@ -56,7 +56,7 @@ data class StepDetectionConfig(
  * @param cadenceAverageSize Number of recent cadences to average
  */
 data class StrideConfig(
-    val heightCm: Float = 155f,
+    val heightCm: Float? = null,
     val kValue: Float = 0.37f,
     val cValue: Float = 0.15f,
     val cadenceAverageSize: Int = 5

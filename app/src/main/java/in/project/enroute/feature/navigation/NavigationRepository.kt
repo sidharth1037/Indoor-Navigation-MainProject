@@ -144,12 +144,12 @@ class NavigationRepository(walls: List<Wall>) {
             if (current == goalGrid) {
                 val elapsedTime = System.currentTimeMillis() - startTime
                 Log.d(TAG, "✓ PATH FOUND in $iterations iterations, ${elapsedTime}ms")
-                return reconstructPath(cameFrom, current).also {
+                return reconstructPath(cameFrom, current!!).also {
                     Log.d(TAG, "Path length: ${it.size} waypoints")
                 }
             }
 
-            closedSet.add(current)
+            closedSet.add(current!!)
 
             for (neighbor in getNeighbors(current)) {
                 if (neighbor in closedSet) continue
