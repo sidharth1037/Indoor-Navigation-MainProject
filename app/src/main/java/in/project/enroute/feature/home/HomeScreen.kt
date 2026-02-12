@@ -48,7 +48,7 @@ import `in`.project.enroute.feature.pdr.PdrViewModel
 import `in`.project.enroute.feature.pdr.PdrUiState
 import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionDialog
 import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionOverlay
-import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionTapHandler
+
 import `in`.project.enroute.feature.pdr.ui.components.PdrPathOverlay
 import `in`.project.enroute.feature.pdr.ui.components.HeightRequiredDialog
 import `in`.project.enroute.feature.home.components.SetLocationButton
@@ -150,8 +150,6 @@ fun HomeScreen(
             navUiState = navUiState,
             heading = heading,
             effectiveCanvasState = effectiveCanvasState,
-            screenWidth = screenWidth,
-            screenHeight = screenHeight,
             maxWidth = maxWidth,
             onCanvasStateChange = {
                 // If gesture cancels following mode, switch heading back to compass rate
@@ -220,8 +218,6 @@ private fun HomeScreenContent(
     navUiState: NavigationUiState,
     heading: Float,
     effectiveCanvasState: CanvasState,
-    screenWidth: Float,
-    screenHeight: Float,
     maxWidth: Dp,
     onCanvasStateChange: (CanvasState) -> Unit,
     onFloorChange: (Float) -> Unit,
@@ -243,7 +239,6 @@ private fun HomeScreenContent(
     var aimPressed by remember { mutableStateOf(false) }
     // When true, means the origin dialog was triggered by "Directions" button
     // and we should request directions once origin is set
-    var pendingDirectionsRoom by remember { mutableStateOf<Room?>(null) }
 
     // Animate bottom button offset when room info panel is visible
     val panelVisible = uiState.pinnedRoom != null
@@ -256,15 +251,6 @@ private fun HomeScreenContent(
     // Reset local pressed state when following mode is turned off so button reappears
     LaunchedEffect(uiState.isFollowingMode) {
         if (!uiState.isFollowingMode) aimPressed = false
-    }
-
-    // When origin becomes available after a pending "Directions" request, fire pathfinding
-    LaunchedEffect(pdrUiState.pdrState.origin, pendingDirectionsRoom) {
-        val room = pendingDirectionsRoom
-        if (room != null && pdrUiState.pdrState.origin != null) {
-            pendingDirectionsRoom = null
-            onDirectionsClick(room)
-        }
     }
 
     Box(
@@ -297,6 +283,8 @@ private fun HomeScreenContent(
                     pinTintColor = primaryColor,
                     onRoomTap = onRoomTap,
                     onBackgroundTap = onBackgroundTap,
+                    isSelectingOrigin = pdrUiState.isSelectingOrigin,
+                    onOriginTap = onOriginSelected,
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -319,17 +307,8 @@ private fun HomeScreenContent(
                     )
                 }
 
-                // Origin selection tap handler (when in selection mode)
+                // Origin selection overlay with instructions (when in selection mode)
                 if (pdrUiState.isSelectingOrigin) {
-                    OriginSelectionTapHandler(
-                        canvasState = effectiveCanvasState,
-                        screenWidth = screenWidth,
-                        screenHeight = screenHeight,
-                        onPointSelected = onOriginSelected,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    
-                    // Selection mode overlay with instructions
                     OriginSelectionOverlay(
                         onCancel = onCancelOriginSelection,
                         modifier = Modifier.align(Alignment.TopCenter)
@@ -434,7 +413,6 @@ private fun HomeScreenContent(
                     onDirectionsClick = { room ->
                         if (pdrUiState.pdrState.origin == null) {
                             // Origin not set → show dialog, remember room for later
-                            pendingDirectionsRoom = room
                             showOriginDialog = true
                         } else {
                             onDirectionsClick(room)

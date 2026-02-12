@@ -32,6 +32,8 @@ import `in`.project.enroute.feature.floorplan.rendering.renderers.drawWalls
 import `in`.project.enroute.feature.floorplan.rendering.renderers.drawBuildingName
 import `in`.project.enroute.feature.floorplan.rendering.renderers.drawPin
 import android.graphics.drawable.VectorDrawable
+import androidx.compose.ui.geometry.Offset
+import `in`.project.enroute.feature.floorplan.utils.screenToWorldCoordinates
 
 /**
  * Display configuration for the floor plan rendering.
@@ -81,7 +83,9 @@ fun FloorPlanCanvas(
     pinDrawable: VectorDrawable? = null,
     pinTintColor: Int = android.graphics.Color.BLACK,
     onRoomTap: (Room) -> Unit = {},
-    onBackgroundTap: () -> Unit = {}
+    onBackgroundTap: () -> Unit = {},
+    isSelectingOrigin: Boolean = false,
+    onOriginTap: ((Offset) -> Unit)? = null
 ) {
     if (floorsToRender.isEmpty()) return
 
@@ -89,6 +93,8 @@ fun FloorPlanCanvas(
     val currentCanvasState = rememberUpdatedState(canvasState)
     val currentOnCanvasStateChange = rememberUpdatedState(onCanvasStateChange)
     val currentFloorsToRender = rememberUpdatedState(floorsToRender)
+    val currentIsSelectingOrigin = rememberUpdatedState(isSelectingOrigin)
+    val currentOnOriginTap = rememberUpdatedState(onOriginTap)
     val canvasSize = remember { mutableStateOf(IntSize.Zero) }
 
     Canvas(
@@ -99,6 +105,22 @@ fun FloorPlanCanvas(
             .onSizeChanged { canvasSize.value = it }
             .pointerInput(Unit) {
                 detectTapGestures { tapOffset ->
+                    // Origin selection mode: convert tap to world coordinates
+                    if (currentIsSelectingOrigin.value) {
+                        val size = canvasSize.value
+                        if (size.width > 0 && size.height > 0) {
+                            val worldPoint = screenToWorldCoordinates(
+                                screenX = tapOffset.x,
+                                screenY = tapOffset.y,
+                                canvasState = currentCanvasState.value,
+                                screenWidth = size.width.toFloat(),
+                                screenHeight = size.height.toFloat()
+                            )
+                            currentOnOriginTap.value?.invoke(worldPoint)
+                        }
+                        return@detectTapGestures
+                    }
+
                     val cs = currentCanvasState.value
                     val size = canvasSize.value
                     if (size.width == 0 || size.height == 0) return@detectTapGestures
