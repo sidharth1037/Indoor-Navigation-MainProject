@@ -49,8 +49,10 @@ class PdrRepository {
 
     /**
      * Emits individual step events for observers that need per-step updates.
+     * Currently populated internally; will be observed by a telemetry/debug UI.
      */
     private val _stepEvents = MutableStateFlow<StepEvent?>(null)
+    @Suppress("unused")
     val stepEvents: StateFlow<StepEvent?> = _stepEvents.asStateFlow()
 
     /**
@@ -62,9 +64,10 @@ class PdrRepository {
 
     /**
      * Sets the origin point and starts tracking.
-     * This is the starting point for PDR path calculation.
+     * All positions are stored in campus-wide coordinates.
      *
-     * @param origin The starting coordinate in canvas/world space
+     * @param origin The starting coordinate in campus-wide space
+     * @param currentFloor The floor the user is on (e.g. "floor_1")
      */
     fun setOrigin(origin: Offset, currentFloor: String? = null) {
         currentX = origin.x

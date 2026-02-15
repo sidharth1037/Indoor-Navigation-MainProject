@@ -3,6 +3,7 @@ package `in`.project.enroute.feature.floorplan
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import `in`.project.enroute.data.model.RelativePosition
 import `in`.project.enroute.data.model.Building
 import `in`.project.enroute.data.model.FloorPlanData
 import `in`.project.enroute.data.model.Room
@@ -23,6 +24,23 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.sin
+
+/**
+ * Bounds of the campus background canvas in world coordinates.
+ * Encompasses all buildings with padding.
+ */
+data class CampusBounds(
+    val left: Float = 0f,
+    val top: Float = 0f,
+    val right: Float = 0f,
+    val bottom: Float = 0f
+) {
+    val width: Float get() = right - left
+    val height: Float get() = bottom - top
+    @Suppress("unused") val centerX: Float get() = (left + right) / 2f
+    @Suppress("unused") val centerY: Float get() = (top + bottom) / 2f
+    val isEmpty: Boolean get() = width <= 0f || height <= 0f
+}
 
 /**
  * UI state for the floor plan feature.
@@ -79,7 +97,13 @@ data class FloorPlanUiState(
      * Currently pinned room (shown as a pin on the canvas).
      * Null when no pin is displayed.
      */
-    val pinnedRoom: Room? = null
+    val pinnedRoom: Room? = null,
+    
+    /**
+     * Bounds of the campus canvas encompassing all buildings.
+     * Used for background rendering and pan constraints.
+     */
+    val campusBounds: CampusBounds = CampusBounds()
 ) {
     /**
      * Returns the state of the dominant building, if any.
@@ -121,6 +145,7 @@ data class FloorPlanUiState(
     /**
      * Returns the current floor's FloorPlanData (walls, entrances, etc.) from the dominant building.
      */
+    @Suppress("unused")
     val currentFloorData: FloorPlanData?
         get() = dominantBuildingState?.currentFloorData
 
@@ -181,12 +206,15 @@ class FloorPlanViewModel(
                     val updatedBuildingStates = currentState.buildingStates.toMutableMap()
                     updatedBuildingStates[building.buildingId] = buildingState
                     
+                    val campusBounds = calculateCampusBounds(updatedBuildingStates)
+                    
                     currentState.copy(
                         isLoading = false,
                         buildingStates = updatedBuildingStates,
                         // Set this as dominant if it's the first/only building
                         dominantBuildingId = currentState.dominantBuildingId ?: building.buildingId,
-                        showFloorSlider = true
+                        showFloorSlider = true,
+                        campusBounds = campusBounds
                     )
                 }
             } catch (e: Exception) {
@@ -219,10 +247,55 @@ class FloorPlanViewModel(
                 availableFloors = floorIds,
                 scale = metadata?.scale ?: 1f,
                 rotation = metadata?.rotation ?: 0f,
-                labelPosition = metadata?.labelPosition
+                labelPosition = metadata?.labelPosition,
+                relativePosition = metadata?.relativePosition ?: RelativePosition()
             )
             
             loadBuilding(building)
+        }
+    }
+
+    /**
+     * Loads all buildings on the campus by scanning the assets directory.
+     * Each building's floors are discovered automatically.
+     */
+    fun loadCampus() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            
+            try {
+                val buildingIds = repository.getAvailableBuildings()
+                
+                for (buildingId in buildingIds) {
+                    val metadata = try {
+                        repository.loadBuildingMetadata(buildingId)
+                    } catch (e: Exception) {
+                        null
+                    }
+                    
+                    val floorIds = repository.getAvailableFloors(buildingId)
+                    if (floorIds.isEmpty()) continue
+                    
+                    val building = Building(
+                        buildingId = buildingId,
+                        buildingName = metadata?.buildingName ?: buildingId,
+                        availableFloors = floorIds,
+                        scale = metadata?.scale ?: 1f,
+                        rotation = metadata?.rotation ?: 0f,
+                        labelPosition = metadata?.labelPosition,
+                        relativePosition = metadata?.relativePosition ?: RelativePosition()
+                    )
+                    
+                    loadBuilding(building)
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        error = e.message ?: "Failed to load campus"
+                    )
+                }
+            }
         }
     }
 
@@ -374,6 +447,50 @@ class FloorPlanViewModel(
         }
         
         return inside
+    }
+
+    /**
+     * Returns the floor ID at a campus-wide [point] by testing which building's
+     * boundary polygon the point lies inside.
+     *
+     * When the user is zoomed out, there is no dominant building, so
+     * [FloorPlanUiState.currentFloorId] can be null even though the user tapped
+     * inside a building.  This function resolves the floor reliably regardless
+     * of zoom level.
+     *
+     * @return The floor ID (e.g. "floor_1") of the building the point is inside,
+     *         or the default floor of the first building if the point is outside
+     *         all buildings (campus open area), or null if there are no buildings.
+     */
+    fun findFloorAtPoint(point: Offset): String? {
+        val state = _uiState.value
+        for ((_, buildingState) in state.buildingStates) {
+            val building = buildingState.building
+            val relX = building.relativePosition.x
+            val relY = building.relativePosition.y
+            val currentFloorData = buildingState.currentFloorData ?: continue
+
+            val meta = currentFloorData.metadata
+            val scale = meta.scale
+            val rotRad = Math.toRadians(meta.rotation.toDouble()).toFloat()
+            val cosA = cos(rotRad)
+            val sinA = sin(rotRad)
+
+            // Test campus-wide point against boundary polygons (in campus-wide space)
+            for (polygon in currentFloorData.boundaryPolygons) {
+                if (polygon.points.isEmpty()) continue
+                val transformed = polygon.points.sortedBy { it.id }.map { p ->
+                    val px = p.x * scale
+                    val py = p.y * scale
+                    Pair(px * cosA - py * sinA + relX, px * sinA + py * cosA + relY)
+                }
+                if (isPointInPolygon(point.x, point.y, transformed)) {
+                    return currentFloorData.floorId
+                }
+            }
+        }
+        // Point is outside all buildings but inside campus bounds → use default floor
+        return state.buildingStates.values.firstOrNull()?.currentFloorData?.floorId
     }
 
     /**
@@ -630,6 +747,7 @@ class FloorPlanViewModel(
             
             val floorPlanScale = currentFloorData?.metadata?.scale ?: 1f
             val floorPlanRotation = currentFloorData?.metadata?.rotation ?: 0f
+            val relPos = buildingState.building.relativePosition
             
             FollowingAnimator.animateToFloorPlanCoordinate(
                 currentState = currentState.canvasState,
@@ -640,11 +758,70 @@ class FloorPlanViewModel(
                 floorPlanRotation = floorPlanRotation,
                 screenWidth = currentState.screenWidth,
                 screenHeight = currentState.screenHeight,
+                buildingOffsetX = relPos.x,
+                buildingOffsetY = relPos.y,
                 config = animationConfig,
                 onStateUpdate = { newState ->
                     updateCanvasState(newState, isFromGesture = false)
                 }
             )
         }
+    }
+    
+    /**
+     * Calculates the campus bounds that encompass all buildings.
+     * Each building's boundary polygons are transformed by their metadata (scale + rotation)
+     * and offset by their relativePosition to find the overall extent.
+     * Adds padding around the edges.
+     */
+    private fun calculateCampusBounds(buildingStates: Map<String, BuildingState>): CampusBounds {
+        if (buildingStates.isEmpty()) return CampusBounds()
+        
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxX = Float.MIN_VALUE
+        var maxY = Float.MIN_VALUE
+        var hasPoints = false
+        
+        for ((_, buildingState) in buildingStates) {
+            val building = buildingState.building
+            val relX = building.relativePosition.x
+            val relY = building.relativePosition.y
+            val scale = building.scale
+            val rotation = building.rotation
+            val angleRad = Math.toRadians(rotation.toDouble()).toFloat()
+            val cosAngle = cos(angleRad)
+            val sinAngle = sin(angleRad)
+            
+            // Check all boundary polygons from any floor
+            for (floorData in buildingState.floors.values) {
+                for (polygon in floorData.boundaryPolygons) {
+                    for (point in polygon.points) {
+                        val sx = point.x * scale
+                        val sy = point.y * scale
+                        val rx = sx * cosAngle - sy * sinAngle + relX
+                        val ry = sx * sinAngle + sy * cosAngle + relY
+                        
+                        minX = kotlin.math.min(minX, rx)
+                        minY = kotlin.math.min(minY, ry)
+                        maxX = kotlin.math.max(maxX, rx)
+                        maxY = kotlin.math.max(maxY, ry)
+                        hasPoints = true
+                    }
+                }
+            }
+        }
+        
+        if (!hasPoints) return CampusBounds()
+        
+        // Add padding around the campus (20% of the largest dimension)
+        val padding = kotlin.math.max(maxX - minX, maxY - minY) * 0.20f
+        
+        return CampusBounds(
+            left = minX - padding,
+            top = minY - padding,
+            right = maxX + padding,
+            bottom = maxY + padding
+        )
     }
 }

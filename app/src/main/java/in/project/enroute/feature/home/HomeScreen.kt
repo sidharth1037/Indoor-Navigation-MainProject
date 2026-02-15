@@ -38,6 +38,7 @@ import `in`.project.enroute.feature.home.components.SearchScreen
 import `in`.project.enroute.feature.home.components.AimButton
 import `in`.project.enroute.feature.home.components.CompassButton
 import `in`.project.enroute.feature.floorplan.rendering.FloorPlanCanvas
+import `in`.project.enroute.feature.floorplan.rendering.FloorPlanLabelsOverlay
 import `in`.project.enroute.data.model.Room
 import android.graphics.drawable.VectorDrawable
 import androidx.compose.ui.platform.LocalContext
@@ -73,12 +74,9 @@ fun HomeScreen(
     val heading by pdrViewModel.heading.collectAsState()
     val view = LocalView.current
 
-    // Load all floors on first composition
+    // Load all buildings on first composition
     LaunchedEffect(Unit) {
-        floorPlanViewModel.loadAllFloors(
-            "building_1", 
-            listOf("floor_1", "floor_1.5", "floor_2", "floor_2.5")
-        )
+        floorPlanViewModel.loadCampus()
     }
 
     // Supply loaded floor data to NavigationViewModel whenever it changes
@@ -129,6 +127,7 @@ fun HomeScreen(
         ) {
             derivedStateOf {
                 if (uiState.isFollowingMode && !uiState.isFollowingAnimating && pdrUiState.pdrState.path.isNotEmpty()) {
+                    // PDR positions are already in campus-wide coordinates
                     val currentPosition = pdrUiState.pdrState.path.last().position
                     FollowingAnimator.calculateFollowingState(
                         worldPosition = currentPosition,
@@ -161,11 +160,16 @@ fun HomeScreen(
             onFloorChange = { floorPlanViewModel.setCurrentFloor(it) },
             onCenterView = { x, y, scale -> floorPlanViewModel.centerOnCoordinate(x, y, scale) },
             onRoomTap = { room ->
-                // Switch to the room's floor if it has floor info
+                // Switch to the room's floor in the correct building
                 room.floorId?.let { fid ->
                     val floorNumber = fid.removePrefix("floor_").toFloatOrNull()
                     if (floorNumber != null) {
-                        floorPlanViewModel.setCurrentFloor(floorNumber)
+                        val buildingId = room.buildingId
+                        if (buildingId != null) {
+                            floorPlanViewModel.setCurrentFloor(buildingId, floorNumber)
+                        } else {
+                            floorPlanViewModel.setCurrentFloor(floorNumber)
+                        }
                     }
                 }
                 floorPlanViewModel.pinRoom(room)
@@ -175,7 +179,7 @@ fun HomeScreen(
                 navigationViewModel.clearPath()
             },
             onEnableTracking = { position, heading ->
-                // Switch heading sensor to fast tracking for smooth rotation
+                // PDR positions are already campus-wide
                 pdrViewModel.setHeadingTrackingMode(true)
                 floorPlanViewModel.enableFollowingMode(position, heading)
             },
@@ -188,23 +192,24 @@ fun HomeScreen(
                 navigationViewModel.clearPath()
             },
             onOriginSelected = { origin ->
-                // Pass current floor to PDR origin
-                val currentFloor = uiState.currentFloorId
+                // Pass current floor and building to PDR origin
+                // Origin tap is already in campus-wide coordinates
+                // Use findFloorAtPoint so origin works even when zoomed out (no dominant building)
+                val currentFloor = floorPlanViewModel.findFloorAtPoint(origin)
                 pdrViewModel.setOrigin(origin, currentFloor)
             },
             onCancelOriginSelection = { pdrViewModel.cancelOriginSelection() },
             onDismissHeightRequired = { pdrViewModel.dismissHeightRequired() },
             onSaveHeight = { height -> pdrViewModel.saveHeightAndProceed(height) },
             onDirectionsClick = { room ->
-                val origin = pdrUiState.pdrState.origin
-                val currentPosition = if (pdrUiState.pdrState.path.isNotEmpty()) {
-                    pdrUiState.pdrState.path.last().position
-                } else {
-                    origin
-                }
-                val currentFloor = uiState.currentFloorId
-                if (currentPosition != null && currentFloor != null) {
-                    navigationViewModel.requestDirections(room, currentPosition, currentFloor)
+                // Positions are all campus-wide
+                val currentPosition = pdrUiState.pdrState.path.lastOrNull()?.position
+                    ?: pdrUiState.pdrState.origin
+                // Use the floor stored in PDR state (set at origin time) so navigation
+                // works even when zoomed out with no dominant building.
+                val floor = pdrUiState.pdrState.currentFloor ?: uiState.currentFloorId
+                if (currentPosition != null && floor != null) {
+                    navigationViewModel.requestDirections(room, currentPosition, floor)
                 }
             }
         )
@@ -264,7 +269,7 @@ private fun HomeScreenContent(
             uiState.error != null -> {
                 Text(text = uiState.error)
             }
-            uiState.allFloorsToRender.isNotEmpty() -> {
+            uiState.buildingStates.isNotEmpty() -> {
                 // Resolve pin drawable and primary tint color
                 val context = LocalContext.current
                 val pinDrawable = remember {
@@ -272,15 +277,13 @@ private fun HomeScreenContent(
                 }
                 val primaryColor = MaterialTheme.colorScheme.primary.toArgb()
 
-                // Floor plan canvas filling entire screen
+                // Floor plan canvas filling entire screen (base layer: background, walls, entrances)
                 FloorPlanCanvas(
-                    floorsToRender = uiState.allFloorsToRender,
+                    buildingStates = uiState.buildingStates,
+                    campusBounds = uiState.campusBounds,
                     canvasState = effectiveCanvasState,
                     onCanvasStateChange = onCanvasStateChange,
                     displayConfig = uiState.displayConfig,
-                    pinnedRoom = uiState.pinnedRoom,
-                    pinDrawable = pinDrawable,
-                    pinTintColor = primaryColor,
                     onRoomTap = onRoomTap,
                     onBackgroundTap = onBackgroundTap,
                     isSelectingOrigin = pdrUiState.isSelectingOrigin,
@@ -288,20 +291,31 @@ private fun HomeScreenContent(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // PDR path overlay sits above the canvas but below controls
-                if (pdrUiState.pdrState.path.isNotEmpty()) {
-                    PdrPathOverlay(
-                        path = pdrUiState.pdrState.path,
-                        currentHeading = heading,
+                // A* navigation path overlay — rendered above base but below labels/pin
+                if (navUiState.path.isNotEmpty()) {
+                    NavigationPathOverlay(
+                        path = navUiState.path,
                         canvasState = effectiveCanvasState,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
 
-                // A* navigation path overlay
-                if (navUiState.path.isNotEmpty()) {
-                    NavigationPathOverlay(
-                        path = navUiState.path,
+                // Room labels, building names, and search pin — above nav path
+                FloorPlanLabelsOverlay(
+                    buildingStates = uiState.buildingStates,
+                    canvasState = effectiveCanvasState,
+                    displayConfig = uiState.displayConfig,
+                    pinnedRoom = uiState.pinnedRoom,
+                    pinDrawable = pinDrawable,
+                    pinTintColor = primaryColor,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // PDR path overlay — user position always on top
+                if (pdrUiState.pdrState.path.isNotEmpty()) {
+                    PdrPathOverlay(
+                        path = pdrUiState.pdrState.path,
+                        currentHeading = heading,
                         canvasState = effectiveCanvasState,
                         modifier = Modifier.fillMaxSize()
                     )

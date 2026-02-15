@@ -1,0 +1,14 @@
+{
+  "building_id": "building_2",
+  "building_name": "St. Peter's Block",
+  "label_position": {
+    "x": 2000,
+    "y": 2000
+  },
+  "scale": 0.62,
+  "rotation": 15.0,
+  "relative_position": {
+    "x": -5000,
+    "y": -1320
+  }
+}

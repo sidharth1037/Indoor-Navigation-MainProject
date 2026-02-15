@@ -64,6 +64,7 @@ object FollowingAnimator {
         )
     }
 
+    @Suppress("unused") // Reserved for search-result centering
     fun calculateCenterState(
         worldPosition: Offset,
         currentRotation: Float,
@@ -96,7 +97,9 @@ object FollowingAnimator {
         floorPlanScale: Float,
         floorPlanRotation: Float,
         screenWidth: Float,
-        screenHeight: Float
+        screenHeight: Float,
+        buildingOffsetX: Float = 0f,
+        buildingOffsetY: Float = 0f
     ): CanvasState {
         val (offsetX, offsetY) = calculateFloorPlanCenterOffset(
             targetX = targetX,
@@ -106,7 +109,9 @@ object FollowingAnimator {
             floorPlanScale = floorPlanScale,
             floorPlanRotation = floorPlanRotation,
             screenWidth = screenWidth,
-            screenHeight = screenHeight
+            screenHeight = screenHeight,
+            buildingOffsetX = buildingOffsetX,
+            buildingOffsetY = buildingOffsetY
         )
 
         return CanvasState(
@@ -165,6 +170,8 @@ object FollowingAnimator {
         floorPlanRotation: Float,
         screenWidth: Float,
         screenHeight: Float,
+        buildingOffsetX: Float = 0f,
+        buildingOffsetY: Float = 0f,
         config: CenteringConfig = CenteringConfig(),
         onStateUpdate: (CanvasState) -> Unit
     ) {
@@ -176,7 +183,9 @@ object FollowingAnimator {
             floorPlanScale = floorPlanScale,
             floorPlanRotation = floorPlanRotation,
             screenWidth = screenWidth,
-            screenHeight = screenHeight
+            screenHeight = screenHeight,
+            buildingOffsetX = buildingOffsetX,
+            buildingOffsetY = buildingOffsetY
         )
 
         animateToState(
@@ -226,7 +235,9 @@ object FollowingAnimator {
         floorPlanScale: Float,
         floorPlanRotation: Float,
         screenWidth: Float,
-        screenHeight: Float
+        screenHeight: Float,
+        buildingOffsetX: Float = 0f,
+        buildingOffsetY: Float = 0f
     ): Pair<Float, Float> {
         val centerX = screenWidth / 2f
         val centerY = screenHeight / 2f
@@ -241,8 +252,8 @@ object FollowingAnimator {
         val fpTransformedX = fpScaledX * fpCos - fpScaledY * fpSin
         val fpTransformedY = fpScaledX * fpSin + fpScaledY * fpCos
 
-        val localX = fpTransformedX + centerX
-        val localY = fpTransformedY + centerY
+        val localX = fpTransformedX + buildingOffsetX + centerX
+        val localY = fpTransformedY + buildingOffsetY + centerY
 
         val canvasRotationRad = Math.toRadians(canvasRotation.toDouble())
         val canvasCos = cos(canvasRotationRad).toFloat()

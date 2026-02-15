@@ -2,255 +2,359 @@ package `in`.project.enroute.feature.navigation
 
 import androidx.compose.ui.geometry.Offset
 import `in`.project.enroute.data.model.Wall
+import kotlin.math.abs
 import kotlin.math.sqrt
 import android.util.Log
 import java.util.PriorityQueue
 
 /**
- * Pathfinding using A* with distance transform-based cost heuristic.
- * Paths naturally stay away from walls by treating wall proximity as movement cost.
+ * Pathfinding using A* with distance-transform wall avoidance.
+ *
+ * Design priorities (in order):
+ *  1. **Never cross walls** — cells on/touching a wall are hard-blocked; diagonal
+ *     moves that would cut through a wall corner are disallowed.
+ *  2. **Always pick the shortest passable path** — wall-proximity penalties are
+ *     minimal so the algorithm prefers the shortest route through narrow gaps
+ *     (doorways, corridors) rather than a long detour through open space.
+ *  3. **Smooth output** — after finding the grid path, a line-of-sight pass
+ *     ("string pulling") removes unnecessary waypoints without re-introducing
+ *     wall crossings.
+ *
+ * Supports campus-wide coordinates including negative values via a bounding-box
+ * origin offset ([originX], [originY]).
  */
 class NavigationRepository(walls: List<Wall>) {
+
     companion object {
         private const val TAG = "NavigationRepository"
+
+        /**
+         * Cells closer than this many grid-units to any wall are impassable.
+         * 0.55 means the cell centre must be > 0.55 × gridSize world-units
+         * away from every wall segment.  This is thick enough to block
+         * diagonal moves that would clip through a wall while still leaving
+         * standard doorways (≥ 2 cells wide) passable.
+         */
+        private const val WALL_BLOCK_THRESHOLD = 0.55f
+
+        /**
+         * Cells closer than this to a wall are considered "buffer zone".
+         * A* penalises them, and line-of-sight smoothing refuses to pass
+         * through them so that corner rounding is preserved after smoothing.
+         */
+        private const val WALL_BUFFER_THRESHOLD = 1.5f
     }
 
-    private val gridSize = 20f
-    // Grid dimensions calculated from floor plan image (4188 × 4329 pixels at 20px/cell)
-    private val maxGridX = 210  // 4188 / 20 = 209.4 ≈ 210
-    private val maxGridY = 217  // 4329 / 20 = 216.45 ≈ 217
-    
-    // Distance transform: minimum distance to any wall for each cell
-    private val distanceGrid = Array(maxGridX) { FloatArray(maxGridY) }
+    private val gridSize = 15f   // finer grid → better narrow-gap resolution
+
+    // Grid origin offset (allows negative world coordinates)
+    private val originX: Float
+    private val originY: Float
+
+    // Grid dimensions in cells
+    private val maxGridX: Int
+    private val maxGridY: Int
+
+    // Distance transform: minimum distance (in grid-units) to any wall for each cell
+    private val distanceGrid: Array<FloatArray>
 
     init {
+        // Compute bounding box from wall extents (with padding)
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = Float.MIN_VALUE; var maxY = Float.MIN_VALUE
+        for (wall in walls) {
+            minX = minOf(minX, wall.x1, wall.x2)
+            minY = minOf(minY, wall.y1, wall.y2)
+            maxX = maxOf(maxX, wall.x1, wall.x2)
+            maxY = maxOf(maxY, wall.y1, wall.y2)
+        }
+        // Floor the origin to grid boundary, with padding
+        originX = (minX / gridSize - 2).toInt() * gridSize
+        originY = (minY / gridSize - 2).toInt() * gridSize
+        maxGridX = ((maxX - originX) / gridSize + 4).toInt()
+        maxGridY = ((maxY - originY) / gridSize + 4).toInt()
+        distanceGrid = Array(maxGridX) { FloatArray(maxGridY) }
+
+        Log.d(TAG, "Grid: origin($originX, $originY), size ${maxGridX}x$maxGridY, " +
+                "cells=${maxGridX * maxGridY}, gridSize=$gridSize")
         computeDistanceTransform(walls)
     }
 
+    // ── coordinate helpers ──────────────────────────────────────────
+
+    /** World → grid cell index. */
+    private fun worldToGridX(wx: Float): Int = ((wx - originX) / gridSize).toInt()
+    private fun worldToGridY(wy: Float): Int = ((wy - originY) / gridSize).toInt()
+
+    /** Grid cell centre → world coordinate. */
+    private fun gridToWorldX(gx: Int): Float = (gx + 0.5f) * gridSize + originX
+    private fun gridToWorldY(gy: Int): Float = (gy + 0.5f) * gridSize + originY
+
+    // ── distance transform ──────────────────────────────────────────
+
     /**
-     * Compute distance from each grid cell to nearest wall.
+     * Populates [distanceGrid]: for every cell, the minimum distance (in
+     * grid-units) to the nearest wall segment.
      */
     private fun computeDistanceTransform(walls: List<Wall>) {
-        // Initialize all distances to infinity
-        for (x in 0 until maxGridX) {
-            for (y in 0 until maxGridY) {
-                distanceGrid[x][y] = Float.MAX_VALUE
-            }
+        for (x in 0 until maxGridX) for (y in 0 until maxGridY) {
+            distanceGrid[x][y] = Float.MAX_VALUE
         }
 
-        // For each wall, update distances to cells near it
         walls.forEach { wall ->
-            val x1 = wall.x1 / gridSize
-            val y1 = wall.y1 / gridSize
-            val x2 = wall.x2 / gridSize
-            val y2 = wall.y2 / gridSize
-
-            // For each grid cell, compute distance to this wall segment
-            for (x in 0 until maxGridX) {
-                for (y in 0 until maxGridY) {
-                    val dist = distanceToSegment(
-                        x.toFloat(), y.toFloat(),
-                        x1, y1, x2, y2
-                    )
-                    distanceGrid[x][y] = minOf(distanceGrid[x][y], dist)
-                }
+            val x1 = (wall.x1 - originX) / gridSize
+            val y1 = (wall.y1 - originY) / gridSize
+            val x2 = (wall.x2 - originX) / gridSize
+            val y2 = (wall.y2 - originY) / gridSize
+            for (x in 0 until maxGridX) for (y in 0 until maxGridY) {
+                val d = distanceToSegment(x.toFloat(), y.toFloat(), x1, y1, x2, y2)
+                if (d < distanceGrid[x][y]) distanceGrid[x][y] = d
             }
         }
     }
 
-    /**
-     * Distance from point (px, py) to line segment from (x1, y1) to (x2, y2).
-     */
-    private fun distanceToSegment(px: Float, py: Float, x1: Float, y1: Float, x2: Float, y2: Float): Float {
-        val dx = x2 - x1
-        val dy = y2 - y1
+    /** Point-to-segment distance (grid-unit space). */
+    private fun distanceToSegment(
+        px: Float, py: Float,
+        x1: Float, y1: Float, x2: Float, y2: Float
+    ): Float {
+        val dx = x2 - x1; val dy = y2 - y1
         val lenSq = dx * dx + dy * dy
-        
         if (lenSq == 0f) return sqrt((px - x1) * (px - x1) + (py - y1) * (py - y1))
-        
-        val t = ((px - x1) * dx + (py - y1) * dy) / lenSq
-        val clampedT = t.coerceIn(0f, 1f)
-        val closestX = x1 + clampedT * dx
-        val closestY = y1 + clampedT * dy
-        
-        return sqrt((px - closestX) * (px - closestX) + (py - closestY) * (py - closestY))
+        val t = (((px - x1) * dx + (py - y1) * dy) / lenSq).coerceIn(0f, 1f)
+        val cx = x1 + t * dx; val cy = y1 + t * dy
+        return sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy))
     }
 
+    // ── cell queries ────────────────────────────────────────────────
+
+    /** True if the cell index is inside the grid bounds. */
+    private fun inBounds(x: Int, y: Int): Boolean =
+        x in 0 until maxGridX && y in 0 until maxGridY
+
+    /** True if the cell is on or clipping through a wall. */
+    private fun isBlocked(x: Int, y: Int): Boolean =
+        !inBounds(x, y) || distanceGrid[x][y] < WALL_BLOCK_THRESHOLD
+
     /**
-     * Movement cost based on distance to walls: closer to walls = higher cost.
-     * Allows destinations near walls but heavily penalizes wall proximity.
+     * Movement cost for stepping onto cell ([gx], [gy]).
+     *
+     * Blocked cells return MAX_VALUE. Near-wall cells are penalised
+     * enough to produce aesthetic corner-rounding without blocking
+     * narrow doorways (≥ 4 cells ≈ 60 world-units).
+     *
+     * A typical doorway is ~4-5 cells wide. The middle 2-3 cells sit
+     * at dist ≈ 1.5–2.5, costing 2–3× base, which adds ~6 extra cost
+     * for a doorway vs. hundreds of cells for a detour → doorways win.
      */
-    private fun getMovementCost(gridX: Int, gridY: Int): Float {
-        if (gridX !in 0 until maxGridX || gridY !in 0 until maxGridY) return Float.MAX_VALUE
-        
-        val dist = distanceGrid[gridX][gridY]
+    private fun getMovementCost(gx: Int, gy: Int): Float {
+        if (!inBounds(gx, gy)) return Float.MAX_VALUE
+        val dist = distanceGrid[gx][gy]
         return when {
-            dist < 0.3f -> Float.MAX_VALUE  // Block cells clipping through walls
-            dist < 1f -> 500f      // Very close to walls - high penalty but reachable
-            dist < 3f -> 150f      // Close to walls - elevated cost
-            dist < 5f -> 50f       // Moderately close - moderate cost
-            else -> maxOf(1f, 10f / dist)  // Open space - minimal cost
+            dist < WALL_BLOCK_THRESHOLD -> Float.MAX_VALUE   // hard-blocked
+            dist < WALL_BUFFER_THRESHOLD -> 5.0f             // buffer zone — passable but costly (rounds corners)
+            dist < 3.0f -> 2.0f                              // near wall — moderate nudge
+            else        -> 1.0f                              // open space
         }
     }
+
+    // ── A* pathfinding ──────────────────────────────────────────────
 
     fun findPath(start: Offset, goal: Offset): List<Offset> {
         val startTime = System.currentTimeMillis()
         Log.d(TAG, "=== PATHFINDING START ===")
         Log.d(TAG, "Start: (${start.x}, ${start.y}), Goal: (${goal.x}, ${goal.y})")
-        
-        val startGrid = Pair((start.x / gridSize).toInt(), (start.y / gridSize).toInt())
-        val goalGrid = Pair((goal.x / gridSize).toInt(), (goal.y / gridSize).toInt())
-        
-        Log.d(TAG, "Start grid: $startGrid, Goal grid: $goalGrid")
-        Log.d(TAG, "Grid dimensions: $maxGridX x $maxGridY, Grid size: $gridSize")
-        
-        // Debug: Check distances at start and goal
-        val startDist = if (isValid(startGrid)) distanceGrid[startGrid.first][startGrid.second] else Float.MAX_VALUE
-        val goalDist = if (isValid(goalGrid)) distanceGrid[goalGrid.first][goalGrid.second] else Float.MAX_VALUE
-        Log.d(TAG, "Start distance to wall: $startDist, Goal distance to wall: $goalDist")
-        Log.d(TAG, "Start cost: ${getMovementCost(startGrid.first, startGrid.second)}, Goal cost: ${getMovementCost(goalGrid.first, goalGrid.second)}")
 
-        if (!isValid(startGrid) || !isValid(goalGrid)) {
-            Log.e(TAG, "Invalid start or goal grid positions!")
+        // Snap start/goal to closest passable cell (rooms & origins are near walls)
+        val startGrid = findNearestPassable(worldToGridX(start.x), worldToGridY(start.y))
+        val goalGrid  = findNearestPassable(worldToGridX(goal.x),  worldToGridY(goal.y))
+
+        if (startGrid == null || goalGrid == null) {
+            Log.e(TAG, "Cannot find passable cell near start/goal!")
             return emptyList()
         }
 
-        val closedSet = mutableSetOf<Pair<Int, Int>>()
-        val cameFrom = mutableMapOf<Pair<Int, Int>, Pair<Int, Int>>()
-        val gScore = mutableMapOf<Pair<Int, Int>, Float>()
-        val fScoreMap = mutableMapOf<Pair<Int, Int>, Float>()
+        Log.d(TAG, "Start grid: $startGrid, Goal grid: $goalGrid")
 
-        // Priority queue: sorts by fScore automatically (no manual sorting needed)
-        val openSet = PriorityQueue<Pair<Int, Int>> { a, b ->
+        val closedSet  = HashSet<Long>(4096)
+        val cameFrom   = HashMap<Long, Long>(4096)
+        val gScore     = HashMap<Long, Float>(4096)
+        val fScoreMap  = HashMap<Long, Float>(4096)
+
+        val openSet = PriorityQueue<Long>(256) { a, b ->
             (fScoreMap[a] ?: Float.MAX_VALUE).compareTo(fScoreMap[b] ?: Float.MAX_VALUE)
         }
 
-        openSet.add(startGrid)
-        gScore[startGrid] = 0f
-        fScoreMap[startGrid] = heuristic(startGrid, goalGrid)
+        val startKey = packKey(startGrid.first, startGrid.second)
+        val goalKey  = packKey(goalGrid.first, goalGrid.second)
+
+        openSet.add(startKey)
+        gScore[startKey] = 0f
+        fScoreMap[startKey] = heuristic(startGrid.first, startGrid.second,
+            goalGrid.first, goalGrid.second)
 
         var iterations = 0
-        val maxIterations = 50000 // Increased back to find longer paths
-        
+        val maxIterations = 80_000
+
         while (openSet.isNotEmpty() && iterations < maxIterations) {
             iterations++
-            
-            if (iterations % 5000 == 0) {
-                Log.d(TAG, "Iteration $iterations: openSet size=${openSet.size}, closedSet size=${closedSet.size}")
-            }
-            
-            val current = openSet.poll()  // Get lowest fScore in O(log n)
+            val currentKey = openSet.poll()!!
 
-            if (current == goalGrid) {
-                val elapsedTime = System.currentTimeMillis() - startTime
-                Log.d(TAG, "✓ PATH FOUND in $iterations iterations, ${elapsedTime}ms")
-                return reconstructPath(cameFrom, current!!).also {
-                    Log.d(TAG, "Path length: ${it.size} waypoints")
-                }
+            if (currentKey == goalKey) {
+                val elapsed = System.currentTimeMillis() - startTime
+                Log.d(TAG, "✓ PATH FOUND in $iterations iters, ${elapsed}ms")
+                val gridPath = reconstructGridPath(cameFrom, currentKey)
+                val worldPath = gridPath.map { Offset(gridToWorldX(unpackX(it)), gridToWorldY(unpackY(it))) }
+                return smoothPath(worldPath).also { Log.d(TAG, "Smoothed: ${it.size} waypoints") }
             }
 
-            closedSet.add(current!!)
+            if (!closedSet.add(currentKey)) continue  // already expanded
 
-            for (neighbor in getNeighbors(current)) {
-                if (neighbor in closedSet) continue
+            val cx = unpackX(currentKey); val cy = unpackY(currentKey)
+            val curG = gScore[currentKey] ?: continue
 
-                var cost = getMovementCost(neighbor.first, neighbor.second)
-                if (cost == Float.MAX_VALUE) continue
-                if (current.first != neighbor.first && current.second != neighbor.second) {
-                    cost *= 1.414f
-                }
-                val tentativeG = (gScore[current] ?: Float.MAX_VALUE) + cost
-
-                if (tentativeG < (gScore[neighbor] ?: Float.MAX_VALUE)) {
-                    cameFrom[neighbor] = current
-                    gScore[neighbor] = tentativeG
-                    fScoreMap[neighbor] = tentativeG + heuristic(neighbor, goalGrid)
-
-                    if (neighbor !in openSet) openSet.add(neighbor)
-                }
+            // Cardinal neighbours
+            for (i in CARD_DX.indices) {
+                val nx = cx + CARD_DX[i]; val ny = cy + CARD_DY[i]
+                expandNeighbour(nx, ny, curG, 1f, currentKey, goalGrid, closedSet, cameFrom, gScore, fScoreMap, openSet)
+            }
+            // Diagonal neighbours — blocked if either adjacent cardinal is blocked
+            for (i in DIAG_DX.indices) {
+                val nx = cx + DIAG_DX[i]; val ny = cy + DIAG_DY[i]
+                if (isBlocked(cx + DIAG_DX[i], cy) || isBlocked(cx, cy + DIAG_DY[i])) continue
+                expandNeighbour(nx, ny, curG, 1.414f, currentKey, goalGrid, closedSet, cameFrom, gScore, fScoreMap, openSet)
             }
         }
 
-        val elapsedTime = System.currentTimeMillis() - startTime
-        Log.e(TAG, "✗ NO PATH FOUND after $iterations iterations, ${elapsedTime}ms")
-        Log.e(TAG, "Final state - openSet: ${openSet.size}, closedSet: ${closedSet.size}")
+        val elapsed = System.currentTimeMillis() - startTime
+        Log.e(TAG, "✗ NO PATH after $iterations iters, ${elapsed}ms")
         return emptyList()
     }
 
-    private fun getNeighbors(pos: Pair<Int, Int>): List<Pair<Int, Int>> {
-        val (x, y) = pos
-        return listOf(
-            Pair(x + 1, y), Pair(x - 1, y), Pair(x, y + 1), Pair(x, y - 1),
-            Pair(x + 1, y + 1), Pair(x - 1, y - 1), Pair(x + 1, y - 1), Pair(x - 1, y + 1)
-        ).filter { isValid(it) }
-    }
-
-    private fun isValid(pos: Pair<Int, Int>): Boolean =
-        pos.first in 0 until maxGridX && pos.second in 0 until maxGridY
-
-    private fun heuristic(a: Pair<Int, Int>, b: Pair<Int, Int>): Float =
-        (kotlin.math.abs(a.first - b.first) + kotlin.math.abs(a.second - b.second)).toFloat() * 0.5f
-
-    private fun reconstructPath(
-        cameFrom: Map<Pair<Int, Int>, Pair<Int, Int>>,
-        current: Pair<Int, Int>
-    ): List<Offset> {
-        // First, reconstruct raw grid path
-        val gridPath = mutableListOf<Pair<Int, Int>>()
-        var curr = current
-        while (curr in cameFrom) {
-            gridPath.add(curr)
-            curr = cameFrom[curr]!!
+    /** Try to relax the edge to ([nx], [ny]). */
+    private fun expandNeighbour(
+        nx: Int, ny: Int,
+        curG: Float, stepScale: Float,
+        currentKey: Long,
+        goalGrid: Pair<Int, Int>,
+        closedSet: HashSet<Long>,
+        cameFrom: HashMap<Long, Long>,
+        gScore: HashMap<Long, Float>,
+        fScoreMap: HashMap<Long, Float>,
+        openSet: PriorityQueue<Long>
+    ) {
+        val cost = getMovementCost(nx, ny)
+        if (cost == Float.MAX_VALUE) return
+        val nk = packKey(nx, ny)
+        if (nk in closedSet) return
+        val tentG = curG + cost * stepScale
+        if (tentG < (gScore[nk] ?: Float.MAX_VALUE)) {
+            cameFrom[nk] = currentKey
+            gScore[nk] = tentG
+            fScoreMap[nk] = tentG + heuristic(nx, ny, goalGrid.first, goalGrid.second)
+            openSet.add(nk)
         }
-        gridPath.add(curr)
-        gridPath.reverse()
-        
-        // Convert to world coordinates and smooth
-        val waypoints = gridPath.map { Offset((it.first + 0.5f) * gridSize, (it.second + 0.5f) * gridSize) }
-        return smoothPath(waypoints)
     }
-    
+
+    // ── key packing (avoids Pair allocation on hot path) ────────────
+
+    private fun packKey(x: Int, y: Int): Long = (x.toLong() shl 32) or (y.toLong() and 0xFFFFFFFFL)
+    private fun unpackX(key: Long): Int = (key shr 32).toInt()
+    private fun unpackY(key: Long): Int = key.toInt()
+
+    // ── direction tables ────────────────────────────────────────────
+
+    private val CARD_DX = intArrayOf(1, -1,  0, 0)
+    private val CARD_DY = intArrayOf(0,  0,  1, -1)
+    private val DIAG_DX = intArrayOf(1, -1,  1, -1)
+    private val DIAG_DY = intArrayOf(1, -1, -1,  1)
+
+    // ── heuristic ───────────────────────────────────────────────────
+
     /**
-     * Minimal smoothing: only remove obvious zigzags, keep wall-following waypoints.
+     * Octile distance — the tightest admissible heuristic for 8-directional
+     * movement with uniform base cost 1.  Greatly reduces expanded nodes
+     * compared to the previous Manhattan × 0.5.
+     */
+    private fun heuristic(ax: Int, ay: Int, bx: Int, by: Int): Float {
+        val dx = abs(ax - bx); val dy = abs(ay - by)
+        return maxOf(dx, dy) + 0.414f * minOf(dx, dy)
+    }
+
+    // ── start / goal snapping ───────────────────────────────────────
+
+    /**
+     * If ([gx],[gy]) is passable, return it directly. Otherwise search
+     * expanding rings (up to radius 12) for the nearest passable cell.
+     */
+    private fun findNearestPassable(gx: Int, gy: Int): Pair<Int, Int>? {
+        if (inBounds(gx, gy) && !isBlocked(gx, gy)) return gx to gy
+        for (r in 1..12) {
+            for (dx in -r..r) for (dy in -r..r) {
+                if (abs(dx) != r && abs(dy) != r) continue  // ring only
+                val nx = gx + dx; val ny = gy + dy
+                if (inBounds(nx, ny) && !isBlocked(nx, ny)) return nx to ny
+            }
+        }
+        return null
+    }
+
+    // ── path reconstruction ─────────────────────────────────────────
+
+    private fun reconstructGridPath(cameFrom: Map<Long, Long>, end: Long): List<Long> {
+        val path = mutableListOf<Long>()
+        var cur = end
+        while (cur in cameFrom) { path.add(cur); cur = cameFrom[cur]!! }
+        path.add(cur)
+        path.reverse()
+        return path
+    }
+
+    // ── line-of-sight smoothing ("string pulling") ──────────────────
+
+    /**
+     * Removes unnecessary waypoints while guaranteeing the simplified line
+     * segments never cross a blocked cell.
+     *
+     * Algorithm: from the current anchor, try to "see" the furthest waypoint
+     * directly (scan from end backwards). The first visible one becomes the
+     * next anchor. Repeat until the goal is reached.
      */
     private fun smoothPath(waypoints: List<Offset>): List<Offset> {
         if (waypoints.size <= 2) return waypoints
-        
-        val smoothed = mutableListOf<Offset>(waypoints[0])
-        
-        for (i in 1 until waypoints.size - 1) {
-            val p1 = waypoints[i - 1]
-            val p2 = waypoints[i]
-            val p3 = waypoints[i + 1]
-            
-            // Perpendicular distance from p2 to line p1-p3
-            val dist = perpDistanceToLine(p2, p1, p3)
-            
-            // Only remove points that are nearly on the line (< 5 pixels deviation)
-            if (dist >= 5f) {
-                smoothed.add(p2)
+        val result = mutableListOf(waypoints[0])
+        var i = 0
+        while (i < waypoints.size - 1) {
+            var furthest = i + 1
+            for (j in waypoints.size - 1 downTo i + 2) {
+                if (hasLineOfSight(waypoints[i], waypoints[j])) { furthest = j; break }
             }
+            result.add(waypoints[furthest])
+            i = furthest
         }
-        
-        smoothed.add(waypoints.last())
-        return smoothed
+        return result
     }
-    
+
+    /** True if a cell is in the buffer zone or blocked — used by smoothing. */
+    private fun isBuffered(x: Int, y: Int): Boolean =
+        !inBounds(x, y) || distanceGrid[x][y] < WALL_BUFFER_THRESHOLD
+
     /**
-     * Calculate perpendicular distance from point to line defined by two points.
+     * Walks along the segment at sub-grid steps and checks that every
+     * sampled cell clears the buffer zone.  This preserves the aesthetic
+     * corner-rounding that A* produced — smoothing won't shortcut through
+     * near-wall cells.
      */
-    private fun perpDistanceToLine(point: Offset, lineStart: Offset, lineEnd: Offset): Float {
-        val dx = lineEnd.x - lineStart.x
-        val dy = lineEnd.y - lineStart.y
-        val lenSq = dx * dx + dy * dy
-        
-        if (lenSq == 0f) return sqrt((point.x - lineStart.x) * (point.x - lineStart.x) + (point.y - lineStart.y) * (point.y - lineStart.y))
-        
-        val t = ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / lenSq
-        val clampedT = t.coerceIn(0f, 1f)
-        val closestX = lineStart.x + clampedT * dx
-        val closestY = lineStart.y + clampedT * dy
-        
-        return sqrt((point.x - closestX) * (point.x - closestX) + (point.y - closestY) * (point.y - closestY))
+    private fun hasLineOfSight(from: Offset, to: Offset): Boolean {
+        val dx = to.x - from.x; val dy = to.y - from.y
+        val dist = sqrt(dx * dx + dy * dy)
+        val steps = (dist / (gridSize * 0.4f)).toInt().coerceAtLeast(1)
+        for (s in 0..steps) {
+            val t = s.toFloat() / steps
+            val gx = worldToGridX(from.x + dx * t)
+            val gy = worldToGridY(from.y + dy * t)
+            if (isBuffered(gx, gy)) return false
+        }
+        return true
     }
 }

@@ -140,13 +140,10 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Sets the origin point and starts PDR tracking.
-     * This will:
-     * 1. Set the origin in the repository
-     * 2. Start the heading sensor
-     * 3. Start the step detector
+     * Origin should be in campus-wide coordinates.
      *
-     * @param origin The starting coordinate in canvas/world space
-     * @param currentFloor The floor the user is on (e.g. "floor_1"), used for multi-floor navigation
+     * @param origin The starting coordinate in campus-wide space
+     * @param currentFloor The floor the user is on (e.g. "floor_1")
      */
     fun setOrigin(origin: Offset, currentFloor: String? = null) {
         // Exit selection mode
@@ -173,7 +170,9 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Updates step detection configuration.
+     * Public API for a future settings/calibration screen.
      */
+    @Suppress("unused")
     fun updateStepDetectionConfig(config: StepDetectionConfig) {
         _uiState.update { it.copy(stepDetectionConfig = config) }
         stepDetector.updateConfig(config)
@@ -181,7 +180,9 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Updates stride calculation configuration.
+     * Public API for a future settings/calibration screen.
      */
+    @Suppress("unused")
     fun updateStrideConfig(config: StrideConfig) {
         _uiState.update { it.copy(strideConfig = config) }
         repository.updateStrideConfig(config)
