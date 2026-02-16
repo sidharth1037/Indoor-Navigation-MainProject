@@ -52,6 +52,7 @@ import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionOverlay
 
 import `in`.project.enroute.feature.pdr.ui.components.PdrPathOverlay
 import `in`.project.enroute.feature.pdr.ui.components.HeightRequiredDialog
+import `in`.project.enroute.feature.pdr.ui.components.MotionLabel
 import `in`.project.enroute.feature.home.components.SetLocationButton
 import `in`.project.enroute.feature.home.components.RoomInfoPanel
 import `in`.project.enroute.feature.home.components.StopTrackingButton
@@ -318,6 +319,17 @@ private fun HomeScreenContent(
                         currentHeading = heading,
                         canvasState = effectiveCanvasState,
                         modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                // Motion classification label — small chip when tracking
+                if (pdrUiState.pdrState.isTracking && pdrUiState.motionLabel != null) {
+                    MotionLabel(
+                        label = pdrUiState.motionLabel,
+                        confidence = pdrUiState.motionConfidence,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(top = 80.dp, end = 8.dp)
                     )
                 }
 

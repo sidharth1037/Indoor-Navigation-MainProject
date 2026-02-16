@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import `in`.project.enroute.feature.pdr.data.model.PdrState
 import `in`.project.enroute.feature.pdr.data.model.StepDetectionConfig
 import `in`.project.enroute.feature.pdr.data.model.StrideConfig
+import `in`.project.enroute.feature.pdr.data.repository.MotionRepository
 import `in`.project.enroute.feature.pdr.data.repository.PdrRepository
 import `in`.project.enroute.feature.pdr.sensor.HeadingDetector
 import `in`.project.enroute.feature.pdr.sensor.StepDetector
@@ -28,7 +29,9 @@ data class PdrUiState(
     val isSelectingOrigin: Boolean = false,
     val showHeightRequired: Boolean = false,
     val stepDetectionConfig: StepDetectionConfig = StepDetectionConfig(),
-    val strideConfig: StrideConfig = StrideConfig()
+    val strideConfig: StrideConfig = StrideConfig(),
+    val motionLabel: String? = null,
+    val motionConfidence: Float = 0f
 )
 
 /**
@@ -42,6 +45,7 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     private val sensorManager = application.getSystemService(SensorManager::class.java)
     
     private val repository = PdrRepository()
+    private val motionRepository = MotionRepository(application.applicationContext)
     private val settingsRepository = SettingsRepository(application.applicationContext)
     private val headingDetector = HeadingDetector(sensorManager)
     private val stepDetector = StepDetector(sensorManager)
@@ -79,6 +83,11 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        // Forward raw accelerometer data to motion classifier
+        stepDetector.onAccelerometerData = { x, y, z ->
+            motionRepository.onAccelerometerSample(x, y, z)
+        }
+
         // Forward heading from sensor → repository (for step calculations)
         viewModelScope.launch {
             headingDetector.heading.collect { heading ->
@@ -90,6 +99,18 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.pdrState.collect { pdrState ->
                 _uiState.update { it.copy(pdrState = pdrState) }
+            }
+        }
+
+        // Observe motion classification results
+        viewModelScope.launch {
+            motionRepository.motionEvent.collect { event ->
+                _uiState.update {
+                    it.copy(
+                        motionLabel = event?.classificationName,
+                        motionConfidence = event?.confidence ?: 0f
+                    )
+                }
             }
         }
     }
@@ -202,6 +223,7 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
      * Called internally when origin is set.
      */
     private fun startSensors() {
+        motionRepository.start()
         stepDetector.start()
     }
 
@@ -212,6 +234,7 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun stopSensors() {
         stepDetector.stop()
+        motionRepository.stop()
     }
 
     override fun onCleared() {
@@ -219,5 +242,6 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         // Clean up all sensors when ViewModel is destroyed
         headingDetector.stop()
         stepDetector.stop()
+        motionRepository.stop()
     }
 }
