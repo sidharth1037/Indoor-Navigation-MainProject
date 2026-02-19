@@ -40,10 +40,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
 
 @Composable
 fun FloorSlider(
@@ -153,42 +155,64 @@ private fun FloorControls(
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
     val disabledColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-    val buttonWidth = 80.dp
+    val minButtonWidthPx = with(LocalDensity.current) { 48.dp.roundToPx() }
 
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(40.dp)
-    ) {
-        FloorButton(
-            enabled = prevFloor != null,
-            onClick = { prevFloor?.let { onFloorChange(it) } },
-            isPrevious = true,
-            primaryColor = primaryColor,
-            disabledColor = disabledColor,
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .size(buttonWidth, 32.dp)
+    Layout(
+        modifier = Modifier.fillMaxWidth(),
+        content = {
+            FloorButton(
+                enabled = prevFloor != null,
+                onClick = { prevFloor?.let { onFloorChange(it) } },
+                isPrevious = true,
+                primaryColor = primaryColor,
+                disabledColor = disabledColor,
+                modifier = Modifier
+            )
+
+            FloorDisplay(
+                currentFloor = currentFloor,
+                floors = availableFloors,
+                onFloorChange = onFloorChange,
+                primaryColor = primaryColor,
+                modifier = Modifier
+            )
+
+            FloorButton(
+                enabled = nextFloor != null,
+                onClick = { nextFloor?.let { onFloorChange(it) } },
+                isPrevious = false,
+                primaryColor = primaryColor,
+                disabledColor = disabledColor,
+                modifier = Modifier
+            )
+        }
+    ) { measurables, constraints ->
+        val maxWidth = constraints.maxWidth
+
+        // Measure center first to determine height for all
+        val centerPlaceable = measurables[1].measure(constraints.copy(minWidth = 0, minHeight = 0))
+        val centerHeight = centerPlaceable.height
+
+        val remaining = (maxWidth - centerPlaceable.width).coerceAtLeast(0)
+        val buttonWidth = (remaining / 2f * 0.95f).toInt().coerceAtLeast(minButtonWidthPx)
+
+        // Force buttons to have same height as center pill
+        val buttonConstraints = constraints.copy(
+            minWidth = buttonWidth,
+            maxWidth = buttonWidth,
+            minHeight = centerHeight,
+            maxHeight = centerHeight
         )
 
-        FloorDisplay(
-            currentFloor = currentFloor,
-            floors = availableFloors,
-            onFloorChange = onFloorChange,
-            primaryColor = primaryColor,
-            modifier = Modifier.align(Alignment.Center)
-        )
+        val leftPlaceable = measurables[0].measure(buttonConstraints)
+        val rightPlaceable = measurables[2].measure(buttonConstraints)
 
-        FloorButton(
-            enabled = nextFloor != null,
-            onClick = { nextFloor?.let { onFloorChange(it) } },
-            isPrevious = false,
-            primaryColor = primaryColor,
-            disabledColor = disabledColor,
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .size(buttonWidth, 32.dp)
-        )
+        layout(maxWidth, centerHeight) {
+            val centerX = (maxWidth - centerPlaceable.width) / 2
+            leftPlaceable.place(0, 0)
+            centerPlaceable.place(centerX, 0)
+            rightPlaceable.place(maxWidth - rightPlaceable.width, 0)
+        }
     }
 }
 
@@ -215,7 +239,7 @@ private fun FloorButton(
     ) {
         Icon(
             imageVector = if (isPrevious) Icons.AutoMirrored.Rounded.ArrowBackIos else Icons.AutoMirrored.Rounded.ArrowForwardIos,
-            contentDescription = if (isPrevious) "Previous floor" else "Next floor",
+            contentDescription = if (isPrevious) "Previous floor" else "Next floor", 
             tint = contentColor,
             modifier = Modifier.size(20.dp)
         )
