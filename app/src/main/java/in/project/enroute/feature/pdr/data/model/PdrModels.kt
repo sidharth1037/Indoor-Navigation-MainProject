@@ -56,9 +56,13 @@ data class StepDetectionConfig(
  * @param cadenceAverageSize Number of recent cadences to average
  */
 data class StrideConfig(
-    val heightCm: Float = 155f,
-    val kValue: Float = 0.37f,
-    val cValue: Float = 0.15f,
+    val heightCm: Float = 170f, // Default to average height
+    // kValue: Sensitivity to speed changes.
+    // Research (e.g., Bylemans et al.) suggests ~0.15 - 0.17 for height-normalized gait.
+    val kValue: Float = 0.16f,
+    // cValue: The base stride constant.
+    // Increasing this ensures the 'minimum' step reaches the destination.
+    val cValue: Float = 0.25f,
     val cadenceAverageSize: Int = 5
 )
 

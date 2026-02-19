@@ -192,28 +192,50 @@ class PdrRepository {
     }
 
     /**
-     * Calculates stride length dynamically based on cadence and user height.
-     * Uses the formula: stride = height * (k * cadence + c)
-     *
-     * @param averageCadence Steps per second
-     * @return Stride length in centimeters
+     * Calculates stride length using a normalized linear gait model.
+     * Formula: Stride = Height * (k * Cadence + c)
+     * * This version is tuned to prevent "short-stepping" on the map.
      */
     private fun calculateStrideLength(instantCadence: Float, averageCadence: Float): Float {
+        // Use meters for the formula calculation
         val heightInMeters = strideConfig.heightCm / 100f
 
-        // SMOOTHING: Blending instant cadence (30%) with history (70%)
-        // to prevent jittery movement on the map.
-        val smoothedCadence = (instantCadence * 0.3f) + (averageCadence * 0.7f)
+        // 1. SMOOTHING: High weight on average cadence to prevent erratic jumps,
+        // but enough instant cadence to feel responsive.
+        val smoothedCadence = (instantCadence * 0.35f) + (averageCadence * 0.65f)
 
-        // DYNAMIC K: Standard gait research suggests k is ~0.157 for walking.
-        // If the user is moving fast (cadence > 2.0), we slightly increase K.
-        val adjustedK = if (smoothedCadence > 2.0f) strideConfig.kValue * 1.15f else strideConfig.kValue
+        // 2. DYNAMIC GAIT SCALING:
+        // If cadence is very low (< 1 step/sec), the user is likely hesitant.
+        // If cadence is high (> 2.2 steps/sec), they are running.
+        val k = strideConfig.kValue
+        val c = strideConfig.cValue
 
-        val stride = heightInMeters * (adjustedK * smoothedCadence + strideConfig.cValue)
+        // General Equation: Stride = H * (k * f + c) where f is frequency (cadence)
+        var stride = heightInMeters * (k * smoothedCadence + c)
 
-        // Convert to cm and clamp to human limits (30cm - 120cm)
+        // 3. CALIBRATION OFFSET:
+        // If the user is shorter (like 165cm), the proportional stride often
+        // underestimates real-world movement due to hip flexibility.
+        if (strideConfig.heightCm < 170f) {
+            stride *= 1.05f // 5% boost for shorter users to compensate for sensor lag
+        }
+
+        // 4. BIOLOGICAL CLAMPING:
+        // Minimum: 0.4m (40cm) - Anything less is a shuffle, not a step.
+        // Maximum: 0.85 * Height - Standard limit for human leg extension.
+        val minStride = 40f
+        val maxStride = strideConfig.heightCm * 0.85f
+
+        return (stride * 100f).coerceIn(minStride, maxStride)
+    }
+
+    /* // first calculation with fixed k (kept as requested)
+    private fun calculateStrideLength(cadence: Float): Float {
+        val heightInMeters = strideConfig.heightCm / 100f
+        val stride = heightInMeters * (strideConfig.kValue * cadence + strideConfig.cValue)
         return (stride * 100f).coerceIn(30f, 120f)
     }
+    */
 }
 
 //first calculation with fixed k
