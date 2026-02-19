@@ -28,15 +28,18 @@ class LocalFloorPlanRepository(
     private val gson = Gson()
 
     override suspend fun loadFloorPlan(buildingId: String, floorId: String): FloorPlanData = withContext(Dispatchers.IO) {
-        val metadata = loadMetadata("${buildingId}_metadata.json")
-        val walls = loadWalls("${floorId}_walls.json")
-        val stairwells = loadStairwells("${floorId}_stairs.json")
-        val entrances = loadEntrances("${floorId}_entrances.json").map { it.copy(floorId = floorId) }
-        val rooms = loadRooms("${floorId}_rooms.json").map { it.copy(floorId = floorId) }
-        val boundaryPolygons = loadBoundaryPolygons("${floorId}_boundary.json")
+        val buildingPath = "campus/$buildingId"
+        val floorPath = "$buildingPath/$floorId"
+        val metadata = loadMetadata("$buildingPath/${buildingId}_metadata.json")
+        val walls = loadWalls("$floorPath/${floorId}_walls.json")
+        val stairwells = loadStairwells("$floorPath/${floorId}_stairs.json")
+        val entrances = loadEntrances("$floorPath/${floorId}_entrances.json").map { it.copy(floorId = floorId) }
+        val rooms = loadRooms("$floorPath/${floorId}_rooms.json").map { it.copy(floorId = floorId, buildingId = buildingId) }
+        val boundaryPolygons = loadBoundaryPolygons("$floorPath/${floorId}_boundary.json")
 
         FloorPlanData(
             floorId = floorId,
+            buildingId = buildingId,
             metadata = metadata,
             walls = walls,
             stairwells = stairwells,
@@ -47,12 +50,30 @@ class LocalFloorPlanRepository(
     }
 
     override suspend fun loadBuildingMetadata(buildingId: String): FloorPlanMetadata = withContext(Dispatchers.IO) {
-        loadMetadata("${buildingId}_metadata.json")
+        loadMetadata("campus/$buildingId/${buildingId}_metadata.json")
     }
 
     override suspend fun getAvailableFloors(buildingId: String): List<String> = withContext(Dispatchers.IO) {
-        // For now, return hardcoded list. Later can scan assets or get from backend
-        listOf("floor_1", "floor_1.5", "floor_2")
+        try {
+            val buildingPath = "campus/$buildingId"
+            val entries = context.assets.list(buildingPath) ?: emptyArray()
+            entries.filter { it.startsWith("floor_") }
+                .sortedBy { it.removePrefix("floor_").toFloatOrNull() ?: 0f }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
+    }
+
+    override suspend fun getAvailableBuildings(): List<String> = withContext(Dispatchers.IO) {
+        try {
+            val entries = context.assets.list("campus") ?: emptyArray()
+            entries.filter { it.startsWith("building_") }
+                .sortedBy { it.removePrefix("building_").toIntOrNull() ?: 0 }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
     }
 
     /**

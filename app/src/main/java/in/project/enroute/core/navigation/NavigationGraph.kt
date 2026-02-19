@@ -8,6 +8,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import `in`.project.enroute.feature.floorplan.FloorPlanViewModel
 import `in`.project.enroute.feature.home.HomeScreen
+import `in`.project.enroute.feature.navigation.NavigationViewModel
 import `in`.project.enroute.feature.pdr.PdrViewModel
 import `in`.project.enroute.feature.settings.SettingsScreen
 
@@ -31,9 +32,11 @@ fun NavigationGraph(
             // This preserves state when navigating away and returning
             val floorPlanViewModel: FloorPlanViewModel = viewModel(backStackEntry)
             val pdrViewModel: PdrViewModel = viewModel(backStackEntry)
+            val navigationViewModel: NavigationViewModel = viewModel(backStackEntry)
             HomeScreen(
                 floorPlanViewModel = floorPlanViewModel,
-                pdrViewModel = pdrViewModel
+                pdrViewModel = pdrViewModel,
+                navigationViewModel = navigationViewModel
             )
         }
         composable(Screen.Settings.route) {

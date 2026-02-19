@@ -29,6 +29,9 @@ import kotlin.math.sin
  * This is a separate composable to avoid redrawing the entire floor plan
  * when only the PDR path changes.
  *
+ * All path positions are in campus-wide coordinates, matching the canvas
+ * drawing space. No per-building offset is needed.
+ *
  * Applies the same transformations as FloorPlanCanvas to stay aligned.
  */
 @Composable

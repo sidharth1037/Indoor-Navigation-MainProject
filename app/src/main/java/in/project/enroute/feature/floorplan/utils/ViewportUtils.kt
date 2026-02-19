@@ -58,6 +58,8 @@ object ViewportUtils {
      * @param y Floor plan Y coordinate
      * @param buildingScale Scale from building metadata
      * @param buildingRotation Rotation from building metadata (degrees)
+     * @param relativeX Building's relative X position on campus
+     * @param relativeY Building's relative Y position on campus
      * @param canvasState Canvas transformation state
      * @param screenCenterX Screen center X
      * @param screenCenterY Screen center Y
@@ -68,6 +70,8 @@ object ViewportUtils {
         y: Float,
         buildingScale: Float,
         buildingRotation: Float,
+        relativeX: Float = 0f,
+        relativeY: Float = 0f,
         canvasState: CanvasState,
         screenCenterX: Float,
         screenCenterY: Float
@@ -83,22 +87,26 @@ object ViewportUtils {
         val rotatedX = scaledX * buildingCos - scaledY * buildingSin
         val rotatedY = scaledX * buildingSin + scaledY * buildingCos
         
-        // Step 3: Add screen center (this happens in Canvas draw scope BEFORE graphicsLayer)
-        val centeredX = rotatedX + screenCenterX
-        val centeredY = rotatedY + screenCenterY
+        // Step 3: Add building relative position offset
+        val offsetX = rotatedX + relativeX
+        val offsetY = rotatedY + relativeY
         
-        // Step 4: Apply canvas scale (graphicsLayer with transformOrigin 0,0)
+        // Step 4: Add screen center (this happens in Canvas draw scope BEFORE graphicsLayer)
+        val centeredX = offsetX + screenCenterX
+        val centeredY = offsetY + screenCenterY
+        
+        // Step 5: Apply canvas scale (graphicsLayer with transformOrigin 0,0)
         val canvasScaledX = centeredX * canvasState.scale
         val canvasScaledY = centeredY * canvasState.scale
         
-        // Step 5: Apply canvas rotation around origin (0,0)
+        // Step 6: Apply canvas rotation around origin (0,0)
         val canvasAngleRad = Math.toRadians(canvasState.rotation.toDouble()).toFloat()
         val canvasCos = cos(canvasAngleRad)
         val canvasSin = sin(canvasAngleRad)
         val canvasRotatedX = canvasScaledX * canvasCos - canvasScaledY * canvasSin
         val canvasRotatedY = canvasScaledX * canvasSin + canvasScaledY * canvasCos
         
-        // Step 6: Apply canvas translation/offset
+        // Step 7: Apply canvas translation/offset
         val screenX = canvasRotatedX + canvasState.offsetX
         val screenY = canvasRotatedY + canvasState.offsetY
         
@@ -120,6 +128,8 @@ object ViewportUtils {
         boundaryPolygons: List<BoundaryPolygon>,
         buildingScale: Float,
         buildingRotation: Float,
+        relativeX: Float = 0f,
+        relativeY: Float = 0f,
         canvasState: CanvasState,
         screenWidth: Float,
         screenHeight: Float
@@ -141,6 +151,8 @@ object ViewportUtils {
                     y = point.y,
                     buildingScale = buildingScale,
                     buildingRotation = buildingRotation,
+                    relativeX = relativeX,
+                    relativeY = relativeY,
                     canvasState = canvasState,
                     screenCenterX = screenCenterX,
                     screenCenterY = screenCenterY
@@ -216,6 +228,8 @@ object ViewportUtils {
             boundaryPolygons = boundaryPolygons,
             buildingScale = buildingState.building.scale,
             buildingRotation = buildingState.building.rotation,
+            relativeX = buildingState.building.relativePosition.x,
+            relativeY = buildingState.building.relativePosition.y,
             canvasState = canvasState,
             screenWidth = screenWidth,
             screenHeight = screenHeight

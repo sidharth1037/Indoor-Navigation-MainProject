@@ -62,11 +62,12 @@ class PdrRepository {
 
     /**
      * Sets the origin point and starts tracking.
-     * This is the starting point for PDR path calculation.
+     * All positions are stored in campus-wide coordinates.
      *
-     * @param origin The starting coordinate in canvas/world space
+     * @param origin The starting coordinate in campus-wide space
+     * @param currentFloor The floor the user is on (e.g. "floor_1")
      */
-    fun setOrigin(origin: Offset) {
+    fun setOrigin(origin: Offset, currentFloor: String? = null) {
         currentX = origin.x
         currentY = origin.y
         stepCount = 0
@@ -81,7 +82,8 @@ class PdrRepository {
             origin = origin,
             currentPosition = origin,
             path = path,
-            cadenceState = CadenceState()
+            cadenceState = CadenceState(),
+            currentFloor = currentFloor
         )
     }
 
@@ -184,7 +186,8 @@ class PdrRepository {
             origin = null,
             currentPosition = null,
             path = emptyList(),
-            cadenceState = CadenceState()
+            cadenceState = CadenceState(),
+            currentFloor = null
         )
         _heading.value = 0f
 
@@ -197,8 +200,8 @@ class PdrRepository {
      * * This version is tuned to prevent "short-stepping" on the map.
      */
     private fun calculateStrideLength(instantCadence: Float, averageCadence: Float): Float {
-        // Use meters for the formula calculation
-        val heightInMeters = strideConfig.heightCm / 100f
+        val heightCm = strideConfig.heightCm ?: return 0f
+        val heightInMeters = heightCm / 100f
 
         // 1. SMOOTHING: High weight on average cadence to prevent erratic jumps,
         // but enough instant cadence to feel responsive.
@@ -216,7 +219,7 @@ class PdrRepository {
         // 3. CALIBRATION OFFSET:
         // If the user is shorter (like 165cm), the proportional stride often
         // underestimates real-world movement due to hip flexibility.
-        if (strideConfig.heightCm < 170f) {
+        if (heightCm < 170f) {
             stride *= 1.05f // 5% boost for shorter users to compensate for sensor lag
         }
 
@@ -224,7 +227,7 @@ class PdrRepository {
         // Minimum: 0.4m (40cm) - Anything less is a shuffle, not a step.
         // Maximum: 0.85 * Height - Standard limit for human leg extension.
         val minStride = 40f
-        val maxStride = strideConfig.heightCm * 0.85f
+        val maxStride = heightCm * 0.85f
 
         return (stride * 100f).coerceIn(minStride, maxStride)
     }

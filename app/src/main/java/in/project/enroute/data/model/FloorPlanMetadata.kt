@@ -16,12 +16,14 @@ data class LabelPosition(
  * This data will come from backend in production.
  */
 data class FloorPlanMetadata(
-    @SerializedName("floor_id")
-    val floorId: String,
+    @SerializedName("building_id")
+    val buildingId: String = "",
     val scale: Float,
     val rotation: Float,
     @SerializedName("building_name")
     val buildingName: String = "",
     @SerializedName("label_position")
-    val labelPosition: LabelPosition? = null
+    val labelPosition: LabelPosition? = null,
+    @SerializedName("relative_position")
+    val relativePosition: RelativePosition = RelativePosition()
 )

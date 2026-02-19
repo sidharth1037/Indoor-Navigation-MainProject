@@ -38,21 +38,25 @@ data class SearchResult(
 
 /**
  * Singleton cache for loaded room data.
- * Stores rooms by floor ID to avoid reloading JSON files on subsequent searches.
- * Rooms are loaded on-demand from context.assets.
+ * Stores rooms by "buildingId/floorId" key to avoid reloading JSON files on subsequent searches.
+ * Rooms are loaded on-demand from context.assets using the campus directory structure.
  */
 object SearchCache {
     private val cachedRooms = mutableMapOf<String, List<Room>>()
     
     /**
-     * Gets rooms for a specific floor, loading from assets if not cached.
+     * Gets rooms for a specific floor in a building, loading from assets if not cached.
      * @param context Android context for asset access
+     * @param buildingId Building identifier (e.g., "building_1")
      * @param floorId Floor identifier (e.g., "floor_1", "floor_1.5")
      * @return List of Room objects, empty list if load fails
      */
-    fun getRooms(context: Context, floorId: String): List<Room> {
-        return cachedRooms.getOrPut(floorId) {
-            loadRoomsFromAssets(context, floorId).map { it.copy(floorId = floorId) }
+    fun getRooms(context: Context, buildingId: String, floorId: String): List<Room> {
+        val key = "$buildingId/$floorId"
+        return cachedRooms.getOrPut(key) {
+            loadRoomsFromAssets(context, buildingId, floorId).map {
+                it.copy(floorId = floorId, buildingId = buildingId)
+            }
         }
     }
     
@@ -60,18 +64,19 @@ object SearchCache {
      * Clears the cache, forcing fresh loads on next getRooms() calls.
      * Useful for testing or if floor data changes.
      */
+    @Suppress("unused")
     fun clearCache() {
         cachedRooms.clear()
     }
     
     /**
      * Loads room data from JSON file in assets.
-     * Follows the LocalFloorPlanRepository pattern.
+     * Uses the campus directory structure: campus/{buildingId}/{floorId}/{floorId}_rooms.json
      */
-    private fun loadRoomsFromAssets(context: Context, floorId: String): List<Room> {
+    private fun loadRoomsFromAssets(context: Context, buildingId: String, floorId: String): List<Room> {
         return try {
-            val fileName = "${floorId}_rooms.json"
-            val inputStream = context.assets.open(fileName)
+            val filePath = "campus/$buildingId/$floorId/${floorId}_rooms.json"
+            val inputStream = context.assets.open(filePath)
             val reader = InputStreamReader(inputStream)
             
             val gson = Gson()
@@ -91,68 +96,14 @@ object SearchCache {
 }
 
 /**
- * Searches for rooms by a query string using prefix matching on room labels or numbers.
+ * Searches for rooms across all available buildings and floors using prefix matching.
  * Results are cached on first load to avoid re-reading JSON files on subsequent calls.
- * If query is numeric, searches by room number. If query is string, searches by label.
- * 
- * @param context Android context for asset access
- * @param floorId Floor identifier to search (e.g., "floor_1")
- * @param query Search query string - performs case-insensitive prefix match on room labels or exact match on room numbers
- * @return List of SearchResult objects matching the query, sorted by room number or label
- */
-fun search(context: Context, floorId: String, query: String): List<SearchResult> {
-    if (query.isBlank()) return emptyList()
-    
-    val rooms = SearchCache.getRooms(context, floorId)
-    val normalizedQuery = query.trim()
-    val isNumericQuery = normalizedQuery.all { it.isDigit() }
-    
-    return if (isNumericQuery) {
-        // Search and sort by room number
-        val queryNumber = normalizedQuery.toIntOrNull()
-        rooms
-            .filter { room ->
-                room.number?.toString()?.startsWith(normalizedQuery) ?: false
-            }
-            .map { room ->
-                SearchResult(
-                    x = room.x,
-                    y = room.y,
-                    label = room.name,
-                    roomNo = room.number,
-                    room = room
-                )
-            }
-            .sortedBy { it.roomNo ?: Int.MAX_VALUE }
-    } else {
-        // Search and sort by label (name)
-        rooms
-            .filter { room ->
-                val label = (room.name ?: "").lowercase()
-                label.startsWith(normalizedQuery.lowercase())
-            }
-            .map { room ->
-                SearchResult(
-                    x = room.x,
-                    y = room.y,
-                    label = room.name,
-                    roomNo = room.number,
-                    room = room
-                )
-            }
-            .sortedBy { it.label ?: "" }
-    }
-}
-
-/**
- * Searches for rooms across all available floors using prefix matching on room labels or numbers.
- * Results are cached on first load to avoid re-reading JSON files on subsequent calls.
- * Automatically discovers all room JSON files in assets (files ending with _rooms.json).
+ * Automatically discovers all buildings under campus/ and their floors.
  * If query is numeric, searches by room number. If query is string, searches by label.
  * 
  * @param context Android context for asset access
  * @param query Search query string - performs case-insensitive prefix match on room labels or room numbers
- * @return List of SearchResult objects matching the query from all floors, sorted by room number or label
+ * @return List of SearchResult objects matching the query from all buildings/floors, sorted by room number or label
  */
 fun searchMultiFloor(context: Context, query: String): List<SearchResult> {
     if (query.isBlank()) return emptyList()
@@ -161,51 +112,53 @@ fun searchMultiFloor(context: Context, query: String): List<SearchResult> {
     val isNumericQuery = normalizedQuery.all { it.isDigit() }
     val allResults = mutableListOf<SearchResult>()
     
-    // Dynamically discover all room JSON files in assets
-    val assetFiles = context.assets.list("") ?: emptyArray()
-    val roomFiles = assetFiles.filter { it.endsWith("_rooms.json") }
+    // Discover all buildings under campus/
+    val buildings = context.assets.list("campus") ?: emptyArray()
     
-    for (fileName in roomFiles) {
-        // Extract floor ID from filename (e.g., "floor_1_rooms.json" -> "floor_1")
-        val floorId = fileName.replace("_rooms.json", "")
+    for (buildingId in buildings) {
+        // Discover all floors under this building
+        val floors = context.assets.list("campus/$buildingId") ?: emptyArray()
+        val floorDirs = floors.filter { it.startsWith("floor_") }
         
-        val rooms = SearchCache.getRooms(context, floorId)
+        for (floorId in floorDirs) {
+            val rooms = SearchCache.getRooms(context, buildingId, floorId)
         
-        if (isNumericQuery) {
-            // Search and sort by room number
-            rooms
-                .filter { room ->
-                    room.number?.toString()?.startsWith(normalizedQuery) ?: false
-                }
-                .forEach { room ->
-                    allResults.add(
-                        SearchResult(
-                            x = room.x,
-                            y = room.y,
-                            label = room.name,
-                            roomNo = room.number,
-                            room = room
+            if (isNumericQuery) {
+                // Search and sort by room number
+                rooms
+                    .filter { room ->
+                        room.number?.toString()?.startsWith(normalizedQuery) ?: false
+                    }
+                    .forEach { room ->
+                        allResults.add(
+                            SearchResult(
+                                x = room.x,
+                                y = room.y,
+                                label = room.name,
+                                roomNo = room.number,
+                                room = room
+                            )
                         )
-                    )
-                }
-        } else {
-            // Search and sort by label (name)
-            rooms
-                .filter { room ->
-                    val label = (room.name ?: "").lowercase()
-                    label.startsWith(normalizedQuery.lowercase())
-                }
-                .forEach { room ->
-                    allResults.add(
-                        SearchResult(
-                            x = room.x,
-                            y = room.y,
-                            label = room.name,
-                            roomNo = room.number,
-                            room = room
+                    }
+            } else {
+                // Search and sort by label (name)
+                rooms
+                    .filter { room ->
+                        val label = (room.name ?: "").lowercase()
+                        label.startsWith(normalizedQuery.lowercase())
+                    }
+                    .forEach { room ->
+                        allResults.add(
+                            SearchResult(
+                                x = room.x,
+                                y = room.y,
+                                label = room.name,
+                                roomNo = room.number,
+                                room = room
+                            )
                         )
-                    )
-                }
+                    }
+            }
         }
     }
     

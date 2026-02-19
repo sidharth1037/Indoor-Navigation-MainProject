@@ -1,10 +1,13 @@
 package `in`.project.enroute.feature.home.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -52,7 +55,7 @@ fun FloorSlider(
     isVisible: Boolean = true
 ) {
     AnimatedVisibility(
-        visible = isVisible && availableFloors.size > 1,
+        visible = isVisible && availableFloors.isNotEmpty(),
         enter = fadeIn() + slideInHorizontally { -it },
         exit = fadeOut() + slideOutHorizontally { -it },
         modifier = modifier
@@ -79,7 +82,7 @@ private fun FloorSliderContent(
     }
 
     var lastValidFloors by remember { mutableStateOf(availableFloors) }
-    if (availableFloors.size >= 2) {
+    if (availableFloors.isNotEmpty()) {
         lastValidFloors = availableFloors
     }
 
@@ -101,14 +104,33 @@ private fun FloorSliderContent(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        if (lastValidBuildingName.isNotEmpty()) {
-            Text(
-                text = lastValidBuildingName,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                textAlign = TextAlign.Center
-            )
+        AnimatedContent(
+            targetState = lastValidBuildingName,
+            transitionSpec = {
+                val duration = 240
+                val exit = slideOutHorizontally(
+                    targetOffsetX = { -it },
+                    animationSpec = tween(durationMillis = duration)
+                ) + fadeOut(animationSpec = tween(durationMillis = duration))
+
+                val enter = slideInHorizontally(
+                    initialOffsetX = { it },
+                    animationSpec = tween(durationMillis = duration, delayMillis = duration)
+                ) + fadeIn(animationSpec = tween(durationMillis = duration, delayMillis = duration))
+
+                enter.togetherWith(exit)
+            },
+            label = "buildingNameTransition"
+        ) { name ->
+            if (name.isNotEmpty()) {
+                Text(
+                    text = name,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
 
         FloorControls(

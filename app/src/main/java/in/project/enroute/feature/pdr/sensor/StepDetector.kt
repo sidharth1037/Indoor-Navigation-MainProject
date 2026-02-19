@@ -25,6 +25,12 @@ class StepDetector(private val sensorManager: SensorManager) : SensorEventListen
      */
     var onStepDetected: ((stepIntervalMs: Long) -> Unit)? = null
 
+    /**
+     * Callback for every accelerometer sample (x, y, z).
+     * Used by MotionRepository for ML classification.
+     */
+    var onAccelerometerData: ((x: Float, y: Float, z: Float) -> Unit)? = null
+
     private var config = StepDetectionConfig()
     private var isRunning = false
 
@@ -83,6 +89,10 @@ class StepDetector(private val sensorManager: SensorManager) : SensorEventListen
         val x = event.values[0]
         val y = event.values[1]
         val z = event.values[2]
+
+        // Forward raw sample to motion classifier
+        onAccelerometerData?.invoke(x, y, z)
+
         val magnitude = sqrt(x * x + y * y + z * z)
 
         // Add to sliding window

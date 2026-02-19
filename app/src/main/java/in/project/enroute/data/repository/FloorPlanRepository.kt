@@ -18,7 +18,7 @@ interface FloorPlanRepository {
     suspend fun loadFloorPlan(buildingId: String, floorId: String): FloorPlanData
     
     /**
-     * Loads building metadata (scale, rotation, etc.).
+     * Loads building metadata (scale, rotation, relative position, etc.).
      * @param buildingId Identifier for the building
      * @return FloorPlanMetadata for the building
      */
@@ -30,4 +30,10 @@ interface FloorPlanRepository {
      * @return List of floor identifiers
      */
     suspend fun getAvailableFloors(buildingId: String): List<String>
+    
+    /**
+     * Gets list of all available building IDs on the campus.
+     * @return List of building identifiers
+     */
+    suspend fun getAvailableBuildings(): List<String>
 }

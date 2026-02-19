@@ -8,9 +8,11 @@ import androidx.lifecycle.viewModelScope
 import `in`.project.enroute.feature.pdr.data.model.PdrState
 import `in`.project.enroute.feature.pdr.data.model.StepDetectionConfig
 import `in`.project.enroute.feature.pdr.data.model.StrideConfig
+import `in`.project.enroute.feature.pdr.data.repository.MotionRepository
 import `in`.project.enroute.feature.pdr.data.repository.PdrRepository
 import `in`.project.enroute.feature.pdr.sensor.HeadingDetector
 import `in`.project.enroute.feature.pdr.sensor.StepDetector
+import `in`.project.enroute.feature.settings.data.SettingsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,8 +27,11 @@ import kotlinx.coroutines.launch
 data class PdrUiState(
     val pdrState: PdrState = PdrState(),
     val isSelectingOrigin: Boolean = false,
+    val showHeightRequired: Boolean = false,
     val stepDetectionConfig: StepDetectionConfig = StepDetectionConfig(),
-    val strideConfig: StrideConfig = StrideConfig()
+    val strideConfig: StrideConfig = StrideConfig(),
+    val motionLabel: String? = null,
+    val motionConfidence: Float = 0f
 )
 
 /**
@@ -40,6 +45,8 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     private val sensorManager = application.getSystemService(SensorManager::class.java)
     
     private val repository = PdrRepository()
+    private val motionRepository = MotionRepository(application.applicationContext)
+    private val settingsRepository = SettingsRepository(application.applicationContext)
     private val headingDetector = HeadingDetector(sensorManager)
     private val stepDetector = StepDetector(sensorManager)
 
@@ -57,12 +64,28 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         // (step detector only starts when tracking begins)
         headingDetector.start()
 
+        // Load height from settings and update stride config
+        viewModelScope.launch {
+            settingsRepository.height.collect { height ->
+                if (height != null) {
+                    val updatedConfig = _uiState.value.strideConfig.copy(heightCm = height)
+                    _uiState.update { it.copy(strideConfig = updatedConfig) }
+                    repository.updateStrideConfig(updatedConfig)
+                }
+            }
+        }
+
         // Set up step detector callback
         stepDetector.onStepDetected = { stepIntervalMs ->
             // Only process steps if we're tracking (origin is set)
             if (_uiState.value.pdrState.isTracking) {
                 repository.processStep(stepIntervalMs, headingDetector.heading.value)
             }
+        }
+
+        // Forward raw accelerometer data to motion classifier
+        stepDetector.onAccelerometerData = { x, y, z ->
+            motionRepository.onAccelerometerSample(x, y, z)
         }
 
         // Forward heading from sensor → repository (for step calculations)
@@ -78,14 +101,55 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(pdrState = pdrState) }
             }
         }
+
+        // Observe motion classification results
+        viewModelScope.launch {
+            motionRepository.motionEvent.collect { event ->
+                _uiState.update {
+                    it.copy(
+                        motionLabel = event?.classificationName,
+                        motionConfidence = event?.confidence ?: 0f
+                    )
+                }
+            }
+        }
     }
 
     /**
      * Enters origin selection mode.
-     * In this mode, the user can tap on the canvas to set the starting point.
+     * Shows height dialog first if height is not set.
      */
     fun startOriginSelection() {
-        _uiState.update { it.copy(isSelectingOrigin = true) }
+        if (_uiState.value.strideConfig.heightCm == null) {
+            _uiState.update { it.copy(showHeightRequired = true) }
+        } else {
+            _uiState.update { it.copy(isSelectingOrigin = true) }
+        }
+    }
+
+    /**
+     * Dismisses the height required dialog.
+     */
+    fun dismissHeightRequired() {
+        _uiState.update { it.copy(showHeightRequired = false) }
+    }
+
+    /**
+     * Saves height from the dialog and proceeds to origin selection.
+     */
+    fun saveHeightAndProceed(heightCm: Float) {
+        viewModelScope.launch {
+            settingsRepository.saveHeight(heightCm)
+        }
+        val updatedConfig = _uiState.value.strideConfig.copy(heightCm = heightCm)
+        _uiState.update {
+            it.copy(
+                strideConfig = updatedConfig,
+                showHeightRequired = false,
+                isSelectingOrigin = true
+            )
+        }
+        repository.updateStrideConfig(updatedConfig)
     }
 
     /**
@@ -97,19 +161,17 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Sets the origin point and starts PDR tracking.
-     * This will:
-     * 1. Set the origin in the repository
-     * 2. Start the heading sensor
-     * 3. Start the step detector
+     * Origin should be in campus-wide coordinates.
      *
-     * @param origin The starting coordinate in canvas/world space
+     * @param origin The starting coordinate in campus-wide space
+     * @param currentFloor The floor the user is on (e.g. "floor_1")
      */
-    fun setOrigin(origin: Offset) {
+    fun setOrigin(origin: Offset, currentFloor: String? = null) {
         // Exit selection mode
         _uiState.update { it.copy(isSelectingOrigin = false) }
         
         // Set origin in repository (this enables tracking)
-        repository.setOrigin(origin)
+        repository.setOrigin(origin, currentFloor)
         
         // Start sensors
         startSensors()
@@ -129,7 +191,9 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Updates step detection configuration.
+     * Public API for a future settings/calibration screen.
      */
+    @Suppress("unused")
     fun updateStepDetectionConfig(config: StepDetectionConfig) {
         _uiState.update { it.copy(stepDetectionConfig = config) }
         stepDetector.updateConfig(config)
@@ -137,7 +201,9 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Updates stride calculation configuration.
+     * Public API for a future settings/calibration screen.
      */
+    @Suppress("unused")
     fun updateStrideConfig(config: StrideConfig) {
         _uiState.update { it.copy(strideConfig = config) }
         repository.updateStrideConfig(config)
@@ -157,6 +223,7 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
      * Called internally when origin is set.
      */
     private fun startSensors() {
+        motionRepository.start()
         stepDetector.start()
     }
 
@@ -167,6 +234,7 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun stopSensors() {
         stepDetector.stop()
+        motionRepository.stop()
     }
 
     override fun onCleared() {
@@ -174,5 +242,6 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         // Clean up all sensors when ViewModel is destroyed
         headingDetector.stop()
         stepDetector.stop()
+        motionRepository.stop()
     }
 }

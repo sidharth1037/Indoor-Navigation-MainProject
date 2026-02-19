@@ -38,6 +38,7 @@ import `in`.project.enroute.feature.home.components.SearchScreen
 import `in`.project.enroute.feature.home.components.AimButton
 import `in`.project.enroute.feature.home.components.CompassButton
 import `in`.project.enroute.feature.floorplan.rendering.FloorPlanCanvas
+import `in`.project.enroute.feature.floorplan.rendering.FloorPlanLabelsOverlay
 import `in`.project.enroute.data.model.Room
 import android.graphics.drawable.VectorDrawable
 import androidx.compose.ui.platform.LocalContext
@@ -48,31 +49,42 @@ import `in`.project.enroute.feature.pdr.PdrViewModel
 import `in`.project.enroute.feature.pdr.PdrUiState
 import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionDialog
 import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionOverlay
-import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionTapHandler
+
 import `in`.project.enroute.feature.pdr.ui.components.PdrPathOverlay
+import `in`.project.enroute.feature.pdr.ui.components.HeightRequiredDialog
+import `in`.project.enroute.feature.pdr.ui.components.MotionLabel
 import `in`.project.enroute.feature.home.components.SetLocationButton
 import `in`.project.enroute.feature.home.components.RoomInfoPanel
 import `in`.project.enroute.feature.home.components.StopTrackingButton
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween as dpTween
+import `in`.project.enroute.feature.navigation.NavigationViewModel
+import `in`.project.enroute.feature.navigation.NavigationUiState
+import `in`.project.enroute.feature.navigation.ui.NavigationPathOverlay
 
 @Composable
 fun HomeScreen(
     floorPlanViewModel: FloorPlanViewModel = viewModel(),
-    pdrViewModel: PdrViewModel = viewModel()
+    pdrViewModel: PdrViewModel = viewModel(),
+    navigationViewModel: NavigationViewModel = viewModel()
 ) {
     val uiState by floorPlanViewModel.uiState.collectAsState()
     val pdrUiState by pdrViewModel.uiState.collectAsState()
+    val navUiState by navigationViewModel.uiState.collectAsState()
     // Heading collected separately so compass changes don't recompose entire tree
     val heading by pdrViewModel.heading.collectAsState()
     val view = LocalView.current
 
-    // Load all floors on first composition
+    // Load all buildings on first composition
     LaunchedEffect(Unit) {
-        floorPlanViewModel.loadAllFloors(
-            "building_1", 
-            listOf("floor_1", "floor_1.5", "floor_2", "floor_2.5")
-        )
+        floorPlanViewModel.loadCampus()
+    }
+
+    // Supply loaded floor data to NavigationViewModel whenever it changes
+    LaunchedEffect(uiState.allLoadedFloors) {
+        if (uiState.allLoadedFloors.isNotEmpty()) {
+            navigationViewModel.supplyFloorData(uiState.allLoadedFloors)
+        }
     }
 
     // Keep screen on when PDR tracking is active
@@ -116,6 +128,7 @@ fun HomeScreen(
         ) {
             derivedStateOf {
                 if (uiState.isFollowingMode && !uiState.isFollowingAnimating && pdrUiState.pdrState.path.isNotEmpty()) {
+                    // PDR positions are already in campus-wide coordinates
                     val currentPosition = pdrUiState.pdrState.path.last().position
                     FollowingAnimator.calculateFollowingState(
                         worldPosition = currentPosition,
@@ -134,10 +147,9 @@ fun HomeScreen(
         HomeScreenContent(
             uiState = uiState,
             pdrUiState = pdrUiState,
+            navUiState = navUiState,
             heading = heading,
             effectiveCanvasState = effectiveCanvasState,
-            screenWidth = screenWidth,
-            screenHeight = screenHeight,
             maxWidth = maxWidth,
             onCanvasStateChange = {
                 // If gesture cancels following mode, switch heading back to compass rate
@@ -149,18 +161,26 @@ fun HomeScreen(
             onFloorChange = { floorPlanViewModel.setCurrentFloor(it) },
             onCenterView = { x, y, scale -> floorPlanViewModel.centerOnCoordinate(x, y, scale) },
             onRoomTap = { room ->
-                // Switch to the room's floor if it has floor info
+                // Switch to the room's floor in the correct building
                 room.floorId?.let { fid ->
                     val floorNumber = fid.removePrefix("floor_").toFloatOrNull()
                     if (floorNumber != null) {
-                        floorPlanViewModel.setCurrentFloor(floorNumber)
+                        val buildingId = room.buildingId
+                        if (buildingId != null) {
+                            floorPlanViewModel.setCurrentFloor(buildingId, floorNumber)
+                        } else {
+                            floorPlanViewModel.setCurrentFloor(floorNumber)
+                        }
                     }
                 }
                 floorPlanViewModel.pinRoom(room)
             },
-            onBackgroundTap = { floorPlanViewModel.clearPin() },
+            onBackgroundTap = {
+                floorPlanViewModel.clearPin()
+                navigationViewModel.clearPath()
+            },
             onEnableTracking = { position, heading ->
-                // Switch heading sensor to fast tracking for smooth rotation
+                // PDR positions are already campus-wide
                 pdrViewModel.setHeadingTrackingMode(true)
                 floorPlanViewModel.enableFollowingMode(position, heading)
             },
@@ -170,9 +190,29 @@ fun HomeScreen(
                 pdrViewModel.setHeadingTrackingMode(false)
                 floorPlanViewModel.disableFollowingMode(effectiveCanvasState)
                 pdrViewModel.clearAndStop()
+                navigationViewModel.clearPath()
             },
-            onOriginSelected = { pdrViewModel.setOrigin(it) },
-            onCancelOriginSelection = { pdrViewModel.cancelOriginSelection() }
+            onOriginSelected = { origin ->
+                // Pass current floor and building to PDR origin
+                // Origin tap is already in campus-wide coordinates
+                // Use findFloorAtPoint so origin works even when zoomed out (no dominant building)
+                val currentFloor = floorPlanViewModel.findFloorAtPoint(origin)
+                pdrViewModel.setOrigin(origin, currentFloor)
+            },
+            onCancelOriginSelection = { pdrViewModel.cancelOriginSelection() },
+            onDismissHeightRequired = { pdrViewModel.dismissHeightRequired() },
+            onSaveHeight = { height -> pdrViewModel.saveHeightAndProceed(height) },
+            onDirectionsClick = { room ->
+                // Positions are all campus-wide
+                val currentPosition = pdrUiState.pdrState.path.lastOrNull()?.position
+                    ?: pdrUiState.pdrState.origin
+                // Use the floor stored in PDR state (set at origin time) so navigation
+                // works even when zoomed out with no dominant building.
+                val floor = pdrUiState.pdrState.currentFloor ?: uiState.currentFloorId
+                if (currentPosition != null && floor != null) {
+                    navigationViewModel.requestDirections(room, currentPosition, floor)
+                }
+            }
         )
     }
 }
@@ -181,10 +221,9 @@ fun HomeScreen(
 private fun HomeScreenContent(
     uiState: FloorPlanUiState,
     pdrUiState: PdrUiState,
+    navUiState: NavigationUiState,
     heading: Float,
     effectiveCanvasState: CanvasState,
-    screenWidth: Float,
-    screenHeight: Float,
     maxWidth: Dp,
     onCanvasStateChange: (CanvasState) -> Unit,
     onFloorChange: (Float) -> Unit,
@@ -195,12 +234,17 @@ private fun HomeScreenContent(
     onSetOriginClick: () -> Unit,
     onClearPdrClick: () -> Unit,
     onOriginSelected: (androidx.compose.ui.geometry.Offset) -> Unit,
-    onCancelOriginSelection: () -> Unit
+    onCancelOriginSelection: () -> Unit,
+    onDismissHeightRequired: () -> Unit,
+    onSaveHeight: (Float) -> Unit,
+    onDirectionsClick: (Room) -> Unit
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var isMorphingToSearch by remember { mutableStateOf(false) }
     var showOriginDialog by remember { mutableStateOf(false) }
     var aimPressed by remember { mutableStateOf(false) }
+    // When true, means the origin dialog was triggered by "Directions" button
+    // and we should request directions once origin is set
 
     // Animate bottom button offset when room info panel is visible
     val panelVisible = uiState.pinnedRoom != null
@@ -226,7 +270,7 @@ private fun HomeScreenContent(
             uiState.error != null -> {
                 Text(text = uiState.error)
             }
-            uiState.allFloorsToRender.isNotEmpty() -> {
+            uiState.buildingStates.isNotEmpty() -> {
                 // Resolve pin drawable and primary tint color
                 val context = LocalContext.current
                 val pinDrawable = remember {
@@ -234,21 +278,41 @@ private fun HomeScreenContent(
                 }
                 val primaryColor = MaterialTheme.colorScheme.primary.toArgb()
 
-                // Floor plan canvas filling entire screen
+                // Floor plan canvas filling entire screen (base layer: background, walls, entrances)
                 FloorPlanCanvas(
-                    floorsToRender = uiState.allFloorsToRender,
+                    buildingStates = uiState.buildingStates,
+                    campusBounds = uiState.campusBounds,
                     canvasState = effectiveCanvasState,
                     onCanvasStateChange = onCanvasStateChange,
+                    displayConfig = uiState.displayConfig,
+                    onRoomTap = onRoomTap,
+                    onBackgroundTap = onBackgroundTap,
+                    isSelectingOrigin = pdrUiState.isSelectingOrigin,
+                    onOriginTap = onOriginSelected,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // A* navigation path overlay — rendered above base but below labels/pin
+                if (navUiState.path.isNotEmpty()) {
+                    NavigationPathOverlay(
+                        path = navUiState.path,
+                        canvasState = effectiveCanvasState,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                // Room labels, building names, and search pin — above nav path
+                FloorPlanLabelsOverlay(
+                    buildingStates = uiState.buildingStates,
+                    canvasState = effectiveCanvasState,
                     displayConfig = uiState.displayConfig,
                     pinnedRoom = uiState.pinnedRoom,
                     pinDrawable = pinDrawable,
                     pinTintColor = primaryColor,
-                    onRoomTap = onRoomTap,
-                    onBackgroundTap = onBackgroundTap,
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // PDR path overlay sits above the canvas but below controls
+                // PDR path overlay — user position always on top
                 if (pdrUiState.pdrState.path.isNotEmpty()) {
                     PdrPathOverlay(
                         path = pdrUiState.pdrState.path,
@@ -258,17 +322,19 @@ private fun HomeScreenContent(
                     )
                 }
 
-                // Origin selection tap handler (when in selection mode)
-                if (pdrUiState.isSelectingOrigin) {
-                    OriginSelectionTapHandler(
-                        canvasState = effectiveCanvasState,
-                        screenWidth = screenWidth,
-                        screenHeight = screenHeight,
-                        onPointSelected = onOriginSelected,
-                        modifier = Modifier.fillMaxSize()
+                // Motion classification label — small chip when tracking
+                if (pdrUiState.pdrState.isTracking && pdrUiState.motionLabel != null) {
+                    MotionLabel(
+                        label = pdrUiState.motionLabel,
+                        confidence = pdrUiState.motionConfidence,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(top = 80.dp, end = 8.dp)
                     )
-                    
-                    // Selection mode overlay with instructions
+                }
+
+                // Origin selection overlay with instructions (when in selection mode)
+                if (pdrUiState.isSelectingOrigin) {
                     OriginSelectionOverlay(
                         onCancel = onCancelOriginSelection,
                         modifier = Modifier.align(Alignment.TopCenter)
@@ -368,7 +434,16 @@ private fun HomeScreenContent(
                 // Room info panel slides up from bottom when a room label is tapped
                 RoomInfoPanel(
                     room = uiState.pinnedRoom,
+                    isCalculatingPath = navUiState.isCalculating,
                     onDismiss = onBackgroundTap,
+                    onDirectionsClick = { room ->
+                        if (pdrUiState.pdrState.origin == null) {
+                            // Origin not set → show dialog, remember room for later
+                            showOriginDialog = true
+                        } else {
+                            onDirectionsClick(room)
+                        }
+                    },
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
                 
@@ -384,6 +459,14 @@ private fun HomeScreenContent(
                             // TODO: Implement location selection
                             showOriginDialog = false
                         }
+                    )
+                }
+                
+                // Height required dialog
+                if (pdrUiState.showHeightRequired) {
+                    HeightRequiredDialog(
+                        onDismiss = onDismissHeightRequired,
+                        onSave = onSaveHeight
                     )
                 }
                 

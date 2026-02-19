@@ -1,0 +1,300 @@
+{
+  "entrances": [
+    {
+      "id": 1,
+      "x": 801.0,
+      "y": 4022.0,
+      "name": "Lift",
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 2,
+      "x": 948.0,
+      "y": 3511.0,
+      "name": "Gents Waiting Room",
+      "room_no": "113",
+      "available": true
+    },
+    {
+      "id": 3,
+      "x": 666.0,
+      "y": 3778.0,
+      "name": "Gents Toilet",
+      "room_no": "114",
+      "available": true
+    },
+    {
+      "id": 4,
+      "x": 666.0,
+      "y": 3680.0,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 5,
+      "x": 948.0,
+      "y": 2675.5,
+      "name": "Staff Room",
+      "room_no": "112",
+      "available": true
+    },
+    {
+      "id": 6,
+      "x": 666.0,
+      "y": 2675.5,
+      "name": "Software Computing Lab",
+      "room_no": "115",
+      "available": true
+    },
+    {
+      "id": 7,
+      "x": 948.0,
+      "y": 2417.5,
+      "name": "HOD Office",
+      "room_no": "111",
+      "available": true
+    },
+    {
+      "id": 8,
+      "x": 666.0,
+      "y": 2002.5,
+      "name": "Software Computing Lab",
+      "room_no": "115",
+      "available": true
+    },
+    {
+      "id": 9,
+      "x": 948.0,
+      "y": 1918.5,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 10,
+      "x": 741.0,
+      "y": 1775.5,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 11,
+      "x": 741.0,
+      "y": 1504.0,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 12,
+      "x": 1790.0,
+      "y": 1785.5,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 13,
+      "x": 814.5,
+      "y": 1189.5,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 14,
+      "x": 1202.5,
+      "y": 806.5,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 15,
+      "x": 621.5,
+      "y": 998.5,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 16,
+      "x": 1014.5,
+      "y": 614.0,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 17,
+      "x": 466.5,
+      "y": 845.0,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 18,
+      "x": 855.0,
+      "y": 452.5,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 19,
+      "x": 246.0,
+      "y": 684.0,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 20,
+      "x": 692.0,
+      "y": 223.5,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 21,
+      "x": 2007.5,
+      "y": 2004.0,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 22,
+      "x": 1931.0,
+      "y": 936.0,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 23,
+      "x": 1785.5,
+      "y": 729.0,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 24,
+      "x": 1512.0,
+      "y": 729.0,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 25,
+      "x": 2014.0,
+      "y": 650.0,
+      "name": "Lecture Hall",
+      "room_no": "105",
+      "available": true
+    },
+    {
+      "id": 26,
+      "x": 2564.0,
+      "y": 650.0,
+      "name": "Lecture Hall",
+      "room_no": "105",
+      "available": true
+    },
+    {
+      "id": 27,
+      "x": 2435.0,
+      "y": 936.0,
+      "name": "HO Office",
+      "room_no": "110",
+      "available": true
+    },
+    {
+      "id": 28,
+      "x": 2689.5,
+      "y": 936.0,
+      "name": "Staff Room",
+      "room_no": "109",
+      "available": true
+    },
+    {
+      "id": 29,
+      "x": 2689.5,
+      "y": 650.0,
+      "name": "Lecture Hall",
+      "room_no": "106",
+      "available": true
+    },
+    {
+      "id": 30,
+      "x": 3531.5,
+      "y": 936.0,
+      "name": "Ladies Toilet",
+      "room_no": "108",
+      "available": true
+    },
+    {
+      "id": 31,
+      "x": 3693.0,
+      "y": 650.0,
+      "name": "Lecture Hall",
+      "room_no": "106",
+      "available": true
+    },
+    {
+      "id": 32,
+      "x": 3795.5,
+      "y": 650.0,
+      "name": "Ladies Waiting Room",
+      "room_no": "107",
+      "available": true
+    },
+    {
+      "id": 33,
+      "x": 1011.0,
+      "y": 1001.5,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 34,
+      "x": 1230.0,
+      "y": 1220.0,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    },
+    {
+      "id": 35,
+      "x": 1165.0,
+      "y": 1154.5,
+      "stairs": true,
+      "name": null,
+      "room_no": null,
+      "available": true
+    }
+  ]
+}

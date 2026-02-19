@@ -56,7 +56,7 @@ data class StepDetectionConfig(
  * @param cadenceAverageSize Number of recent cadences to average
  */
 data class StrideConfig(
-    val heightCm: Float = 170f, // Default to average height
+    val heightCm: Float? = null, // Default to average height
     // kValue: Sensitivity to speed changes.
     // Research (e.g., Bylemans et al.) suggests ~0.15 - 0.17 for height-normalized gait.
     val kValue: Float = 0.16f,
@@ -83,9 +83,14 @@ data class PathPoint(
  * Heading is stored separately in PdrUiState to avoid copying the path
  * list on every compass tick.
  *
+ * All positions (origin, currentPosition, path) are in **campus-wide** coordinates
+ * (metadata-transformed + building relativePosition offset), matching the canvas
+ * drawing space. This eliminates per-building offset juggling in overlays and
+ * camera-centering code.
+ *
  * @param isTracking Whether PDR tracking is currently active
- * @param origin The starting point for the current tracking session
- * @param currentPosition The current calculated position
+ * @param origin The starting point in campus-wide coordinates
+ * @param currentPosition The current calculated position in campus-wide coordinates
  * @param path List of all path points since origin was set (with heading at each step)
  */
 data class PdrState(
@@ -93,5 +98,7 @@ data class PdrState(
     val origin: Offset? = null,
     val currentPosition: Offset? = null,
     val path: List<PathPoint> = emptyList(),
-    val cadenceState: CadenceState = CadenceState()
+    val cadenceState: CadenceState = CadenceState(),
+    /** The floor the user is currently on (e.g. "floor_1"). Used for multi-floor navigation. */
+    val currentFloor: String? = null
 )

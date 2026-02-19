@@ -6,6 +6,7 @@ package `in`.project.enroute.data.model
  */
 data class FloorPlanData(
     val floorId: String,
+    val buildingId: String = "",
     val metadata: FloorPlanMetadata,
     val walls: List<Wall> = emptyList(),
     val stairwells: List<Stairwell> = emptyList(),

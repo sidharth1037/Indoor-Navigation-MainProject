@@ -14,11 +14,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.NorthEast
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Alignment
@@ -50,12 +52,16 @@ import `in`.project.enroute.data.model.Room
 fun RoomInfoPanel(
     modifier: Modifier = Modifier,
     room: Room?,
-    onDismiss: () -> Unit = {}
+    isCalculatingPath: Boolean = false,
+    onDismiss: () -> Unit = {},
+    onDirectionsClick: (Room) -> Unit = {}
 ) {
     // Keep last non-null room so exit animation can display it
     var lastRoom by remember { mutableStateOf(room) }
+    var lastIsCalculating by remember { mutableStateOf(isCalculatingPath) }
     if (room != null) {
         lastRoom = room
+        lastIsCalculating = isCalculatingPath
     }
 
     AnimatedVisibility(
@@ -70,12 +76,22 @@ fun RoomInfoPanel(
         ),
         modifier = modifier
     ) {
-        RoomInfoPanelContent(room = lastRoom!!, onDismiss = onDismiss)
+        RoomInfoPanelContent(
+            room = lastRoom!!,
+            isCalculatingPath = lastIsCalculating,
+            onDismiss = onDismiss,
+            onDirectionsClick = onDirectionsClick
+        )
     }
 }
 
 @Composable
-private fun RoomInfoPanelContent(room: Room, onDismiss: () -> Unit) {
+private fun RoomInfoPanelContent(
+    room: Room,
+    isCalculatingPath: Boolean,
+    onDismiss: () -> Unit,
+    onDirectionsClick: (Room) -> Unit
+) {
     val shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
 
     Box(
@@ -147,9 +163,8 @@ private fun RoomInfoPanelContent(room: Room, onDismiss: () -> Unit) {
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                        onClick = {
-                            // TODO: Implement directions feature
-                        }
+                        enabled = !isCalculatingPath,
+                        onClick = { onDirectionsClick(room) }
                     )
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -160,12 +175,20 @@ private fun RoomInfoPanelContent(room: Room, onDismiss: () -> Unit) {
                     fontWeight = FontWeight.SemiBold
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Icon(
-                    imageVector = Icons.Rounded.NorthEast,
-                    contentDescription = "Directions",
-                    tint = MaterialTheme.colorScheme.background,
-                    modifier = Modifier.width(18.dp)
-                )
+                if (isCalculatingPath) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = MaterialTheme.colorScheme.background,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.NorthEast,
+                        contentDescription = "Directions",
+                        tint = MaterialTheme.colorScheme.background,
+                        modifier = Modifier.width(18.dp)
+                    )
+                }
             }
         }
     }

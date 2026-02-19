@@ -6,5 +6,9 @@
     "y": 1328
   },
   "scale": 0.62,
-  "rotation": 105.0
+  "rotation": 105.0,
+  "relative_position": {
+    "x": 0,
+    "y": 0
+  }
 }
