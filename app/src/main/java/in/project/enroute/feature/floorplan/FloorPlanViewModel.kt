@@ -3,6 +3,7 @@ package `in`.project.enroute.feature.floorplan
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import `in`.project.enroute.data.model.CampusMetadata
 import `in`.project.enroute.data.model.RelativePosition
 import `in`.project.enroute.data.model.Building
 import `in`.project.enroute.data.model.FloorPlanData
@@ -49,6 +50,12 @@ data class CampusBounds(
 data class FloorPlanUiState(
     val isLoading: Boolean = true,
     val error: String? = null,
+
+    /**
+     * Campus-level metadata (name, location, north bearing, etc.).
+     * Loaded once when the campus is opened and persists for the session.
+     */
+    val campusMetadata: CampusMetadata = CampusMetadata(),
     
     /**
      * Map of building ID to its state (includes floors, current floor, etc.)
@@ -257,6 +264,7 @@ class FloorPlanViewModel(
 
     /**
      * Loads all buildings on the campus by scanning the assets directory.
+     * Campus metadata is loaded first and stored for the entire session.
      * Each building's floors are discovered automatically.
      */
     fun loadCampus() {
@@ -264,6 +272,10 @@ class FloorPlanViewModel(
             _uiState.update { it.copy(isLoading = true, error = null) }
             
             try {
+                // Load campus-level metadata first (persists for the session)
+                val campusMetadata = repository.loadCampusMetadata()
+                _uiState.update { it.copy(campusMetadata = campusMetadata) }
+
                 val buildingIds = repository.getAvailableBuildings()
                 
                 for (buildingId in buildingIds) {

@@ -71,7 +71,7 @@ fun HomeScreen(
     val uiState by floorPlanViewModel.uiState.collectAsState()
     val pdrUiState by pdrViewModel.uiState.collectAsState()
     val navUiState by navigationViewModel.uiState.collectAsState()
-    // Heading collected separately so compass changes don't recompose entire tree
+    // Heading collected separately for PDR — not used for compass (compass uses canvas rotation)
     val heading by pdrViewModel.heading.collectAsState()
     val view = LocalView.current
 
@@ -377,7 +377,8 @@ private fun HomeScreenContent(
                         )
 
                         CompassButton(
-                            headingRadians = heading,
+                            campusNorthDegrees = uiState.campusMetadata.north,
+                            canvasRotationDegrees = effectiveCanvasState.rotation,
                             onClick = { /* Could reset canvas rotation */ },
                             isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
                             isSearching = isMorphingToSearch,

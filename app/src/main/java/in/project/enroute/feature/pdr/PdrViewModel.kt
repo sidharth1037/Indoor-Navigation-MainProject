@@ -60,10 +60,6 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     val heading: StateFlow<Float> = repository.heading
 
     init {
-        // Start heading detector immediately for compass functionality
-        // (step detector only starts when tracking begins)
-        headingDetector.start()
-
         // Load height from settings and update stride config
         viewModelScope.launch {
             settingsRepository.height.collect { height ->
@@ -212,27 +208,28 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Switches the heading sensor between compass mode (slow, low CPU)
      * and tracking mode (fast, for smooth following-mode canvas rotation).
+     * Has no effect if sensors are not yet running (e.g. before PDR starts).
      */
     fun setHeadingTrackingMode(enabled: Boolean) {
         headingDetector.setTrackingMode(enabled)
     }
 
     /**
-     * Starts the step detector sensor.
-     * Heading detector is always running for compass functionality.
-     * Called internally when origin is set.
+     * Starts all PDR sensors: heading, step detector, and motion classifier.
+     * Called internally when origin is set and tracking begins.
      */
     private fun startSensors() {
+        headingDetector.start()
         motionRepository.start()
         stepDetector.start()
     }
 
     /**
-     * Stops the step detector sensor.
-     * Heading detector keeps running for compass.
-     * Called internally when clearing tracking.
+     * Stops all PDR sensors.
+     * Called internally when tracking is cleared.
      */
     private fun stopSensors() {
+        headingDetector.stop()
         stepDetector.stop()
         motionRepository.stop()
     }

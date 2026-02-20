@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
+import `in`.project.enroute.data.model.CampusMetadata
 import `in`.project.enroute.data.model.Entrance
 import `in`.project.enroute.data.model.FloorPlanData
 import `in`.project.enroute.data.model.FloorPlanMetadata
@@ -27,6 +28,45 @@ class LocalFloorPlanRepository(
 
     private val gson = Gson()
 
+    // ── Campus-level ─────────────────────────────────────────────
+
+    override suspend fun loadCampusMetadata(): CampusMetadata = withContext(Dispatchers.IO) {
+        val inputStream = context.assets.open("campus/campus_metadata.json")
+        val reader = InputStreamReader(inputStream)
+        gson.fromJson(reader, CampusMetadata::class.java)
+    }
+
+    override suspend fun getAvailableBuildings(): List<String> = withContext(Dispatchers.IO) {
+        try {
+            val entries = context.assets.list("campus") ?: emptyArray()
+            entries.filter { it.startsWith("building_") }
+                .sortedBy { it.removePrefix("building_").toIntOrNull() ?: 0 }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
+    }
+
+    // ── Building-level ───────────────────────────────────────────
+
+    override suspend fun loadBuildingMetadata(buildingId: String): FloorPlanMetadata = withContext(Dispatchers.IO) {
+        loadMetadata("campus/$buildingId/${buildingId}_metadata.json")
+    }
+
+    override suspend fun getAvailableFloors(buildingId: String): List<String> = withContext(Dispatchers.IO) {
+        try {
+            val buildingPath = "campus/$buildingId"
+            val entries = context.assets.list(buildingPath) ?: emptyArray()
+            entries.filter { it.startsWith("floor_") }
+                .sortedBy { it.removePrefix("floor_").toFloatOrNull() ?: 0f }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
+    }
+
+    // ── Floor-level ──────────────────────────────────────────────
+
     override suspend fun loadFloorPlan(buildingId: String, floorId: String): FloorPlanData = withContext(Dispatchers.IO) {
         val buildingPath = "campus/$buildingId"
         val floorPath = "$buildingPath/$floorId"
@@ -49,32 +89,7 @@ class LocalFloorPlanRepository(
         )
     }
 
-    override suspend fun loadBuildingMetadata(buildingId: String): FloorPlanMetadata = withContext(Dispatchers.IO) {
-        loadMetadata("campus/$buildingId/${buildingId}_metadata.json")
-    }
-
-    override suspend fun getAvailableFloors(buildingId: String): List<String> = withContext(Dispatchers.IO) {
-        try {
-            val buildingPath = "campus/$buildingId"
-            val entries = context.assets.list(buildingPath) ?: emptyArray()
-            entries.filter { it.startsWith("floor_") }
-                .sortedBy { it.removePrefix("floor_").toFloatOrNull() ?: 0f }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            emptyList()
-        }
-    }
-
-    override suspend fun getAvailableBuildings(): List<String> = withContext(Dispatchers.IO) {
-        try {
-            val entries = context.assets.list("campus") ?: emptyArray()
-            entries.filter { it.startsWith("building_") }
-                .sortedBy { it.removePrefix("building_").toIntOrNull() ?: 0 }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            emptyList()
-        }
-    }
+    // ── Private helpers ──────────────────────────────────────────
 
     /**
      * Loads walls from JSON file.

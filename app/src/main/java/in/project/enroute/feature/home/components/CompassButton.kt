@@ -27,11 +27,17 @@ import androidx.compose.ui.unit.dp
 import `in`.project.enroute.R
 
 /**
- * Circular compass button that always shows north.
- * The compass icon rotates based on the device's heading to always point north.
- * Animates its vertical position based on slider visibility and scales in/out during search.
+ * Circular compass button that shows north relative to the campus.
  *
- * @param headingRadians The device's current heading in radians (0 = north, positive = clockwise)
+ * The compass needle is locked to the campus orientation:
+ * - [campusNorthDegrees] sets the initial offset (where true north is when the canvas
+ *   is at 0° rotation). This value comes from campus_metadata.json.
+ * - [canvasRotationDegrees] tracks the user's canvas rotation gesture.
+ *
+ * Effective needle rotation = campusNorthDegrees + canvasRotationDegrees
+ *
+ * @param campusNorthDegrees Clockwise degrees from screen-top to true north at canvas rotation 0°
+ * @param canvasRotationDegrees Current rotation of the floor plan canvas in degrees
  * @param isSliderVisible Whether the floor slider is visible (affects vertical position)
  * @param isSearching Whether search is morphing into full-screen search (hides compass with scale animation)
  * @param onClick Callback when the button is clicked (can be used to reset canvas rotation)
@@ -39,7 +45,8 @@ import `in`.project.enroute.R
  */
 @Composable
 fun CompassButton(
-    headingRadians: Float,
+    campusNorthDegrees: Float,
+    canvasRotationDegrees: Float,
     isSliderVisible: Boolean,
     isSearching: Boolean,
     onClick: () -> Unit,
@@ -59,10 +66,9 @@ fun CompassButton(
         label = "CompassButtonTopPadding"
     )
 
-    // Convert heading from radians to degrees and negate to make north point up
-    // When device faces north (heading = 0), rotation = 0
-    // When device faces east (heading = 90°), rotation = -90° to point north
-    val rotationDegrees = -Math.toDegrees(headingRadians.toDouble()).toFloat()
+    // Compass rotation = campus north offset + current canvas rotation.
+    // Both values are in degrees (clockwise positive).
+    val rotationDegrees = campusNorthDegrees + canvasRotationDegrees
 
     // Show/hide with scale animation based on search state
     AnimatedVisibility(
