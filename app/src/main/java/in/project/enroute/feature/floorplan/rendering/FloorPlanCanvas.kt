@@ -102,7 +102,7 @@ fun FloorPlanCanvas(
         modifier = modifier
             .fillMaxSize()
             .clipToBounds()
-            .background(displayConfig.backgroundColor)
+            .background(displayConfig.campusBackgroundColor)
             .onSizeChanged { canvasSize.value = it }
             .pointerInput(Unit) {
                 detectTapGestures { tapOffset ->
