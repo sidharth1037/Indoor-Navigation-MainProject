@@ -6,7 +6,6 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import `in`.project.enroute.data.model.Room
-import `in`.project.enroute.feature.floorplan.FloorPlanViewConstants
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
@@ -28,7 +27,7 @@ private data class LabelLayout(
 
 // ── Constants ────────────────────────────────────────────────────────
 
-private val DEFAULT_MAX_CHARS get() = FloorPlanViewConstants.ROOM_LABEL_MAX_CHARS
+private const val DEFAULT_MAX_CHARS = 15
 private const val MIN_MAX_CHARS = 5
 private const val MAX_RESOLVE_PASSES = 4
 /** Fraction of bounding-box size used as padding when checking overlap. */
@@ -46,7 +45,7 @@ private const val PADDING_FRACTION = 0.05f
  *
  * Labels maintain constant apparent size at zoom ≥ [minZoomForConstantSize]
  * and scale down proportionally below that threshold.
- * Labels are hidden entirely when zoom < 0.48.
+ * Labels are hidden entirely when zoom < 0.4.
  */
 fun DrawScope.drawRoomLabels(
     rooms: List<Room>,
@@ -55,10 +54,10 @@ fun DrawScope.drawRoomLabels(
     canvasScale: Float,
     canvasRotation: Float,
     textColor: Int = android.graphics.Color.DKGRAY,
-    textSize: Float = FloorPlanViewConstants.ROOM_LABEL_TEXT_SIZE,
-    minZoomForConstantSize: Float = FloorPlanViewConstants.ROOM_LABELS_CONSTANT_SIZE_ZOOM
+    textSize: Float = 30f,
+    minZoomForConstantSize: Float = 0.76f
 ) {
-    if (canvasScale < FloorPlanViewConstants.ROOM_LABELS_MIN_ZOOM) return
+    if (canvasScale < 0.4f) return
 
     val angleRad = Math.toRadians(rotationDegrees.toDouble()).toFloat()
     val cosAngle = cos(angleRad)

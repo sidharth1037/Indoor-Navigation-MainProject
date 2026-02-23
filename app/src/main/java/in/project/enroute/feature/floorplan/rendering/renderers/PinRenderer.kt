@@ -7,7 +7,6 @@ import android.graphics.drawable.VectorDrawable
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
-import `in`.project.enroute.feature.floorplan.FloorPlanViewConstants
 import kotlin.math.cos
 import kotlin.math.sin
 import androidx.core.graphics.createBitmap
@@ -38,9 +37,9 @@ fun DrawScope.drawPin(
     canvasRotation: Float,
     pinDrawable: VectorDrawable,
     tintColor: Int,
-    pinSizeDp: Float = FloorPlanViewConstants.PIN_SIZE_DP,
-    minZoomForPinSize: Float = FloorPlanViewConstants.PIN_MIN_ZOOM_FOR_FULL_SIZE,
-    maxZoomForVerticalOffset: Float = FloorPlanViewConstants.PIN_MAX_ZOOM_FOR_OFFSET
+    pinSizeDp: Float = 140f,
+    minZoomForPinSize: Float = 1f,
+    maxZoomForVerticalOffset: Float = 1f
 ) {
     // Transform room coordinate to rotated floor-plan coordinate
     val angleRad = Math.toRadians(rotationDegrees.toDouble()).toFloat()
@@ -71,9 +70,9 @@ fun DrawScope.drawPin(
     // Offset pin upward in screen space (away from room label)
     // Directly proportional to zoom level up to maxZoomForVerticalOffset, then constant
     val verticalOffset = if (canvasScale <= maxZoomForVerticalOffset) {
-        FloorPlanViewConstants.PIN_VERTICAL_OFFSET_BASE * canvasScale  // proportional below threshold
+        70f * canvasScale  // proportional below threshold
     } else {
-        FloorPlanViewConstants.PIN_VERTICAL_OFFSET_BASE * maxZoomForVerticalOffset  // constant above threshold
+        70f * maxZoomForVerticalOffset  // constant above threshold
     }
     val adjustedScreenY = screenY - pinSize - verticalOffset
 
