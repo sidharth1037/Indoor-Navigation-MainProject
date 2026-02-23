@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -17,6 +18,7 @@ class SettingsRepository(private val context: Context) {
     private object PreferencesKeys {
         val HEIGHT = floatPreferencesKey("user_height")
         val USE_BACKEND = booleanPreferencesKey("use_backend")
+        val SELECTED_CAMPUS_ID = stringPreferencesKey("selected_campus_id")
     }
     
     /**
@@ -50,6 +52,34 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveUseBackend(useBackend: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.USE_BACKEND] = useBackend
+        }
+    }
+
+    // ── Selected campus ──────────────────────────────────────────
+
+    /**
+     * Flow of the currently selected campus ID.
+     * Null if no campus has been selected yet (show Welcome screen).
+     */
+    val selectedCampusId: Flow<String?> = context.dataStore.data.map { preferences ->
+        preferences[PreferencesKeys.SELECTED_CAMPUS_ID]
+    }
+
+    /**
+     * Saves the selected campus ID so it persists across app restarts.
+     */
+    suspend fun saveSelectedCampusId(campusId: String) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.SELECTED_CAMPUS_ID] = campusId
+        }
+    }
+
+    /**
+     * Clears the selected campus (user returns to Welcome screen).
+     */
+    suspend fun clearSelectedCampusId() {
+        context.dataStore.edit { preferences ->
+            preferences.remove(PreferencesKeys.SELECTED_CAMPUS_ID)
         }
     }
 }

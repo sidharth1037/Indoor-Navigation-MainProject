@@ -64,7 +64,7 @@ fun MainScreen() {
                         selected = currentDestination?.hierarchy?.any { it.route == Screen.Home.route } == true,
                         onClick = {
                             navController.navigate(Screen.Home.route) {
-                                popUpTo(navController.graph.startDestinationId) {
+                                popUpTo(Screen.Home.route) {
                                     saveState = true
                                 }
                                 launchSingleTop = true
@@ -78,7 +78,7 @@ fun MainScreen() {
                         selected = currentDestination?.hierarchy?.any { it.route == Screen.Settings.route } == true,
                         onClick = {
                             navController.navigate(Screen.Settings.route) {
-                                popUpTo(navController.graph.startDestinationId) {
+                                popUpTo(Screen.Home.route) {
                                     saveState = true
                                 }
                                 launchSingleTop = true
@@ -92,7 +92,7 @@ fun MainScreen() {
                         selected = currentDestination?.hierarchy?.any { it.route == Screen.Admin.route } == true,
                         onClick = {
                             navController.navigate(Screen.Admin.route) {
-                                popUpTo(navController.graph.startDestinationId) {
+                                popUpTo(Screen.Home.route) {
                                     saveState = true
                                 }
                                 launchSingleTop = true

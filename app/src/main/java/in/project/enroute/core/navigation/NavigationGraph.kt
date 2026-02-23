@@ -12,8 +12,10 @@ import `in`.project.enroute.feature.home.HomeScreen
 import `in`.project.enroute.feature.navigation.NavigationViewModel
 import `in`.project.enroute.feature.pdr.PdrViewModel
 import `in`.project.enroute.feature.settings.SettingsScreen
+import `in`.project.enroute.feature.welcome.WelcomeScreen
 
 sealed class Screen(val route: String) {
+    data object Welcome : Screen("welcome")
     data object Home : Screen("home")
     data object Settings : Screen("settings")
     data object Admin : Screen("admin")
@@ -26,9 +28,20 @@ fun NavigationGraph(
 ) {
     NavHost(
         navController = navController,
-        startDestination = Screen.Home.route,
+        startDestination = Screen.Welcome.route,
         modifier = modifier
     ) {
+        composable(Screen.Welcome.route) {
+            WelcomeScreen(
+                onCampusSelected = { campusId ->
+                    // Navigate to Home and remove Welcome from back stack
+                    navController.navigate(Screen.Home.route) {
+                        popUpTo(Screen.Welcome.route) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+            )
+        }
         composable(Screen.Home.route) { backStackEntry ->
             // Scope ViewModels to this navigation destination's backstack entry
             // This preserves state when navigating away and returning

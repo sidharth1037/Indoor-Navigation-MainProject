@@ -180,7 +180,7 @@ class FloorPlanViewModel(
 ) : AndroidViewModel(application) {
 
     companion object {
-        /** Hardcoded campus ID used for the Firebase backend. */
+        /** Fallback campus ID (used only when no campus has been selected). */
         const val BACKEND_CAMPUS_ID = "9QIFekUZkR5pffL59sMX"
     }
 
@@ -190,6 +190,12 @@ class FloorPlanViewModel(
     // Repository is resolved based on the "use backend" setting
     private var repository: FloorPlanRepository = LocalFloorPlanRepository(application)
 
+    /**
+     * The campus ID currently being displayed.
+     * Updated from DataStore on each [loadCampus] call.
+     */
+    private var currentCampusId: String = BACKEND_CAMPUS_ID
+
     private val _uiState = MutableStateFlow(FloorPlanUiState())
     val uiState: StateFlow<FloorPlanUiState> = _uiState.asStateFlow()
 
@@ -198,10 +204,12 @@ class FloorPlanViewModel(
      * Must be called before any data loading.
      */
     private suspend fun resolveRepository(): FloorPlanRepository {
+        val savedCampusId = settingsRepository.selectedCampusId.first()
         val useBackend = settingsRepository.useBackend.first()
         val app = getApplication<Application>()
-        repository = if (useBackend) {
-            FirebaseFloorPlanRepository(campusId = BACKEND_CAMPUS_ID)
+        repository = if (savedCampusId != null || useBackend) {
+            currentCampusId = savedCampusId ?: BACKEND_CAMPUS_ID
+            FirebaseFloorPlanRepository(campusId = currentCampusId)
         } else {
             LocalFloorPlanRepository(app)
         }
@@ -312,11 +320,14 @@ class FloorPlanViewModel(
             _uiState.update { it.copy(isLoading = true, error = null) }
 
             try {
-                val useBackend = settingsRepository.useBackend.first()
+                // Determine whether we're using backend
+                val savedCampusId = settingsRepository.selectedCampusId.first()
+                val useBackend = savedCampusId != null || settingsRepository.useBackend.first()
+                if (savedCampusId != null) currentCampusId = savedCampusId
 
                 // ── 2. Disk cache (backend mode only) ──
                 if (useBackend) {
-                    val cached = cache.loadCampusData(BACKEND_CAMPUS_ID)
+                    val cached = cache.loadCampusData(currentCampusId)
                     if (cached != null) {
                         restoreFromCache(cached)
                         return@launch
@@ -394,7 +405,7 @@ class FloorPlanViewModel(
                 // Persist to disk cache for next launch (backend mode only)
                 if (useBackend && cachedBuildings.isNotEmpty()) {
                     cache.saveCampusData(
-                        BACKEND_CAMPUS_ID,
+                        currentCampusId,
                         CachedCampusData(campusMetadata, cachedBuildings)
                     )
                 }
@@ -425,10 +436,7 @@ class FloorPlanViewModel(
                 )
             }
             // Clear disk cache
-            val useBackend = settingsRepository.useBackend.first()
-            if (useBackend) {
-                cache.clearCache(BACKEND_CAMPUS_ID)
-            }
+            cache.clearCache(currentCampusId)
             // Reload
             loadCampus()
         }
