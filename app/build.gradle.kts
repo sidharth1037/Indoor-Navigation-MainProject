@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -63,6 +64,8 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.gson)
     implementation(libs.tensorflow.lite)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.firestore)
     implementation(libs.androidx.compose.animation)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
@@ -71,4 +74,5 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    
 }

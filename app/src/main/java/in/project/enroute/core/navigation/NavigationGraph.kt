@@ -6,6 +6,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import `in`.project.enroute.feature.admin.AdminScreen
 import `in`.project.enroute.feature.floorplan.FloorPlanViewModel
 import `in`.project.enroute.feature.home.HomeScreen
 import `in`.project.enroute.feature.navigation.NavigationViewModel
@@ -15,6 +16,7 @@ import `in`.project.enroute.feature.settings.SettingsScreen
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
     data object Settings : Screen("settings")
+    data object Admin : Screen("admin")
 }
 
 @Composable
@@ -41,6 +43,9 @@ fun NavigationGraph(
         }
         composable(Screen.Settings.route) {
             SettingsScreen()
+        }
+        composable(Screen.Admin.route) {
+            AdminScreen()
         }
     }
 }

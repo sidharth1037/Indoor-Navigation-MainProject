@@ -1,6 +1,7 @@
 package `in`.project.enroute.feature.floorplan.utils
 
 import `in`.project.enroute.data.model.BoundaryPolygon
+import `in`.project.enroute.feature.floorplan.FloorPlanViewConstants
 import `in`.project.enroute.feature.floorplan.rendering.CanvasState
 import `in`.project.enroute.feature.floorplan.state.BuildingState
 import kotlin.math.cos
@@ -35,15 +36,15 @@ object ViewportUtils {
     
     /**
      * Minimum zoom level required to show floor slider.
-     * Below this level, building labels are shown instead.
+     * Source of truth: [FloorPlanViewConstants.SLIDER_MIN_ZOOM].
      */
-    const val MIN_ZOOM_FOR_SLIDER = 0.48f
-    
+    val MIN_ZOOM_FOR_SLIDER get() = FloorPlanViewConstants.SLIDER_MIN_ZOOM
+
     /**
      * Minimum ratio of screen area covered by building to show slider.
-     * Building must cover at least this much of the screen.
+     * Source of truth: [FloorPlanViewConstants.SLIDER_MIN_SCREEN_COVERAGE].
      */
-    const val MIN_SCREEN_COVERAGE_RATIO = 0.10f
+    val MIN_SCREEN_COVERAGE_RATIO get() = FloorPlanViewConstants.SLIDER_MIN_SCREEN_COVERAGE
     
     /**
      * Transforms a point from floor plan coordinates to screen coordinates.

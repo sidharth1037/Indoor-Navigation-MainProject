@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import `in`.project.enroute.data.model.Room
+import `in`.project.enroute.feature.floorplan.FloorPlanViewConstants
 import `in`.project.enroute.feature.floorplan.rendering.renderers.drawBuildingName
 import `in`.project.enroute.feature.floorplan.rendering.renderers.drawPin
 import `in`.project.enroute.feature.floorplan.rendering.renderers.drawRoomLabels
@@ -85,7 +86,7 @@ fun FloorPlanLabelsOverlay(
                     }
 
                     // Building name at low zoom
-                    if (canvasState.scale in 0.18f..<0.48f && floorsToRender.isNotEmpty()) {
+                    if (canvasState.scale in FloorPlanViewConstants.BUILDING_NAME_MIN_ZOOM..<FloorPlanViewConstants.BUILDING_NAME_MAX_ZOOM && floorsToRender.isNotEmpty()) {
                         val topFloor = floorsToRender.last()
                         drawBuildingName(
                             buildingName = topFloor.metadata.buildingName,

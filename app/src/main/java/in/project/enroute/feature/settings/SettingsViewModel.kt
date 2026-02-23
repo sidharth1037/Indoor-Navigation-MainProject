@@ -3,6 +3,7 @@ package `in`.project.enroute.feature.settings
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import `in`.project.enroute.data.cache.FloorPlanCache
 import `in`.project.enroute.feature.settings.data.SettingsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,12 +15,14 @@ data class SettingsUiState(
     val isLoading: Boolean = false,
     val currentHeight: Float? = null,
     val isEditingHeight: Boolean = false,
-    val heightInputValue: String = ""
+    val heightInputValue: String = "",
+    val useBackend: Boolean = false
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     
     private val repository = SettingsRepository(application.applicationContext)
+    private val cache = FloorPlanCache(application.applicationContext)
     
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
@@ -30,6 +33,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             repository.height.collect { savedHeight ->
                 _uiState.update { 
                     it.copy(currentHeight = savedHeight)
+                }
+            }
+        }
+        // Load saved backend toggle
+        viewModelScope.launch {
+            repository.useBackend.collect { useBackend ->
+                _uiState.update {
+                    it.copy(useBackend = useBackend)
                 }
             }
         }
@@ -69,6 +80,23 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 isEditingHeight = false,
                 heightInputValue = ""
             )
+        }
+    }
+
+    fun toggleUseBackend(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.saveUseBackend(enabled)
+        }
+        _uiState.update { it.copy(useBackend = enabled) }
+    }
+
+    /**
+     * Clears the backend disk cache so the next home screen load
+     * fetches fresh data from Firebase.
+     */
+    fun clearBackendCache() {
+        viewModelScope.launch {
+            cache.clearAllCache()
         }
     }
 }

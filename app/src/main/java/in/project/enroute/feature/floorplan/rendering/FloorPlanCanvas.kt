@@ -33,6 +33,7 @@ import androidx.compose.ui.geometry.Offset
 import `in`.project.enroute.feature.floorplan.utils.screenToWorldCoordinates
 import `in`.project.enroute.feature.floorplan.state.BuildingState
 import `in`.project.enroute.feature.floorplan.CampusBounds
+import `in`.project.enroute.feature.floorplan.FloorPlanViewConstants
 
 /**
  * Display configuration for the floor plan rendering.
@@ -47,8 +48,8 @@ data class FloorPlanDisplayConfig(
     val backgroundColor: Color = Color.White,
     val boundaryColor: Color = Color(0xFFF5F5F5),
     val campusBackgroundColor: Color = Color(0xFFE8E8E8),
-    val minZoom: Float = 0.15f,
-    val maxZoom: Float = 2.2f
+    val minZoom: Float = FloorPlanViewConstants.MIN_ZOOM,
+    val maxZoom: Float = FloorPlanViewConstants.MAX_ZOOM
 )
 
 /**
@@ -134,7 +135,7 @@ fun FloorPlanCanvas(
                     if (size.width == 0 || size.height == 0) return@detectTapGestures
 
                     // Labels are hidden below this zoom – no hit detection needed
-                    if (cs.scale < 0.48f) {
+                    if (cs.scale < FloorPlanViewConstants.ROOM_LABELS_MIN_ZOOM) {
                         onBackgroundTap()
                         return@detectTapGestures
                     }
@@ -150,8 +151,8 @@ fun FloorPlanCanvas(
                     val canvasSin = sin(canvasRotRad)
 
                     // ---------- dynamic hitbox sizing (matches RoomLabelRenderer) ----------
-                    val textSize = 30f
-                    val minZoomConst = 0.76f
+                    val textSize = FloorPlanViewConstants.ROOM_LABEL_TEXT_SIZE
+                    val minZoomConst = FloorPlanViewConstants.ROOM_LABELS_CONSTANT_SIZE_ZOOM
                     val effectiveTextSize = if (cs.scale >= minZoomConst) {
                         textSize / minZoomConst
                     } else {
@@ -162,7 +163,7 @@ fun FloorPlanCanvas(
                     val lineHeightPx = screenTextSize * 1.3f
                     val hitPadX = screenTextSize * 0.3f
                     val hitPadY = screenTextSize * 0.4f
-                    val maxCharsPerLine = 15
+                    val maxCharsPerLine = FloorPlanViewConstants.ROOM_LABEL_MAX_CHARS
 
                     val candidates = mutableListOf<Pair<Room, Float>>()
 

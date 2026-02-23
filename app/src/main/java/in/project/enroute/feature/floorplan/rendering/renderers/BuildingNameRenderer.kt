@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import `in`.project.enroute.data.model.LabelPosition
+import `in`.project.enroute.feature.floorplan.FloorPlanViewConstants
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -20,7 +21,7 @@ fun DrawScope.drawBuildingName(
     canvasScale: Float,
     canvasRotation: Float,
     textColor: Int = android.graphics.Color.DKGRAY,
-    textSize: Float = 44f
+    textSize: Float = FloorPlanViewConstants.BUILDING_NAME_TEXT_SIZE
 ) {
     if (buildingName.isEmpty() || labelPosition == null) {
         return

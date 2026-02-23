@@ -3,12 +3,16 @@ package `in`.project.enroute.feature.floorplan
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import `in`.project.enroute.data.cache.CachedBuilding
+import `in`.project.enroute.data.cache.CachedCampusData
+import `in`.project.enroute.data.cache.FloorPlanCache
 import `in`.project.enroute.data.model.CampusMetadata
 import `in`.project.enroute.data.model.RelativePosition
 import `in`.project.enroute.data.model.Building
 import `in`.project.enroute.data.model.FloorPlanData
 import `in`.project.enroute.data.model.Room
 import `in`.project.enroute.data.repository.FloorPlanRepository
+import `in`.project.enroute.data.repository.FirebaseFloorPlanRepository
 import `in`.project.enroute.data.repository.LocalFloorPlanRepository
 import `in`.project.enroute.feature.floorplan.rendering.CanvasState
 import `in`.project.enroute.feature.floorplan.rendering.FloorPlanDisplayConfig
@@ -17,11 +21,13 @@ import `in`.project.enroute.feature.floorplan.utils.FollowingAnimator
 import `in`.project.enroute.feature.floorplan.utils.FollowingConfig
 import `in`.project.enroute.feature.floorplan.utils.CenteringConfig
 import `in`.project.enroute.feature.floorplan.utils.ViewportUtils
+import `in`.project.enroute.feature.settings.data.SettingsRepository
 import androidx.compose.ui.geometry.Offset
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.sin
@@ -173,11 +179,34 @@ class FloorPlanViewModel(
     application: Application
 ) : AndroidViewModel(application) {
 
-    // Repository can be swapped for remote implementation later
-    private val repository: FloorPlanRepository = LocalFloorPlanRepository(application)
+    companion object {
+        /** Hardcoded campus ID used for the Firebase backend. */
+        const val BACKEND_CAMPUS_ID = "9QIFekUZkR5pffL59sMX"
+    }
+
+    private val settingsRepository = SettingsRepository(application.applicationContext)
+    private val cache = FloorPlanCache(application.applicationContext)
+
+    // Repository is resolved based on the "use backend" setting
+    private var repository: FloorPlanRepository = LocalFloorPlanRepository(application)
 
     private val _uiState = MutableStateFlow(FloorPlanUiState())
     val uiState: StateFlow<FloorPlanUiState> = _uiState.asStateFlow()
+
+    /**
+     * Resolves the correct repository based on the current backend setting.
+     * Must be called before any data loading.
+     */
+    private suspend fun resolveRepository(): FloorPlanRepository {
+        val useBackend = settingsRepository.useBackend.first()
+        val app = getApplication<Application>()
+        repository = if (useBackend) {
+            FirebaseFloorPlanRepository(campusId = BACKEND_CAMPUS_ID)
+        } else {
+            LocalFloorPlanRepository(app)
+        }
+        return repository
+    }
 
     /**
      * Loads a building with all its floors.
@@ -263,31 +292,56 @@ class FloorPlanViewModel(
     }
 
     /**
-     * Loads all buildings on the campus by scanning the assets directory.
-     * Campus metadata is loaded first and stored for the entire session.
-     * Each building's floors are discovered automatically.
+     * Loads all buildings on the campus.
+     *
+     * Loading order:
+     * 1. **In-memory** – if buildings are already loaded (e.g. returning from
+     *    another tab), this is a no-op.
+     * 2. **Disk cache** – when the backend mode is active, a cached JSON
+     *    snapshot is checked first so the campus loads instantly without
+     *    network calls.
+     * 3. **Repository** – local assets or Firebase Firestore.
+     *    After a successful backend fetch the data is persisted to the disk
+     *    cache for subsequent launches.
      */
     fun loadCampus() {
         viewModelScope.launch {
+            // ── 1. Already loaded (tab switch / recomposition) ──
+            if (_uiState.value.buildingStates.isNotEmpty()) return@launch
+
             _uiState.update { it.copy(isLoading = true, error = null) }
-            
+
             try {
-                // Load campus-level metadata first (persists for the session)
+                val useBackend = settingsRepository.useBackend.first()
+
+                // ── 2. Disk cache (backend mode only) ──
+                if (useBackend) {
+                    val cached = cache.loadCampusData(BACKEND_CAMPUS_ID)
+                    if (cached != null) {
+                        restoreFromCache(cached)
+                        return@launch
+                    }
+                }
+
+                // ── 3. Load from repository ──
+                resolveRepository()
+
                 val campusMetadata = repository.loadCampusMetadata()
                 _uiState.update { it.copy(campusMetadata = campusMetadata) }
 
                 val buildingIds = repository.getAvailableBuildings()
-                
+                val cachedBuildings = mutableListOf<CachedBuilding>()
+
                 for (buildingId in buildingIds) {
                     val metadata = try {
                         repository.loadBuildingMetadata(buildingId)
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         null
                     }
-                    
+
                     val floorIds = repository.getAvailableFloors(buildingId)
                     if (floorIds.isEmpty()) continue
-                    
+
                     val building = Building(
                         buildingId = buildingId,
                         buildingName = metadata?.buildingName ?: buildingId,
@@ -297,8 +351,52 @@ class FloorPlanViewModel(
                         labelPosition = metadata?.labelPosition,
                         relativePosition = metadata?.relativePosition ?: RelativePosition()
                     )
-                    
-                    loadBuilding(building)
+
+                    // Load all floors inline so we can capture them for caching
+                    val floorsMap = mutableMapOf<Float, FloorPlanData>()
+                    val floorNumbers = mutableListOf<Float>()
+                    val floorDataList = mutableListOf<FloorPlanData>()
+
+                    for (floorId in floorIds) {
+                        val floorPlanData = repository.loadFloorPlan(buildingId, floorId)
+                        val floorNumber = extractFloorNumber(floorId)
+                        floorsMap[floorNumber] = floorPlanData
+                        floorNumbers.add(floorNumber)
+                        floorDataList.add(floorPlanData)
+                    }
+
+                    val sortedFloorNumbers = floorNumbers.sorted()
+                    val lowestFloor = sortedFloorNumbers.firstOrNull() ?: 1f
+
+                    val buildingState = BuildingState(
+                        building = building,
+                        floors = floorsMap,
+                        availableFloorNumbers = sortedFloorNumbers,
+                        currentFloorNumber = lowestFloor
+                    )
+
+                    _uiState.update { currentState ->
+                        val updated = currentState.buildingStates.toMutableMap()
+                        updated[buildingId] = buildingState
+                        val bounds = calculateCampusBounds(updated)
+                        currentState.copy(
+                            isLoading = false,
+                            buildingStates = updated,
+                            dominantBuildingId = currentState.dominantBuildingId ?: buildingId,
+                            showFloorSlider = true,
+                            campusBounds = bounds
+                        )
+                    }
+
+                    cachedBuildings.add(CachedBuilding(building, floorDataList))
+                }
+
+                // Persist to disk cache for next launch (backend mode only)
+                if (useBackend && cachedBuildings.isNotEmpty()) {
+                    cache.saveCampusData(
+                        BACKEND_CAMPUS_ID,
+                        CachedCampusData(campusMetadata, cachedBuildings)
+                    )
                 }
             } catch (e: Exception) {
                 _uiState.update {
@@ -307,6 +405,73 @@ class FloorPlanViewModel(
                         error = e.message ?: "Failed to load campus"
                     )
                 }
+            }
+        }
+    }
+
+    /**
+     * Forces a fresh load from the repository, bypassing both the in-memory
+     * state and the disk cache.  Call this when the user explicitly wants
+     * to pull the latest data from the backend.
+     */
+    fun refreshCampus() {
+        viewModelScope.launch {
+            // Clear in-memory state so loadCampus() doesn't short-circuit
+            _uiState.update {
+                it.copy(
+                    buildingStates = emptyMap(),
+                    dominantBuildingId = null,
+                    campusBounds = CampusBounds()
+                )
+            }
+            // Clear disk cache
+            val useBackend = settingsRepository.useBackend.first()
+            if (useBackend) {
+                cache.clearCache(BACKEND_CAMPUS_ID)
+            }
+            // Reload
+            loadCampus()
+        }
+    }
+
+    /**
+     * Restores the full UI state from a [CachedCampusData] snapshot.
+     * Used when loading from the disk cache.
+     */
+    private fun restoreFromCache(cached: CachedCampusData) {
+        _uiState.update { it.copy(campusMetadata = cached.campusMetadata) }
+
+        for (cb in cached.buildings) {
+            val floorsMap = mutableMapOf<Float, FloorPlanData>()
+            val floorNumbers = mutableListOf<Float>()
+
+            for (data in cb.floorDataList) {
+                val num = extractFloorNumber(data.floorId)
+                floorsMap[num] = data
+                floorNumbers.add(num)
+            }
+
+            val sortedFloorNumbers = floorNumbers.sorted()
+            val lowestFloor = sortedFloorNumbers.firstOrNull() ?: 1f
+
+            val buildingState = BuildingState(
+                building = cb.building,
+                floors = floorsMap,
+                availableFloorNumbers = sortedFloorNumbers,
+                currentFloorNumber = lowestFloor
+            )
+
+            _uiState.update { state ->
+                val updated = state.buildingStates.toMutableMap()
+                updated[cb.building.buildingId] = buildingState
+                val bounds = calculateCampusBounds(updated)
+                state.copy(
+                    isLoading = false,
+                    buildingStates = updated,
+                    dominantBuildingId = state.dominantBuildingId ?: cb.building.buildingId,
+                    showFloorSlider = true,
+                    campusBounds = bounds
+                )
             }
         }
     }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -77,6 +78,20 @@ fun MainScreen() {
                         selected = currentDestination?.hierarchy?.any { it.route == Screen.Settings.route } == true,
                         onClick = {
                             navController.navigate(Screen.Settings.route) {
+                                popUpTo(navController.graph.startDestinationId) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.AdminPanelSettings, contentDescription = "Admin") },
+                        label = { Text("Admin", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
+                        selected = currentDestination?.hierarchy?.any { it.route == Screen.Admin.route } == true,
+                        onClick = {
+                            navController.navigate(Screen.Admin.route) {
                                 popUpTo(navController.graph.startDestinationId) {
                                     saveState = true
                                 }
