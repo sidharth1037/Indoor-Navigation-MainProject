@@ -64,6 +64,7 @@ import `in`.project.enroute.feature.navigation.ui.NavigationPathOverlay
 
 @Composable
 fun HomeScreen(
+    campusId: String,
     floorPlanViewModel: FloorPlanViewModel = viewModel(),
     pdrViewModel: PdrViewModel = viewModel(),
     navigationViewModel: NavigationViewModel = viewModel()
@@ -77,7 +78,7 @@ fun HomeScreen(
 
     // Load all buildings on first composition
     LaunchedEffect(Unit) {
-        floorPlanViewModel.loadCampus()
+        floorPlanViewModel.loadCampus(campusId)
     }
 
     // Supply loaded floor data to NavigationViewModel whenever it changes

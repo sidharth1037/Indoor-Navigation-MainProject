@@ -13,7 +13,6 @@ import `in`.project.enroute.data.model.FloorPlanData
 import `in`.project.enroute.data.model.Room
 import `in`.project.enroute.data.repository.FloorPlanRepository
 import `in`.project.enroute.data.repository.FirebaseFloorPlanRepository
-import `in`.project.enroute.data.repository.LocalFloorPlanRepository
 import `in`.project.enroute.feature.floorplan.rendering.CanvasState
 import `in`.project.enroute.feature.floorplan.rendering.FloorPlanDisplayConfig
 import `in`.project.enroute.feature.floorplan.state.BuildingState
@@ -21,13 +20,11 @@ import `in`.project.enroute.feature.floorplan.utils.FollowingAnimator
 import `in`.project.enroute.feature.floorplan.utils.FollowingConfig
 import `in`.project.enroute.feature.floorplan.utils.CenteringConfig
 import `in`.project.enroute.feature.floorplan.utils.ViewportUtils
-import `in`.project.enroute.feature.settings.data.SettingsRepository
 import androidx.compose.ui.geometry.Offset
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.sin
@@ -179,40 +176,26 @@ class FloorPlanViewModel(
     application: Application
 ) : AndroidViewModel(application) {
 
-    companion object {
-        /** Fallback campus ID (used only when no campus has been selected). */
-        const val BACKEND_CAMPUS_ID = "9QIFekUZkR5pffL59sMX"
-    }
-
-    private val settingsRepository = SettingsRepository(application.applicationContext)
     private val cache = FloorPlanCache(application.applicationContext)
 
-    // Repository is resolved based on the "use backend" setting
-    private var repository: FloorPlanRepository = LocalFloorPlanRepository(application)
+    // Always use Firebase backend
+    private lateinit var repository: FloorPlanRepository
 
     /**
      * The campus ID currently being displayed.
-     * Updated from DataStore on each [loadCampus] call.
+     * Set via navigation argument when entering the Home screen.
      */
-    private var currentCampusId: String = BACKEND_CAMPUS_ID
+    private var currentCampusId: String = ""
 
     private val _uiState = MutableStateFlow(FloorPlanUiState())
     val uiState: StateFlow<FloorPlanUiState> = _uiState.asStateFlow()
 
     /**
-     * Resolves the correct repository based on the current backend setting.
-     * Must be called before any data loading.
+     * Resolves the repository for the currently selected campus.
+     * Always uses [FirebaseFloorPlanRepository].
      */
-    private suspend fun resolveRepository(): FloorPlanRepository {
-        val savedCampusId = settingsRepository.selectedCampusId.first()
-        val useBackend = settingsRepository.useBackend.first()
-        val app = getApplication<Application>()
-        repository = if (savedCampusId != null || useBackend) {
-            currentCampusId = savedCampusId ?: BACKEND_CAMPUS_ID
-            FirebaseFloorPlanRepository(campusId = currentCampusId)
-        } else {
-            LocalFloorPlanRepository(app)
-        }
+    private fun resolveRepository(): FloorPlanRepository {
+        repository = FirebaseFloorPlanRepository(campusId = currentCampusId)
         return repository
     }
 
@@ -312,26 +295,21 @@ class FloorPlanViewModel(
      *    After a successful backend fetch the data is persisted to the disk
      *    cache for subsequent launches.
      */
-    fun loadCampus() {
+    fun loadCampus(campusId: String) {
         viewModelScope.launch {
             // ── 1. Already loaded (tab switch / recomposition) ──
             if (_uiState.value.buildingStates.isNotEmpty()) return@launch
 
+            currentCampusId = campusId
             _uiState.update { it.copy(isLoading = true, error = null) }
 
             try {
-                // Determine whether we're using backend
-                val savedCampusId = settingsRepository.selectedCampusId.first()
-                val useBackend = savedCampusId != null || settingsRepository.useBackend.first()
-                if (savedCampusId != null) currentCampusId = savedCampusId
 
-                // ── 2. Disk cache (backend mode only) ──
-                if (useBackend) {
-                    val cached = cache.loadCampusData(currentCampusId)
-                    if (cached != null) {
-                        restoreFromCache(cached)
-                        return@launch
-                    }
+                // ── 2. Disk cache ──
+                val cached = cache.loadCampusData(currentCampusId)
+                if (cached != null) {
+                    restoreFromCache(cached)
+                    return@launch
                 }
 
                 // ── 3. Load from repository ──
@@ -402,8 +380,8 @@ class FloorPlanViewModel(
                     cachedBuildings.add(CachedBuilding(building, floorDataList))
                 }
 
-                // Persist to disk cache for next launch (backend mode only)
-                if (useBackend && cachedBuildings.isNotEmpty()) {
+                // Persist to disk cache for next launch
+                if (cachedBuildings.isNotEmpty()) {
                     cache.saveCampusData(
                         currentCampusId,
                         CachedCampusData(campusMetadata, cachedBuildings)
@@ -438,7 +416,7 @@ class FloorPlanViewModel(
             // Clear disk cache
             cache.clearCache(currentCampusId)
             // Reload
-            loadCampus()
+            loadCampus(currentCampusId)
         }
     }
 

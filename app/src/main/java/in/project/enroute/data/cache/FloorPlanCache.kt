@@ -49,7 +49,7 @@ data class CachedBuilding(
  */
 class FloorPlanCache(context: Context) {
 
-    private val cacheDir = File(context.filesDir, "floor_plan_cache")
+    private val cacheDir = File(context.cacheDir, "floor_plan_cache")
 
     /**
      * Gson configured to include transient fields and handle Pair<Float,Float>.

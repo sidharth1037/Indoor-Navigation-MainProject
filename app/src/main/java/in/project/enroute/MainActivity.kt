@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import `in`.project.enroute.core.navigation.NavigationGraph
@@ -49,6 +50,11 @@ fun MainScreen() {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
+    val currentRoute = currentDestination?.route
+
+    // Home tab is selected when on Welcome OR Home (they're the same tab conceptually)
+    val isHomeTabSelected = currentRoute == Screen.Welcome.route ||
+            currentRoute?.startsWith("home/") == true
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -61,10 +67,13 @@ fun MainScreen() {
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
                         label = { Text("Home", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
-                        selected = currentDestination?.hierarchy?.any { it.route == Screen.Home.route } == true,
+                        selected = isHomeTabSelected,
                         onClick = {
-                            navController.navigate(Screen.Home.route) {
-                                popUpTo(Screen.Home.route) {
+                            // Navigate to Welcome (the tab root).
+                            // If Home is on top of Welcome, restoreState brings it back.
+                            // If user pressed back from Home, only Welcome is restored.
+                            navController.navigate(Screen.Welcome.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
                                     saveState = true
                                 }
                                 launchSingleTop = true
@@ -78,7 +87,7 @@ fun MainScreen() {
                         selected = currentDestination?.hierarchy?.any { it.route == Screen.Settings.route } == true,
                         onClick = {
                             navController.navigate(Screen.Settings.route) {
-                                popUpTo(Screen.Home.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
                                     saveState = true
                                 }
                                 launchSingleTop = true
@@ -92,7 +101,7 @@ fun MainScreen() {
                         selected = currentDestination?.hierarchy?.any { it.route == Screen.Admin.route } == true,
                         onClick = {
                             navController.navigate(Screen.Admin.route) {
-                                popUpTo(Screen.Home.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
                                     saveState = true
                                 }
                                 launchSingleTop = true

@@ -15,8 +15,7 @@ data class SettingsUiState(
     val isLoading: Boolean = false,
     val currentHeight: Float? = null,
     val isEditingHeight: Boolean = false,
-    val heightInputValue: String = "",
-    val useBackend: Boolean = false
+    val heightInputValue: String = ""
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -33,14 +32,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             repository.height.collect { savedHeight ->
                 _uiState.update { 
                     it.copy(currentHeight = savedHeight)
-                }
-            }
-        }
-        // Load saved backend toggle
-        viewModelScope.launch {
-            repository.useBackend.collect { useBackend ->
-                _uiState.update {
-                    it.copy(useBackend = useBackend)
                 }
             }
         }
@@ -84,10 +75,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun toggleUseBackend(enabled: Boolean) {
-        viewModelScope.launch {
-            repository.saveUseBackend(enabled)
-        }
-        _uiState.update { it.copy(useBackend = enabled) }
+        // No longer used — backend is always enabled.
+        // Kept for binary compatibility.
     }
 
     /**
