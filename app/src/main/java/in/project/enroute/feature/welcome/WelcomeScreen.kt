@@ -2,31 +2,20 @@ package `in`.project.enroute.feature.welcome
 
 import android.app.Application
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,7 +24,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -44,23 +32,27 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import `in`.project.enroute.data.cache.FloorPlanCache
 import `in`.project.enroute.data.repository.FirebaseFloorPlanRepository
+import `in`.project.enroute.feature.campussearch.CampusItem
+import `in`.project.enroute.feature.campussearch.CampusSearchButton
+import `in`.project.enroute.feature.campussearch.CampusSearchOverlay
+import `in`.project.enroute.feature.campussearch.MORPH_DURATION_MS
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 // ── ViewModel ────────────────────────────────────────────────────
 
-data class CampusItem(val id: String, val name: String)
-
 data class WelcomeUiState(
     val query: String = "",
-    val allCampuses: List<CampusItem> = emptyList(),
-    val filteredCampuses: List<CampusItem> = emptyList(),
+    val searchResults: List<CampusItem> = emptyList(),
     val isLoading: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    /** True once the first non-blank search has been triggered. */
+    val hasSearched: Boolean = false
 )
 
 class WelcomeViewModel(application: Application) : AndroidViewModel(application) {
@@ -70,49 +62,46 @@ class WelcomeViewModel(application: Application) : AndroidViewModel(application)
     private val _uiState = MutableStateFlow(WelcomeUiState())
     val uiState: StateFlow<WelcomeUiState> = _uiState.asStateFlow()
 
-    init {
-        // Pre-load the campus list from Firestore
-        loadCampuses()
-    }
+    private var searchJob: Job? = null
 
-    private fun loadCampuses() {
-        viewModelScope.launch {
+    /**
+     * Called on every keystroke. Debounces 250 ms, then queries the cached
+     * campus list via [FirebaseFloorPlanRepository.searchCampuses].
+     * Blank queries immediately clear results.
+     */
+    fun updateQuery(query: String) {
+        _uiState.update { it.copy(query = query) }
+        searchJob?.cancel()
+
+        if (query.isBlank()) {
+            _uiState.update { it.copy(searchResults = emptyList(), hasSearched = false, error = null) }
+            return
+        }
+
+        searchJob = viewModelScope.launch {
+            delay(250) // debounce
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
-                val campuses = FirebaseFloorPlanRepository.getAvailableCampuses()
-                val items = campuses.map { CampusItem(it.first, it.second) }
+                val results = FirebaseFloorPlanRepository.searchCampuses(query)
+                val items = results.map { CampusItem(it.first, it.second) }
                 _uiState.update {
-                    it.copy(
-                        allCampuses = items,
-                        filteredCampuses = items,
-                        isLoading = false
-                    )
+                    it.copy(searchResults = items, isLoading = false, hasSearched = true)
                 }
             } catch (e: Exception) {
                 _uiState.update {
-                    it.copy(isLoading = false, error = e.message)
+                    it.copy(isLoading = false, error = e.message, hasSearched = true)
                 }
             }
         }
     }
 
-    fun updateQuery(query: String) {
-        _uiState.update { state ->
-            val filtered = if (query.isBlank()) {
-                state.allCampuses
-            } else {
-                state.allCampuses.filter {
-                    it.name.contains(query, ignoreCase = true) ||
-                    it.id.contains(query, ignoreCase = true)
-                }
-            }
-            state.copy(query = query, filteredCampuses = filtered)
+    /** Retry the current query after a network error. */
+    fun retrySearch() {
+        val q = _uiState.value.query
+        if (q.isNotBlank()) {
+            _uiState.update { it.copy(query = "") }
+            updateQuery(q)
         }
-    }
-
-    /** Retry loading campuses after an error. */
-    fun retryLoadCampuses() {
-        loadCampuses()
     }
 
     fun isCached(campusId: String): Boolean = cache.hasCachedCampus(campusId)
@@ -120,41 +109,31 @@ class WelcomeViewModel(application: Application) : AndroidViewModel(application)
 
 // ── Composables ──────────────────────────────────────────────────
 
-// Layout constants (dp) for the search-button morph animation.
-// The button starts as a narrow centered pill. When morphing it expands
-// and translates up to align with the search bar in WelcomeSearchScreen.
-//
-// WelcomeSearchScreen Row: padding(start=4, end=16, top=8)
-//   back button = 48 dp  →  search box left edge = 4+48 = 52 dp
-//   search box right edge = screenWidth − 16 dp
-// So morphed: paddingStart=52dp, paddingEnd=16dp (total=68dp removed from width)
-// Resting:    paddingStart=60dp, paddingEnd=60dp (narrow pill, 120dp removed)
-const val MORPH_DURATION_MS = 300
 private val TITLE_TOP_SPACER = 120.dp
 private val TITLE_HEIGHT = 48.dp
 private val SUBTITLE_SPACER = 8.dp
 private val SUBTITLE_HEIGHT = 20.dp
 private val BUTTON_SPACER = 48.dp
 
+/** Resting Y for the search button on the Welcome screen. */
+private val WELCOME_BUTTON_RESTING_Y =
+    TITLE_TOP_SPACER + TITLE_HEIGHT + SUBTITLE_SPACER + SUBTITLE_HEIGHT + BUTTON_SPACER
+
 /**
- * Welcome screen: app title + search-bar button.
- *
- * If a campus was previously selected (persisted in DataStore) the screen
- * auto-navigates to Home immediately, so the user only sees this once or
- * after clearing the selection.
+ * Welcome screen: app title + morphing search-bar button.
  */
 @Composable
 fun WelcomeScreen(
     viewModel: WelcomeViewModel = viewModel(),
     onCampusSelected: (campusId: String) -> Unit
 ) {
+    val uiState by viewModel.uiState.collectAsState()
     var showSearch by remember { mutableStateOf(false) }
     var isMorphing by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     Box(modifier = Modifier.fillMaxSize()) {
         // ── Background content (title + subtitle) ────────────────
-        // Fade out when morphing/search is active
         val bgAlpha by animateFloatAsState(
             targetValue = if (isMorphing) 0f else 1f,
             animationSpec = tween(200),
@@ -187,10 +166,9 @@ fun WelcomeScreen(
         }
 
         // ── Morphing search button ───────────────────────────────
-        // Always rendered (even when search is open) so it can reverse-animate
-        // back to resting position when the user returns from the search screen.
-        WelcomeSearchButton(
+        CampusSearchButton(
             isMorphing = isMorphing,
+            restingY = WELCOME_BUTTON_RESTING_Y,
             onAnimationFinished = { showSearch = true },
             onClick = { isMorphing = true }
         )
@@ -198,110 +176,28 @@ fun WelcomeScreen(
         // ── Search screen overlay ────────────────────────────────
         AnimatedVisibility(
             visible = showSearch,
-            enter = fadeIn(tween(150)),
-            exit = fadeOut(tween(150))
+            enter = fadeIn(tween(300)),
+            exit = fadeOut(tween(200))
         ) {
-            WelcomeSearchScreen(
-                viewModel = viewModel,
+            CampusSearchOverlay(
+                query = uiState.query,
+                onQueryChange = { viewModel.updateQuery(it) },
+                results = uiState.searchResults,
+                isLoading = uiState.isLoading,
+                error = uiState.error,
+                hasSearched = uiState.hasSearched,
+                isCached = { viewModel.isCached(it) },
                 onBack = {
                     showSearch = false
-                    // Let the search screen fade out (150ms), then start the
-                    // reverse morph so the button animates back to resting.
                     coroutineScope.launch {
                         delay(100)
                         isMorphing = false
-                        delay(300)
-                        viewModel.updateQuery("")   // reset search after animation
+                        delay(MORPH_DURATION_MS.toLong())
+                        viewModel.updateQuery("")
                     }
                 },
-                onCampusSelected = { id ->
-                    onCampusSelected(id)
-                }
-            )
-        }
-    }
-}
-
-// ── Search bar button (morphing) ─────────────────────────────────
-
-/**
- * A pill-shaped button that morphs to match the search bar in [WelcomeSearchScreen].
- *
- * Forward (isMorphing = true):
- *   - Expands horizontally: paddingH 60→(52 start, 16 end)
- *   - Translates up: Y = restingY → 8.dp
- *
- * Reverse (isMorphing = false):
- *   - The same animation in reverse — this works because the button is
- *     always in the composition (not hidden when the search screen is open)
- *     so Compose can animate back to resting from the morphed state.
- */
-@Composable
-private fun WelcomeSearchButton(
-    isMorphing: Boolean,
-    onAnimationFinished: () -> Unit,
-    onClick: () -> Unit
-) {
-    // Resting Y: just below title + subtitle
-    val restingY = TITLE_TOP_SPACER + TITLE_HEIGHT + SUBTITLE_SPACER + SUBTITLE_HEIGHT + BUTTON_SPACER
-    // Morphed Y: aligns with the search bar Row in WelcomeSearchScreen (top=8dp)
-    val targetY = 8.dp
-
-    val yOffset by animateDpAsState(
-        targetValue = if (isMorphing) targetY else restingY,
-        animationSpec = tween(MORPH_DURATION_MS),
-        label = "morph_y"
-    )
-
-    // Resting: narrow centered pill (60dp each side)
-    // Morphed: aligns exactly with WelcomeSearchScreen's search box area
-    //          start = 4dp (Row) + 48dp (back btn) = 52dp
-    //          end   = 16dp (Row end padding)
-    val startPadding by animateDpAsState(
-        targetValue = if (isMorphing) 52.dp else 60.dp,
-        animationSpec = tween(MORPH_DURATION_MS),
-        label = "morph_start"
-    )
-    val endPadding by animateDpAsState(
-        targetValue = if (isMorphing) 16.dp else 60.dp,
-        animationSpec = tween(MORPH_DURATION_MS),
-        label = "morph_end"
-    )
-
-    LaunchedEffect(isMorphing) {
-        if (isMorphing) {
-            delay((MORPH_DURATION_MS - 20).toLong())
-            onAnimationFinished()
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = startPadding, end = endPadding)
-            .offset(y = yOffset)
-            .height(48.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(MaterialTheme.colorScheme.primaryContainer)
-            .clickable(enabled = !isMorphing) { onClick() }
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(start = 16.dp, end = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Search for your campus...",
-                fontSize = 15.sp,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
-                modifier = Modifier.weight(1f)
-            )
-            Icon(
-                imageVector = Icons.Default.Search,
-                contentDescription = "Search",
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.size(22.dp)
+                onCampusSelected = { id -> onCampusSelected(id) },
+                onRetry = { viewModel.retrySearch() }
             )
         }
     }

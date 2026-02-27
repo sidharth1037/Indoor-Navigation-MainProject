@@ -1,4 +1,4 @@
-package `in`.project.enroute.feature.welcome
+package `in`.project.enroute.feature.campussearch
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -25,12 +25,9 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,15 +43,36 @@ import kotlinx.coroutines.delay
 
 /**
  * Full-screen search overlay for finding campuses.
- * Extracted from WelcomeScreen to its own file.
+ *
+ * This composable is shared between the Welcome screen and the Admin panel.
+ * It is purely presentational — all state lives in the caller's ViewModel.
+ *
+ * @param query             current search text
+ * @param onQueryChange     called when the user types
+ * @param results           current search results
+ * @param isLoading         show a spinner while the first fetch is in progress
+ * @param error             non-null when a network error occurred
+ * @param hasSearched       true after the first non-blank search has been issued
+ * @param isCached          optional callback; returns true if a campus is cached on disk
+ * @param placeholderText   hint text in the search field
+ * @param onBack            called when the user presses back
+ * @param onCampusSelected  called with the campus ID when the user picks one
+ * @param onRetry           called when the user taps "Retry" after an error
  */
 @Composable
-fun WelcomeSearchScreen(
-    viewModel: WelcomeViewModel,
+fun CampusSearchOverlay(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    results: List<CampusItem>,
+    isLoading: Boolean,
+    error: String?,
+    hasSearched: Boolean,
+    isCached: (String) -> Boolean = { false },
+    placeholderText: String = "Search for your campus...",
     onBack: () -> Unit,
-    onCampusSelected: (String) -> Unit
+    onCampusSelected: (String) -> Unit,
+    onRetry: () -> Unit = {}
 ) {
-    val uiState by viewModel.uiState.collectAsState()
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
 
@@ -75,7 +93,7 @@ fun WelcomeSearchScreen(
             .background(MaterialTheme.colorScheme.background),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Top bar: back arrow + search field
+        // ── Top bar: back arrow + search field ───────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -113,16 +131,16 @@ fun WelcomeSearchScreen(
                             .padding(start = 16.dp, end = 8.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
-                        if (uiState.query.isEmpty()) {
+                        if (query.isEmpty()) {
                             Text(
-                                text = "Search for your campus...",
+                                text = placeholderText,
                                 fontSize = 15.sp,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
                             )
                         }
                         BasicTextField(
-                            value = uiState.query,
-                            onValueChange = { viewModel.updateQuery(it) },
+                            value = query,
+                            onValueChange = onQueryChange,
                             singleLine = true,
                             textStyle = TextStyle(
                                 fontSize = 15.sp,
@@ -146,9 +164,12 @@ fun WelcomeSearchScreen(
             }
         }
 
-        // Results body
+        // ── Results body ─────────────────────────────────────────
         when {
-            uiState.isLoading -> {
+            // Nothing typed yet — show nothing
+            query.isBlank() && !isLoading -> { /* empty state */ }
+
+            isLoading -> {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -159,7 +180,7 @@ fun WelcomeSearchScreen(
                 }
             }
 
-            uiState.error != null -> {
+            error != null -> {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -167,17 +188,17 @@ fun WelcomeSearchScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "Error: ${uiState.error}",
+                        text = "Error: $error",
                         color = MaterialTheme.colorScheme.error
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(onClick = { viewModel.retryLoadCampuses() }) {
+                    androidx.compose.material3.OutlinedButton(onClick = onRetry) {
                         Text("Retry")
                     }
                 }
             }
 
-            uiState.filteredCampuses.isEmpty() && uiState.query.isNotEmpty() -> {
+            hasSearched && results.isEmpty() -> {
                 Text(
                     text = "No campuses found",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -190,10 +211,10 @@ fun WelcomeSearchScreen(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
-                    items(uiState.filteredCampuses) { campus ->
+                    items(results) { campus ->
                         CampusResultItem(
                             campus = campus,
-                            isCached = viewModel.isCached(campus.id),
+                            isCached = isCached(campus.id),
                             onClick = {
                                 focusManager.clearFocus()
                                 onCampusSelected(campus.id)

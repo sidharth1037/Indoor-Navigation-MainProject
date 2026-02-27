@@ -434,16 +434,41 @@ class FirebaseFloorPlanRepository(
 
     companion object {
         /**
-         * Lists all campus IDs available in Firestore.
+         * In-memory cache of all campus documents. Populated lazily on the
+         * first search and invalidated when a campus is created or deleted.
          */
-        suspend fun getAvailableCampuses(
+        private var cachedCampuses: List<Pair<String, String>>? = null
+
+        /**
+         * Searches campuses whose name or ID contains [query] (case-insensitive).
+         * Returns an empty list when [query] is blank.
+         *
+         * Internally fetches all campuses on the first call and caches them;
+         * subsequent calls filter from the in-memory cache for instant results.
+         */
+        suspend fun searchCampuses(
+            query: String,
             firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
         ): List<Pair<String, String>> = withContext(Dispatchers.IO) {
-            val snapshot = firestore.collection("campuses").get().await()
-            snapshot.documents.map { doc ->
-                val name = doc.getString("name") ?: doc.id
-                doc.id to name
-            }.sortedBy { it.second }
+            if (query.isBlank()) return@withContext emptyList()
+
+            val all = cachedCampuses ?: run {
+                val snapshot = firestore.collection("campuses").get().await()
+                snapshot.documents.map { doc ->
+                    val name = doc.getString("name") ?: doc.id
+                    doc.id to name
+                }.sortedBy { it.second }.also { cachedCampuses = it }
+            }
+
+            all.filter { (id, name) ->
+                name.contains(query, ignoreCase = true) ||
+                id.contains(query, ignoreCase = true)
+            }
+        }
+
+        /** Clears the in-memory campus list so the next search re-fetches. */
+        fun invalidateCampusCache() {
+            cachedCampuses = null
         }
 
         /**
@@ -459,6 +484,7 @@ class FirebaseFloorPlanRepository(
                 .document(campusId)
                 .set(metadata)
                 .await()
+            invalidateCampusCache()
         }
 
         /**
