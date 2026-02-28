@@ -2,6 +2,7 @@ package `in`.project.enroute.feature.navigation
 
 import androidx.compose.ui.geometry.Offset
 import `in`.project.enroute.data.model.Wall
+import `in`.project.enroute.feature.navigation.data.CampusBoundaryPolygon
 import kotlin.math.abs
 import kotlin.math.sqrt
 import android.util.Log
@@ -23,7 +24,16 @@ import java.util.PriorityQueue
  * Supports campus-wide coordinates including negative values via a bounding-box
  * origin offset ([originX], [originY]).
  */
-class NavigationRepository(walls: List<Wall>) {
+class NavigationRepository(
+    walls: List<Wall>,
+    /** Optional extra points (campus-wide) that must be inside the grid.
+     *  Used by multi-floor pathfinding to guarantee stair / goal entrances
+     *  fall within the distance-transform grid. */
+    additionalBoundaryPoints: List<Offset> = emptyList(),
+    /** Optional boundary polygons (campus-wide) defining the floor outline.
+     *  Grid cells outside ALL polygons are hard-blocked so A* stays indoors. */
+    boundaryPolygons: List<CampusBoundaryPolygon> = emptyList()
+) {
 
     companion object {
         private const val TAG = "NavigationRepository"
@@ -68,6 +78,13 @@ class NavigationRepository(walls: List<Wall>) {
             maxX = maxOf(maxX, wall.x1, wall.x2)
             maxY = maxOf(maxY, wall.y1, wall.y2)
         }
+        // Also include any additional boundary points (stair / goal entrances)
+        for (pt in additionalBoundaryPoints) {
+            minX = minOf(minX, pt.x)
+            minY = minOf(minY, pt.y)
+            maxX = maxOf(maxX, pt.x)
+            maxY = maxOf(maxY, pt.y)
+        }
         // Floor the origin to grid boundary, with padding
         originX = (minX / gridSize - 2).toInt() * gridSize
         originY = (minY / gridSize - 2).toInt() * gridSize
@@ -78,6 +95,12 @@ class NavigationRepository(walls: List<Wall>) {
         Log.d(TAG, "Grid: origin($originX, $originY), size ${maxGridX}x$maxGridY, " +
                 "cells=${maxGridX * maxGridY}, gridSize=$gridSize")
         computeDistanceTransform(walls)
+
+        // Block cells outside the floor boundary so A* stays inside the building.
+        // Uses point-in-polygon on the actual boundary data from the backend.
+        if (boundaryPolygons.isNotEmpty()) {
+            markExteriorCells(boundaryPolygons)
+        }
     }
 
     // ── coordinate helpers ──────────────────────────────────────────
@@ -111,6 +134,32 @@ class NavigationRepository(walls: List<Wall>) {
                 if (d < distanceGrid[x][y]) distanceGrid[x][y] = d
             }
         }
+    }
+
+    /**
+     * Blocks every grid cell whose centre falls outside ALL [polygons].
+     *
+     * Uses the ray-casting point-in-polygon test from [CampusBoundaryPolygon].
+     * A cell only needs to be inside at least one polygon to be considered
+     * interior (supports multi-section buildings).
+     */
+    private fun markExteriorCells(polygons: List<CampusBoundaryPolygon>) {
+        var blocked = 0
+        for (x in 0 until maxGridX) for (y in 0 until maxGridY) {
+            // Skip cells already blocked by walls
+            if (distanceGrid[x][y] < WALL_BLOCK_THRESHOLD) continue
+
+            val wx = gridToWorldX(x)
+            val wy = gridToWorldY(y)
+            val point = Offset(wx, wy)
+            val inside = polygons.any { it.contains(point) }
+            if (!inside) {
+                distanceGrid[x][y] = 0f  // hard-block exterior
+                blocked++
+            }
+        }
+        Log.d(TAG, "markExteriorCells: blocked $blocked exterior cells " +
+                "using ${polygons.size} boundary polygon(s)")
     }
 
     /** Point-to-segment distance (grid-unit space). */
@@ -288,14 +337,21 @@ class NavigationRepository(walls: List<Wall>) {
      * expanding rings (up to radius 12) for the nearest passable cell.
      */
     private fun findNearestPassable(gx: Int, gy: Int): Pair<Int, Int>? {
-        if (inBounds(gx, gy) && !isBlocked(gx, gy)) return gx to gy
-        for (r in 1..12) {
+        // Clamp to grid bounds first — if the world coordinate was outside the
+        // grid, searching outward from an out-of-bounds cell will never hit it.
+        val cx = gx.coerceIn(0, maxGridX - 1)
+        val cy = gy.coerceIn(0, maxGridY - 1)
+
+        if (inBounds(cx, cy) && !isBlocked(cx, cy)) return cx to cy
+        for (r in 1..20) {
             for (dx in -r..r) for (dy in -r..r) {
                 if (abs(dx) != r && abs(dy) != r) continue  // ring only
-                val nx = gx + dx; val ny = gy + dy
+                val nx = cx + dx; val ny = cy + dy
                 if (inBounds(nx, ny) && !isBlocked(nx, ny)) return nx to ny
             }
         }
+        Log.e(TAG, "findNearestPassable FAILED: original=($gx,$gy) clamped=($cx,$cy) " +
+                "grid=${maxGridX}x$maxGridY origin=($originX,$originY)")
         return null
     }
 

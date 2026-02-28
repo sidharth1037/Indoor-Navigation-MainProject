@@ -15,8 +15,6 @@ fun DrawScope.drawEntrances(
     entrances: List<Entrance>,
     scale: Float,
     rotationDegrees: Float,
-    canvasScale: Float,
-    canvasRotation: Float,
     radius: Float = 8f,
     regularColor: Color = Color(0xFFFFFF00), // Yellow
     stairColor: Color = Color(0xFF00FF00)    // Green
@@ -33,7 +31,7 @@ fun DrawScope.drawEntrances(
         val rotatedX = x * cosAngle - y * sinAngle
         val rotatedY = x * sinAngle + y * cosAngle
 
-        val entranceColor = if (entrance.stairs) stairColor else regularColor
+        val entranceColor = if (entrance.isStairs) stairColor else regularColor
 
         drawCircle(
             color = entranceColor,

@@ -360,9 +360,7 @@ fun FloorPlanCanvas(
                             drawEntrances(
                                 entrances = floorData.entrances,
                                 scale = floorPlanScale,
-                                rotationDegrees = floorPlanRotation,
-                                canvasScale = canvasState.scale,
-                                canvasRotation = canvasState.rotation
+                                rotationDegrees = floorPlanRotation
                             )
                         }
                     }

@@ -3,7 +3,7 @@ package `in`.project.enroute.data.repository
 import android.content.Context
 import android.net.Uri
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
 import `in`.project.enroute.data.model.*
@@ -36,7 +36,9 @@ class FirebaseFloorPlanRepository(
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
 ) : FloorPlanRepository {
 
-    private val gson = Gson()
+    private val gson = GsonBuilder()
+        .registerTypeAdapter(Entrance::class.java, EntranceDeserializer())
+        .create()
 
     // ── Campus-level ─────────────────────────────────────────────
 

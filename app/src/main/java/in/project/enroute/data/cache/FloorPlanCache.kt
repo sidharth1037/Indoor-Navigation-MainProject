@@ -59,6 +59,7 @@ class FloorPlanCache(context: Context) {
         // exclude static, so transient fields (floorId, buildingId on Room/Entrance)
         // survive the round-trip.
         .excludeFieldsWithModifiers(java.lang.reflect.Modifier.STATIC)
+        .registerTypeAdapter(Entrance::class.java, EntranceDeserializer())
         .registerTypeAdapter(
             object : TypeToken<Pair<Float, Float>>() {}.type,
             PairFloatAdapter()
@@ -66,10 +67,6 @@ class FloorPlanCache(context: Context) {
         .create()
 
     // ── Public API ───────────────────────────────────────────────
-
-    /** Returns `true` if a cache file exists for the given campus. */
-    fun hasCachedCampus(campusId: String): Boolean =
-        File(cacheDir, "$campusId.json").exists()
 
     /** Saves the full campus snapshot to disk. */
     suspend fun saveCampusData(campusId: String, data: CachedCampusData) =

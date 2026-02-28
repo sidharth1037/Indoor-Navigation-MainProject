@@ -1,42 +1,47 @@
-package `in`.project.enroute.feature.navigation.ui
+﻿package `in`.project.enroute.feature.navigation.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import `in`.project.enroute.feature.floorplan.rendering.CanvasState
+import `in`.project.enroute.feature.navigation.data.MultiFloorPath
 
 /**
- * Overlay canvas that draws the A* navigation path.
+ * Overlay canvas that draws the A* navigation path, supporting multi-floor
+ * rendering.
+ *
+ * - Segments on [currentVisibleFloor] are drawn with full opacity.
+ * - Segments on other floors are drawn faded + dashed, with a floor label.
+ * - A destination marker is placed at the final waypoint.
+ *
+ * Drawing logic is delegated to:
+ *  - [drawSegmentFull] / [drawSegmentFaded] in PathSegmentDrawing.kt
+ *  - [drawDestinationMarker] in DestinationMarker.kt
  *
  * Applies the same graphicsLayer transforms as the base floor-plan canvas and
  * PDR overlay so all layers stay pixel-aligned.
  *
- * All path coordinates are in campus-wide space — no per-building offset needed.
- *
- * @param path List of waypoints in campus-wide coordinates
- * @param canvasState Canvas transformation state (matching FloorPlanCanvas)
+ * @param multiFloorPath       The computed multi-floor path.
+ * @param currentVisibleFloor  The floor currently visible on the canvas.
+ * @param canvasState          Canvas transformation state (matching FloorPlanCanvas).
  */
 @Composable
 fun NavigationPathOverlay(
-    path: List<Offset>,
+    multiFloorPath: MultiFloorPath,
+    currentVisibleFloor: String?,
     canvasState: CanvasState,
     modifier: Modifier = Modifier,
     pathColor: Color = Color(0xFF4285F4),       // Google Maps blue
     pathWidth: Float = 10f,
     destinationColor: Color = Color(0xFFEA4335) // Google Maps red
 ) {
-    if (path.size < 2) return
+    if (multiFloorPath.isEmpty) return
 
     Canvas(
         modifier = modifier
@@ -55,49 +60,30 @@ fun NavigationPathOverlay(
         val centerY = size.height / 2
 
         translate(left = centerX, top = centerY) {
-                // Build the path polyline
-                val linePath = Path().apply {
-                    moveTo(path.first().x, path.first().y)
-                    for (i in 1 until path.size) {
-                        lineTo(path[i].x, path[i].y)
-                    }
+            // Draw non-current-floor segments first (behind), then current floor on top
+            for (segment in multiFloorPath.segments) {
+                if (segment.floorId != currentVisibleFloor) {
+                    drawSegmentFaded(segment, pathColor, pathWidth, canvasState.scale)
                 }
+            }
+            for (segment in multiFloorPath.segments) {
+                if (segment.floorId == currentVisibleFloor) {
+                    drawSegmentFull(segment, pathColor, pathWidth, canvasState.scale)
+                }
+            }
 
-                // Draw path outline (slightly wider, darker) for contrast
-                drawPath(
-                    path = linePath,
-                    color = Color(0xFF1A73E8),
-                    style = Stroke(
-                        width = (pathWidth + 4f) / canvasState.scale,
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round
-                    )
-                )
-
-                // Draw the main path line
-                drawPath(
-                    path = linePath,
-                    color = pathColor,
-                    style = Stroke(
-                        width = pathWidth / canvasState.scale,
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round
-                    )
-                )
-
-                // Destination marker at the last point
-                val destination = path.last()
-                val markerRadius = 12f / canvasState.scale
-                drawCircle(
+            // Destination marker at the final waypoint of the last segment
+            val lastSegment = multiFloorPath.segments.lastOrNull()
+            val destination = lastSegment?.points?.lastOrNull()
+            if (destination != null) {
+                val isOnCurrentFloor = lastSegment.floorId == currentVisibleFloor
+                drawDestinationMarker(
+                    center = destination,
                     color = destinationColor,
-                    radius = markerRadius,
-                    center = destination
+                    alpha = if (isOnCurrentFloor) 1f else 0.35f,
+                    canvasScale = canvasState.scale
                 )
-                drawCircle(
-                    color = Color.White,
-                    radius = markerRadius * 0.5f,
-                    center = destination
-                )
+            }
         }
     }
 }

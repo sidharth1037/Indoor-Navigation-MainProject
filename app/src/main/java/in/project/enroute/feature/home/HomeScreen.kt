@@ -294,9 +294,12 @@ private fun HomeScreenContent(
                 )
 
                 // A* navigation path overlay — rendered above base but below labels/pin
-                if (navUiState.path.isNotEmpty()) {
+                // Supports multi-floor rendering: current floor at full opacity,
+                // other floors faded+dashed with floor labels
+                if (navUiState.hasPath) {
                     NavigationPathOverlay(
-                        path = navUiState.path,
+                        multiFloorPath = navUiState.multiFloorPath,
+                        currentVisibleFloor = uiState.currentFloorId,
                         canvasState = effectiveCanvasState,
                         modifier = Modifier.fillMaxSize()
                     )

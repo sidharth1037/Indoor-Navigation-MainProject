@@ -8,6 +8,10 @@ import `in`.project.enroute.data.model.Entrance
 import `in`.project.enroute.data.model.FloorPlanData
 import `in`.project.enroute.data.model.Room
 import `in`.project.enroute.data.model.Wall
+import `in`.project.enroute.feature.navigation.data.CampusBoundaryPolygon
+import `in`.project.enroute.feature.navigation.data.CampusEntrance
+import `in`.project.enroute.feature.navigation.data.MultiFloorPath
+import `in`.project.enroute.feature.navigation.data.MultiFloorPathfinder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,22 +30,32 @@ import kotlin.math.sin
  * building relativePosition), matching the canvas drawing coordinate system.
  * No per-building offset is needed when rendering.
  *
- * @param path The computed A* path as campus-wide waypoints. Empty when no path is active.
+ * @param multiFloorPath The computed path, possibly spanning multiple floors.
  * @param isCalculating True while the pathfinding coroutine is running.
  * @param targetRoom The room the user requested directions to.
  * @param targetEntrance The entrance matched for the target room.
  * @param error Human-readable error message, or null.
  */
 data class NavigationUiState(
-    val path: List<Offset> = emptyList(),
+    val multiFloorPath: MultiFloorPath = MultiFloorPath.EMPTY,
     val isCalculating: Boolean = false,
     val targetRoom: Room? = null,
     val targetEntrance: Entrance? = null,
     val error: String? = null
-)
+) {
+    /** Convenience: true when a path is available. */
+    val hasPath: Boolean get() = !multiFloorPath.isEmpty
+
+    /** Backwards-compatible flat list of all waypoints (for simple consumers). */
+    val path: List<Offset> get() = multiFloorPath.allPoints
+}
 
 /**
  * ViewModel for A* pathfinding between the user's position and a room entrance.
+ *
+ * Supports **multi-floor** navigation: when the destination room is on a different
+ * floor the [MultiFloorPathfinder] stitches per-floor A* segments together via
+ * stair entrances.
  *
  * Uses a **single global grid** in campus-wide coordinates. All building walls
  * are transformed (scale → rotate → offset by relativePosition) at supply time
@@ -54,8 +68,8 @@ data class NavigationUiState(
  *
  * Lifecycle:
  *  1. [supplyFloorData] is called once floors are loaded → walls & entrances are transformed
- *  2. User taps "Directions" → [requestDirections] runs A* in campus-wide space
- *  3. Path emitted via [uiState]
+ *  2. User taps "Directions" → [requestDirections] runs A* (possibly multi-floor)
+ *  3. Path emitted via [uiState] as a [MultiFloorPath]
  *  4. [clearPath] resets
  */
 class NavigationViewModel : ViewModel() {
@@ -66,6 +80,9 @@ class NavigationViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(NavigationUiState())
     val uiState: StateFlow<NavigationUiState> = _uiState.asStateFlow()
+
+    /** Multi-floor pathfinding engine. */
+    private val multiFloorPathfinder = MultiFloorPathfinder()
 
     /**
      * All entrances across all buildings/floors, pre-transformed to campus-wide
@@ -81,6 +98,12 @@ class NavigationViewModel : ViewModel() {
      * the walls for the floor the user is currently on.
      */
     private val campusWallsByFloor = mutableMapOf<String, MutableList<Wall>>()
+
+    /**
+     * Campus-wide boundary polygons **grouped by floor ID**.
+     * Used to block exterior cells in the pathfinding grid.
+     */
+    private val campusBoundaryByFloor = mutableMapOf<String, MutableList<CampusBoundaryPolygon>>()
 
     /**
      * Lazily-built [NavigationRepository] **per floor ID**.
@@ -107,6 +130,7 @@ class NavigationViewModel : ViewModel() {
     fun supplyFloorData(floors: List<FloorPlanData>) {
         campusEntrances.clear()
         campusWallsByFloor.clear()
+        campusBoundaryByFloor.clear()
         repositoryByFloor.clear()
 
         for (floor in floors) {
@@ -122,6 +146,16 @@ class NavigationViewModel : ViewModel() {
                 val (sx1, sy1) = rawToCampus(wall.x1, wall.y1, scale, rotation, offX, offY)
                 val (sx2, sy2) = rawToCampus(wall.x2, wall.y2, scale, rotation, offX, offY)
                 floorWalls.add(Wall(sx1, sy1, sx2, sy2))
+            }
+
+            // Transform boundary polygons → campus-wide
+            val floorBoundary = campusBoundaryByFloor.getOrPut(floor.floorId) { mutableListOf() }
+            for (polygon in floor.boundaryPolygons) {
+                val campusPoints = polygon.points.map { pt ->
+                    val (cx, cy) = rawToCampus(pt.x, pt.y, scale, rotation, offX, offY)
+                    Offset(cx, cy)
+                }
+                floorBoundary.add(CampusBoundaryPolygon(campusPoints))
             }
 
             // Transform entrances → campus-wide (stored globally for room matching)
@@ -147,13 +181,12 @@ class NavigationViewModel : ViewModel() {
     /**
      * Requests a path from the user's current position to the entrance of [room].
      *
-     * Both [userPosition] and the resulting path are in campus-wide coordinates,
-     * matching the canvas drawing space. No per-building offset math needed.
+     * Delegates to [MultiFloorPathfinder] which handles both same-floor and
+     * cross-floor navigation transparently.
      *
      * @param room The destination room (must have name or number to match an entrance).
      * @param userPosition The user's current campus-wide position (from PDR).
-     * @param currentFloor The floor ID the user is on (e.g. "floor_1"). Only walls
-     *   from this floor are used for the A* grid.
+     * @param currentFloor The floor ID the user is on (e.g. "floor_1").
      */
     fun requestDirections(room: Room, userPosition: Offset, currentFloor: String) {
         pathfindingJob?.cancel()
@@ -173,6 +206,7 @@ class NavigationViewModel : ViewModel() {
         }
 
         Log.d(TAG, "Matched entrance id=${campusEntrance.original.id} " +
+                "floor=${campusEntrance.floorId} " +
                 "campus(${campusEntrance.campusX}, ${campusEntrance.campusY}) " +
                 "for room ${room.name ?: room.number}")
 
@@ -182,19 +216,28 @@ class NavigationViewModel : ViewModel() {
                 error = null,
                 targetRoom = room,
                 targetEntrance = campusEntrance.original,
-                path = emptyList()
+                multiFloorPath = MultiFloorPath.EMPTY
             )
         }
 
         pathfindingJob = viewModelScope.launch {
-            val goal = Offset(campusEntrance.campusX, campusEntrance.campusY)
-            val path = computePath(userPosition, goal, currentFloor)
+            val result = withContext(Dispatchers.Default) {
+                multiFloorPathfinder.findMultiFloorPath(
+                    start = userPosition,
+                    startFloorId = currentFloor,
+                    goalEntrance = campusEntrance,
+                    allEntrances = campusEntrances.toList(),
+                    wallsByFloor = campusWallsByFloor.toMap(),
+                    boundaryByFloor = campusBoundaryByFloor.toMap(),
+                    repoByFloor = repositoryByFloor
+                )
+            }
 
             _uiState.update {
-                if (path.isEmpty()) {
+                if (result.isEmpty) {
                     it.copy(isCalculating = false, error = "Could not find a path")
                 } else {
-                    it.copy(isCalculating = false, path = path)
+                    it.copy(isCalculating = false, multiFloorPath = result)
                 }
             }
         }
@@ -211,27 +254,6 @@ class NavigationViewModel : ViewModel() {
     // ──────────────────────────────────────────────
     // Internal helpers
     // ──────────────────────────────────────────────
-
-    /**
-     * Runs A* on a background dispatcher. A [NavigationRepository] is built
-     * lazily **per floor** — only walls from [floorId] are used.
-     */
-    private suspend fun computePath(
-        start: Offset,
-        goal: Offset,
-        floorId: String
-    ): List<Offset> = withContext(Dispatchers.Default) {
-        val walls = campusWallsByFloor[floorId]
-        if (walls.isNullOrEmpty()) {
-            Log.e(TAG, "No walls for floor $floorId — cannot pathfind")
-            return@withContext emptyList()
-        }
-        val repo = repositoryByFloor[floorId] ?: run {
-            Log.d(TAG, "Building distance transform for floor $floorId (${walls.size} walls)…")
-            NavigationRepository(walls).also { repositoryByFloor[floorId] = it }
-        }
-        repo.findPath(start, goal)
-    }
 
     /**
      * Finds the campus-wide entrance that matches [room] by room number or name.
@@ -289,15 +311,3 @@ class NavigationViewModel : ViewModel() {
         pathfindingJob?.cancel()
     }
 }
-
-/**
- * An entrance pre-transformed into campus-wide coordinates.
- * Retains the original [Entrance] for room-matching metadata (name, roomNo, etc.).
- */
-private data class CampusEntrance(
-    val original: Entrance,
-    val campusX: Float,
-    val campusY: Float,
-    val buildingId: String,
-    val floorId: String
-)

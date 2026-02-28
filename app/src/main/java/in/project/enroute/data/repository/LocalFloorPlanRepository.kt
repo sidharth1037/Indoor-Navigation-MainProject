@@ -3,11 +3,12 @@
 package `in`.project.enroute.data.repository
 
 import android.content.Context
-import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
 import `in`.project.enroute.data.model.CampusMetadata
 import `in`.project.enroute.data.model.Entrance
+import `in`.project.enroute.data.model.EntranceDeserializer
 import `in`.project.enroute.data.model.FloorPlanData
 import `in`.project.enroute.data.model.FloorPlanMetadata
 import `in`.project.enroute.data.model.Room
@@ -28,7 +29,9 @@ class LocalFloorPlanRepository(
     private val context: Context
 ) : FloorPlanRepository {
 
-    private val gson = Gson()
+    private val gson = GsonBuilder()
+        .registerTypeAdapter(Entrance::class.java, EntranceDeserializer())
+        .create()
 
     // ── Campus-level ─────────────────────────────────────────────
 
