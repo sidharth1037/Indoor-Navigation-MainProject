@@ -6,12 +6,21 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,7 +39,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import `in`.project.enroute.data.cache.FloorPlanCache
+import `in`.project.enroute.data.cache.RecentCampusStore
 import `in`.project.enroute.data.repository.FirebaseFloorPlanRepository
 import `in`.project.enroute.feature.campussearch.CampusItem
 import `in`.project.enroute.feature.campussearch.CampusSearchButton
@@ -52,17 +61,27 @@ data class WelcomeUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     /** True once the first non-blank search has been triggered. */
-    val hasSearched: Boolean = false
+    val hasSearched: Boolean = false,
+    /** Up to 3 recently-viewed campuses (newest first). */
+    val recentCampuses: List<CampusItem> = emptyList()
 )
 
 class WelcomeViewModel(application: Application) : AndroidViewModel(application) {
-
-    private val cache = FloorPlanCache(application.applicationContext)
+    private val recentStore = RecentCampusStore(application.applicationContext)
 
     private val _uiState = MutableStateFlow(WelcomeUiState())
     val uiState: StateFlow<WelcomeUiState> = _uiState.asStateFlow()
 
     private var searchJob: Job? = null
+
+    init {
+        loadRecent()
+    }
+
+    private fun loadRecent() {
+        val recent = recentStore.getRecent().map { CampusItem(it.first, it.second) }
+        _uiState.update { it.copy(recentCampuses = recent) }
+    }
 
     /**
      * Called on every keystroke. Debounces 250 ms, then queries the cached
@@ -74,7 +93,7 @@ class WelcomeViewModel(application: Application) : AndroidViewModel(application)
         searchJob?.cancel()
 
         if (query.isBlank()) {
-            _uiState.update { it.copy(searchResults = emptyList(), hasSearched = false, error = null) }
+            _uiState.update { it.copy(searchResults = emptyList(), hasSearched = false, error = null, isLoading = false) }
             return
         }
 
@@ -87,6 +106,8 @@ class WelcomeViewModel(application: Application) : AndroidViewModel(application)
                 _uiState.update {
                     it.copy(searchResults = items, isLoading = false, hasSearched = true)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(isLoading = false, error = e.message, hasSearched = true)
@@ -104,7 +125,17 @@ class WelcomeViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun isCached(campusId: String): Boolean = cache.hasCachedCampus(campusId)
+    /** Records a campus as recently viewed and refreshes the UI list. */
+    fun addRecent(campusId: String, campusName: String) {
+        recentStore.add(campusId, campusName)
+        loadRecent()
+    }
+
+    /** Removes a campus from the recently-viewed list. */
+    fun removeRecent(campusId: String) {
+        recentStore.remove(campusId)
+        loadRecent()
+    }
 }
 
 // ── Composables ──────────────────────────────────────────────────
@@ -163,6 +194,61 @@ fun WelcomeScreen(
                 fontSize = 16.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            // Space for the search button (it's rendered as an overlay)
+            Spacer(modifier = Modifier.height(BUTTON_SPACER + 48.dp + 48.dp))
+
+            // ── Recently viewed campuses ─────────────────────────
+            if (uiState.recentCampuses.isNotEmpty()) {
+                Text(
+                    text = "Recently viewed",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 4.dp, bottom = 8.dp)
+                )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    uiState.recentCampuses.forEachIndexed { index, campus ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.addRecent(campus.id, campus.name)
+                                    viewModel.updateQuery("")
+                                    onCampusSelected(campus.id)
+                                }
+                                .padding(horizontal = 4.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = campus.name,
+                                fontSize = 15.sp,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = { viewModel.removeRecent(campus.id) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Remove",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        if (index < uiState.recentCampuses.lastIndex) {
+                            HorizontalDivider(
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // ── Morphing search button ───────────────────────────────
@@ -186,7 +272,6 @@ fun WelcomeScreen(
                 isLoading = uiState.isLoading,
                 error = uiState.error,
                 hasSearched = uiState.hasSearched,
-                isCached = { viewModel.isCached(it) },
                 onBack = {
                     showSearch = false
                     coroutineScope.launch {
@@ -196,7 +281,13 @@ fun WelcomeScreen(
                         viewModel.updateQuery("")
                     }
                 },
-                onCampusSelected = { id -> onCampusSelected(id) },
+                onCampusSelected = { id ->
+                    val name = uiState.searchResults
+                        .firstOrNull { it.id == id }?.name ?: id
+                    viewModel.addRecent(id, name)
+                    viewModel.updateQuery("")
+                    onCampusSelected(id)
+                },
                 onRetry = { viewModel.retrySearch() }
             )
         }

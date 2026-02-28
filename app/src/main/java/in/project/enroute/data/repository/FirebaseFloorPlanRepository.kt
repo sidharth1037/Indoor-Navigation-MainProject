@@ -460,9 +460,12 @@ class FirebaseFloorPlanRepository(
                 }.sortedBy { it.second }.also { cachedCampuses = it }
             }
 
+            val normalizedQuery = query.replace(Regex("[\\s.,;:!?'\"\\-_/\\\\]"), "").lowercase()
+
             all.filter { (id, name) ->
-                name.contains(query, ignoreCase = true) ||
-                id.contains(query, ignoreCase = true)
+                val normalizedName = name.replace(Regex("[\\s.,;:!?'\"\\-_/\\\\]"), "").lowercase()
+                val normalizedId   = id.replace(Regex("[\\s.,;:!?'\"\\-_/\\\\]"), "").lowercase()
+                normalizedName.contains(normalizedQuery) || normalizedId.contains(normalizedQuery)
             }
         }
 

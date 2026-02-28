@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,7 +54,6 @@ import kotlinx.coroutines.delay
  * @param isLoading         show a spinner while the first fetch is in progress
  * @param error             non-null when a network error occurred
  * @param hasSearched       true after the first non-blank search has been issued
- * @param isCached          optional callback; returns true if a campus is cached on disk
  * @param placeholderText   hint text in the search field
  * @param onBack            called when the user presses back
  * @param onCampusSelected  called with the campus ID when the user picks one
@@ -67,7 +67,6 @@ fun CampusSearchOverlay(
     isLoading: Boolean,
     error: String?,
     hasSearched: Boolean,
-    isCached: (String) -> Boolean = { false },
     placeholderText: String = "Search for your campus...",
     onBack: () -> Unit,
     onCampusSelected: (String) -> Unit,
@@ -164,6 +163,8 @@ fun CampusSearchOverlay(
             }
         }
 
+        Spacer(modifier = Modifier.height(16.dp))
+
         // ── Results body ─────────────────────────────────────────
         when {
             // Nothing typed yet — show nothing
@@ -214,7 +215,6 @@ fun CampusSearchOverlay(
                     items(results) { campus ->
                         CampusResultItem(
                             campus = campus,
-                            isCached = isCached(campus.id),
                             onClick = {
                                 focusManager.clearFocus()
                                 onCampusSelected(campus.id)
@@ -232,37 +232,31 @@ fun CampusSearchOverlay(
 @Composable
 fun CampusResultItem(
     campus: CampusItem,
-    isCached: Boolean,
     onClick: () -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 20.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+    Column(
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onClick() }
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
             Text(
                 text = campus.name,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = campus.id,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.weight(1f)
             )
         }
-        if (isCached) {
-            Text(
-                text = "cached",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
+        HorizontalDivider(
+            modifier = Modifier.padding(horizontal = 20.dp),
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
     }
 }

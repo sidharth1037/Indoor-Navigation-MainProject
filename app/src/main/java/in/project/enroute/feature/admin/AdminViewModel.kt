@@ -115,6 +115,8 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update {
                     it.copy(searchResults = items, isSearching = false, hasSearched = true)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(isSearching = false, searchError = e.message, hasSearched = true)
