@@ -363,6 +363,16 @@ fun FloorPlanCanvas(
                                 rotationDegrees = floorPlanRotation
                             )
                         }
+
+                        // Grey out floors below the current floor for visual separation
+                        if (!isCurrentFloor) {
+                            drawBoundary(
+                                boundaryPolygons = floorData.boundaryPolygons,
+                                scale = floorPlanScale,
+                                rotationDegrees = floorPlanRotation,
+                                color = Color(0x33888888)
+                            )
+                        }
                     }
                 }
             }

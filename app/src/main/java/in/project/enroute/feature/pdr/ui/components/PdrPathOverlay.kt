@@ -39,7 +39,8 @@ fun PdrPathOverlay(
     path: List<PathPoint>,
     currentHeading: Float,
     canvasState: CanvasState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isOnCurrentFloor: Boolean = true
 ) {
     if (path.isEmpty()) return
 
@@ -75,6 +76,9 @@ fun PdrPathOverlay(
                 path.dropLast(1)
             }
             
+            // Dim everything when viewing a different floor
+            val floorAlphaMultiplier = if (isOnCurrentFloor) 1f else 0.25f
+
             // Draw footstep icons at each path point with variable opacity
             displayPath.forEachIndexed { index, pathPoint ->
                 val isRightFoot = (path.size - 1 - displayPath.size + index) % 2 == 0
@@ -85,11 +89,11 @@ fun PdrPathOverlay(
                 
                 // Calculate opacity: 70% (0.7f) for nearest to 10% (0.1f) for farthest
                 // index 0 = farthest (oldest), index n-1 = nearest (newest)
-                val alpha = if (displayPath.size > 1) {
+                val alpha = (if (displayPath.size > 1) {
                     0.1f + (index.toFloat() / (displayPath.size - 1)) * 0.7f
                 } else {
                     0.8f
-                }
+                }) * floorAlphaMultiplier
                 
                 // Small lateral offset to separate left and right feet
                 val lateralOffset = 5f // Distance between left and right foot
@@ -133,7 +137,8 @@ fun PdrPathOverlay(
             drawDirectionCone(
                 position = lastPathPoint.position,
                 heading = currentHeading,
-                scale = canvasState.scale
+                scale = canvasState.scale,
+                alpha = floorAlphaMultiplier
             )
         }
     }
@@ -145,7 +150,8 @@ fun PdrPathOverlay(
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDirectionCone(
     position: Offset,
     heading: Float,
-    scale: Float
+    scale: Float,
+    alpha: Float = 1f
 ) {
     // Cone dimensions (scale-independent)
     val coneLength = 60f / scale
@@ -178,12 +184,12 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDirectionCone(
     }
 
     // Fill with Google Maps blue
-    drawPath(path = conePath, color = Color(0xFF4285F4), style = Fill)
-    drawPath(path = conePath, color = Color(0x664285F4), style = Fill)
+    drawPath(path = conePath, color = Color(0xFF4285F4).copy(alpha = alpha), style = Fill)
+    drawPath(path = conePath, color = Color(0x664285F4).copy(alpha = alpha * 0.4f), style = Fill)
 
     // Vertex circle (solid blue dot at user position)
     drawCircle(
-        color = Color(0xFF4285F4),
+        color = Color(0xFF4285F4).copy(alpha = alpha),
         radius = vertexRadius,
         center = position
     )
@@ -191,7 +197,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDirectionCone(
     // Outline
     drawPath(
         path = conePath,
-        color = Color(0xFF1E88E5),
+        color = Color(0xFF1E88E5).copy(alpha = alpha),
         style = Stroke(width = 2f / scale)
     )
 }

@@ -513,6 +513,24 @@ class FloorPlanViewModel(
     }
 
     /**
+     * Switches to the floor matching the given floorId (e.g. "floor_1").
+     * Searches all buildings for a floor with this ID and switches that building to it.
+     * No-op if the floorId is null or not found, or if the user is outside all buildings.
+     */
+    fun switchToFloorById(floorId: String?) {
+        if (floorId == null) return
+        val state = _uiState.value
+        for ((buildingId, buildingState) in state.buildingStates) {
+            for ((floorNumber, floorData) in buildingState.floors) {
+                if (floorData.floorId == floorId) {
+                    setCurrentFloor(buildingId, floorNumber)
+                    return
+                }
+            }
+        }
+    }
+
+    /**
      * Checks if a room is visible in the given list of floors to render.
      * A room is visible if it exists in one of the floors and is not covered
      * by any floor above it.

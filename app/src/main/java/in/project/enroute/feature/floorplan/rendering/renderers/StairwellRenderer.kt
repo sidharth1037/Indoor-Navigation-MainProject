@@ -2,13 +2,10 @@ package `in`.project.enroute.feature.floorplan.rendering.renderers
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import `in`.project.enroute.data.model.Stairwell
 import kotlin.math.cos
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -171,44 +168,6 @@ fun DrawScope.drawStairwells(
                 end = Offset(endRotX, endRotY),
                 strokeWidth = strokeWidthVar
             )
-
-            // Draw a small shadow gradient cast from this stair toward the bottom.
-            // Shadow depth in map units (small length). Multiplier varies from 0.3 at the
-            // top line to 0.6 at the bottom line. Clamp to a sensible maximum.
-            val multiplier = 0.3f + 0.3f * t // lerp(0.3, 0.6, t)
-            val shadowDepthMap = min(spacing * multiplier, 20f)
-            if (shadowDepthMap > 0f) {
-                // Compute device-space shadow vector by scaling and rotating the normal
-                val sx = normX * shadowDepthMap * scale
-                val sy = normY * shadowDepthMap * scale
-                val shadowDevX = sx * cosAngle - sy * sinAngle
-                val shadowDevY = sx * sinAngle + sy * cosAngle
-
-                val p1 = Offset(startRotX, startRotY)
-                val p2 = Offset(endRotX, endRotY)
-                val p3 = Offset(endRotX + shadowDevX, endRotY + shadowDevY)
-                val p4 = Offset(startRotX + shadowDevX, startRotY + shadowDevY)
-
-                val path = Path().apply {
-                    moveTo(p1.x, p1.y)
-                    lineTo(p2.x, p2.y)
-                    lineTo(p3.x, p3.y)
-                    lineTo(p4.x, p4.y)
-                    close()
-                }
-
-                val brushStart = Offset((p1.x + p2.x) / 2f, (p1.y + p2.y) / 2f)
-                val brushEnd = Offset(brushStart.x + shadowDevX, brushStart.y + shadowDevY)
-
-                drawPath(
-                    path = path,
-                    brush = Brush.linearGradient(
-                        colors = listOf(Color(0x88000000), Color.Transparent),
-                        start = brushStart,
-                        end = brushEnd
-                    )
-                )
-            }
         }
     }
 }

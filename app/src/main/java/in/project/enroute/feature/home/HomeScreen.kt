@@ -159,7 +159,14 @@ fun HomeScreen(
                 }
                 floorPlanViewModel.updateCanvasState(it)
             },
-            onFloorChange = { floorPlanViewModel.setCurrentFloor(it) },
+            onFloorChange = {
+                // Disable tracking/following mode when user manually switches floor
+                if (uiState.isFollowingMode) {
+                    pdrViewModel.setHeadingTrackingMode(false)
+                    floorPlanViewModel.disableFollowingMode(effectiveCanvasState)
+                }
+                floorPlanViewModel.setCurrentFloor(it)
+            },
             onCenterView = { x, y, scale -> floorPlanViewModel.centerOnCoordinate(x, y, scale) },
             onRoomTap = { room ->
                 // Switch to the room's floor in the correct building
@@ -213,7 +220,8 @@ fun HomeScreen(
                 if (currentPosition != null && floor != null) {
                     navigationViewModel.requestDirections(room, currentPosition, floor)
                 }
-            }
+            },
+            onSwitchToFloorById = { floorId -> floorPlanViewModel.switchToFloorById(floorId) }
         )
     }
 }
@@ -238,7 +246,8 @@ private fun HomeScreenContent(
     onCancelOriginSelection: () -> Unit,
     onDismissHeightRequired: () -> Unit,
     onSaveHeight: (Float) -> Unit,
-    onDirectionsClick: (Room) -> Unit
+    onDirectionsClick: (Room) -> Unit,
+    onSwitchToFloorById: (String) -> Unit = {}
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var isMorphingToSearch by remember { mutableStateOf(false) }
@@ -322,6 +331,8 @@ private fun HomeScreenContent(
                         path = pdrUiState.pdrState.path,
                         currentHeading = heading,
                         canvasState = effectiveCanvasState,
+                        isOnCurrentFloor = pdrUiState.pdrState.currentFloor == null ||
+                                pdrUiState.pdrState.currentFloor == uiState.currentFloorId,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -401,6 +412,10 @@ private fun HomeScreenContent(
                             showOriginDialog = true
                         } else {
                             aimPressed = true
+                            // Switch to the floor the user is currently on (if inside a building)
+                            pdrUiState.pdrState.currentFloor?.let { floor ->
+                                onSwitchToFloorById(floor)
+                            }
                             val currentPosition = if (pdrUiState.pdrState.path.isNotEmpty()) {
                                 pdrUiState.pdrState.path.last().position
                             } else {
