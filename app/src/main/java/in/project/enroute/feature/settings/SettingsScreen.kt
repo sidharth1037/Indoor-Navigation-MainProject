@@ -4,10 +4,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -23,6 +26,8 @@ import `in`.project.enroute.feature.settings.components.HeightSettingItem
 fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel()
 ) {
+    val uiState by viewModel.uiState.collectAsState()
+    
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -38,6 +43,25 @@ fun SettingsScreen(
 
         // Height setting item
         HeightSettingItem(viewModel = viewModel)
+        
+        // Show entrances toggle
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 16.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Show entrances on map",
+                fontSize = 16.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = uiState.showEntrances,
+                onCheckedChange = { viewModel.toggleShowEntrances() },
+                modifier = Modifier.padding(start = 16.dp)
+            )
+        }
 
         // Clear cache button
         var cacheCleared by remember { mutableStateOf(false) }
@@ -49,7 +73,6 @@ fun SettingsScreen(
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 24.dp)
         ) {
             Text(if (cacheCleared) "Cache cleared \u2713" else "Clear cached map data")
         }

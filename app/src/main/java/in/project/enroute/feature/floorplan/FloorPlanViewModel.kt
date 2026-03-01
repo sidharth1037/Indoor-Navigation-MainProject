@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.sin
+import `in`.project.enroute.feature.settings.data.SettingsRepository
 
 /**
  * Bounds of the campus background canvas in world coordinates.
@@ -177,6 +178,7 @@ class FloorPlanViewModel(
 ) : AndroidViewModel(application) {
 
     private val cache = FloorPlanCache(application.applicationContext)
+    private val settingsRepository = SettingsRepository(application.applicationContext)
 
     // Always use Firebase backend
     private lateinit var repository: FloorPlanRepository
@@ -189,6 +191,19 @@ class FloorPlanViewModel(
 
     private val _uiState = MutableStateFlow(FloorPlanUiState())
     val uiState: StateFlow<FloorPlanUiState> = _uiState.asStateFlow()
+
+    init {
+        // Listen to entrance visibility preference and update display config
+        viewModelScope.launch {
+            settingsRepository.showEntrances.collect { showEntrances ->
+                _uiState.update { 
+                    it.copy(
+                        displayConfig = it.displayConfig.copy(showEntrances = showEntrances)
+                    )
+                }
+            }
+        }
+    }
 
     /**
      * Resolves the repository for the currently selected campus.
@@ -787,11 +802,31 @@ class FloorPlanViewModel(
             )
 
             // Ensure final state and enable following mode after animation completes
+            // Also recalculate dominant building and floor slider since we may have
+            // zoomed in from a state where they were null/hidden
             _uiState.update { state ->
-                if (!state.isFollowingMode) state else state.copy(
-                    canvasState = targetState,
-                    isFollowingAnimating = false
-                )
+                if (!state.isFollowingMode) state else {
+                    val dominant = if (state.screenWidth > 0 && state.screenHeight > 0) {
+                        ViewportUtils.findDominantBuilding(
+                            buildingStates = state.buildingStates,
+                            canvasState = targetState,
+                            screenWidth = state.screenWidth,
+                            screenHeight = state.screenHeight
+                        )
+                    } else {
+                        state.dominantBuildingId
+                    }
+                    val showSlider = ViewportUtils.shouldShowFloorSlider(
+                        canvasScale = targetState.scale,
+                        dominantBuildingId = dominant
+                    )
+                    state.copy(
+                        canvasState = targetState,
+                        isFollowingAnimating = false,
+                        dominantBuildingId = dominant,
+                        showFloorSlider = showSlider
+                    )
+                }
             }
         }
     }

@@ -41,7 +41,7 @@ import `in`.project.enroute.feature.floorplan.CampusBounds
 data class FloorPlanDisplayConfig(
     val showWalls: Boolean = true,
     val showStairwells: Boolean = true,
-    val showEntrances: Boolean = true,
+    val showEntrances: Boolean = false,
     val showRoomLabels: Boolean = true,
     val wallColor: Color = Color.Black,
     val backgroundColor: Color = Color.White,

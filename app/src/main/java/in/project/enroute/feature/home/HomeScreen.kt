@@ -53,7 +53,7 @@ import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionOverlay
 import `in`.project.enroute.feature.pdr.ui.components.PdrPathOverlay
 import `in`.project.enroute.feature.pdr.ui.components.HeightRequiredDialog
 import `in`.project.enroute.feature.pdr.ui.components.MotionLabel
-import `in`.project.enroute.feature.home.components.SetLocationButton
+
 import `in`.project.enroute.feature.home.components.RoomInfoPanel
 import `in`.project.enroute.feature.home.components.StopTrackingButton
 import androidx.compose.animation.core.animateDpAsState
@@ -253,8 +253,12 @@ private fun HomeScreenContent(
     var isMorphingToSearch by remember { mutableStateOf(false) }
     var showOriginDialog by remember { mutableStateOf(false) }
     var aimPressed by remember { mutableStateOf(false) }
-    // When true, means the origin dialog was triggered by "Directions" button
-    // and we should request directions once origin is set
+    // When true, the AimButton was pressed before origin was set.
+    // Once origin is set, auto-enable tracking without requiring another press.
+    var pendingTrackAfterOrigin by remember { mutableStateOf(false) }
+    // When non-null, the Directions button was pressed before origin was set.
+    // Once origin is set, auto-request directions to this room.
+    var pendingDirectionsRoom by remember { mutableStateOf<Room?>(null) }
 
     // Animate bottom button offset when room info panel is visible
     val panelVisible = uiState.pinnedRoom != null
@@ -267,6 +271,26 @@ private fun HomeScreenContent(
     // Reset local pressed state when following mode is turned off so button reappears
     LaunchedEffect(uiState.isFollowingMode) {
         if (!uiState.isFollowingMode) aimPressed = false
+    }
+
+    // Auto-enable tracking once origin is set after AimButton triggered the dialog
+    // Also auto-request directions if Directions was pressed before origin was set
+    LaunchedEffect(pdrUiState.pdrState.origin) {
+        val origin = pdrUiState.pdrState.origin
+        if (origin != null) {
+            if (pendingTrackAfterOrigin) {
+                pendingTrackAfterOrigin = false
+                aimPressed = true
+                pdrUiState.pdrState.currentFloor?.let { floor ->
+                    onSwitchToFloorById(floor)
+                }
+                onEnableTracking(origin, heading)
+            }
+            pendingDirectionsRoom?.let { room ->
+                pendingDirectionsRoom = null
+                onDirectionsClick(room)
+            }
+        }
     }
 
     Box(
@@ -409,6 +433,7 @@ private fun HomeScreenContent(
                     isVisible = !pdrUiState.isSelectingOrigin && !uiState.isFollowingMode && !aimPressed,
                     onClick = {
                         if (pdrUiState.pdrState.origin == null) {
+                            pendingTrackAfterOrigin = true
                             showOriginDialog = true
                         } else {
                             aimPressed = true
@@ -429,19 +454,9 @@ private fun HomeScreenContent(
                         .padding(bottom = bottomButtonPadding, end = 8.dp)
                 )
                 
-                // Set My Location / Stop Tracking button positioned at bottom left
-                // Shows "Set My Location" before origin is set, "Stop Tracking" after
-                // Hides when user is selecting origin
-                // Animates position based on whether slider or search is visible
-                if (pdrUiState.pdrState.origin == null && !pdrUiState.isSelectingOrigin) {
-                    SetLocationButton(
-                        isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
-                        onClick = { showOriginDialog = true },
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(start = 8.dp, bottom = bottomButtonPadding)
-                    )
-                } else if (pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin) {
+                // Stop Tracking button positioned at bottom left
+                // Shows when origin is set and not selecting origin
+                if (pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin) {
                     StopTrackingButton(
                         isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
                         onClick = onClearPdrClick,
@@ -459,6 +474,7 @@ private fun HomeScreenContent(
                     onDirectionsClick = { room ->
                         if (pdrUiState.pdrState.origin == null) {
                             // Origin not set → show dialog, remember room for later
+                            pendingDirectionsRoom = room
                             showOriginDialog = true
                         } else {
                             onDirectionsClick(room)

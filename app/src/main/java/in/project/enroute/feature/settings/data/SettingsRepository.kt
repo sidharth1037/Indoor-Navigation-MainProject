@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -15,6 +16,7 @@ class SettingsRepository(private val context: Context) {
     
     private object PreferencesKeys {
         val HEIGHT = floatPreferencesKey("user_height")
+        val SHOW_ENTRANCES = booleanPreferencesKey("show_entrances")
     }
     
     /**
@@ -26,11 +28,28 @@ class SettingsRepository(private val context: Context) {
     }
     
     /**
+     * Flow of the entrance visibility preference.
+     * Defaults to false (entrances hidden).
+     */
+    val showEntrances: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[PreferencesKeys.SHOW_ENTRANCES] ?: false
+    }
+    
+    /**
      * Saves the user's height in centimeters.
      */
     suspend fun saveHeight(heightCm: Float) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.HEIGHT] = heightCm
+        }
+    }
+    
+    /**
+     * Saves the entrance visibility preference.
+     */
+    suspend fun saveShowEntrances(show: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.SHOW_ENTRANCES] = show
         }
     }
 

@@ -123,16 +123,11 @@ class PdrRepository {
         // heading is in radians: 0 = North, positive = clockwise
         stepCount++
 
-        // First step stays at origin
-        val newPosition = if (stepCount == 1) {
-            Offset(currentX, currentY)
-        } else {
-            val newX = currentX + strideInPixels * sin(heading)
-            val newY = currentY - strideInPixels * cos(heading)
-            currentX = newX
-            currentY = newY
-            Offset(newX, newY)
-        }
+        val newX = currentX + strideInPixels * sin(heading)
+        val newY = currentY - strideInPixels * cos(heading)
+        currentX = newX
+        currentY = newY
+        val newPosition = Offset(newX, newY)
 
         // Update path with PathPoint including heading at this step
         val newPathPoint = PathPoint(position = newPosition, heading = heading)

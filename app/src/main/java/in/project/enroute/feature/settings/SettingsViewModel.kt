@@ -15,7 +15,8 @@ data class SettingsUiState(
     val isLoading: Boolean = false,
     val currentHeight: Float? = null,
     val isEditingHeight: Boolean = false,
-    val heightInputValue: String = ""
+    val heightInputValue: String = "",
+    val showEntrances: Boolean = false
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -32,6 +33,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             repository.height.collect { savedHeight ->
                 _uiState.update { 
                     it.copy(currentHeight = savedHeight)
+                }
+            }
+        }
+        
+        // Load saved entrance visibility preference
+        viewModelScope.launch {
+            repository.showEntrances.collect { showEntrances ->
+                _uiState.update {
+                    it.copy(showEntrances = showEntrances)
                 }
             }
         }
@@ -86,6 +96,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun clearBackendCache() {
         viewModelScope.launch {
             cache.clearAllCache()
+        }
+    }
+    
+    /**
+     * Toggles the entrance visibility preference and saves it.
+     */
+    fun toggleShowEntrances() {
+        val currentState = _uiState.value
+        val newValue = !currentState.showEntrances
+        _uiState.update { it.copy(showEntrances = newValue) }
+        viewModelScope.launch {
+            repository.saveShowEntrances(newValue)
         }
     }
 }

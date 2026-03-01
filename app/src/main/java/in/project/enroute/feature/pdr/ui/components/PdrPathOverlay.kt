@@ -7,11 +7,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.drawscope.Fill
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
@@ -23,6 +23,7 @@ import `in`.project.enroute.feature.floorplan.rendering.CanvasState
 import `in`.project.enroute.feature.pdr.data.model.PathPoint
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * PDR path overlay that draws the tracked path on the canvas.
@@ -68,12 +69,14 @@ fun PdrPathOverlay(
             val footstepSize = 30f //* canvasState.scale
             val halfSize = footstepSize / 2f
             
-            // Only draw the last 10 steps (excluding current position)
+            // Only draw the last 10 steps (excluding only current position).
+            // path[0] is the origin, path.last() is current position (shown as cone).
             val lastStepsCount = 10
-            val displayPath = if (path.size > lastStepsCount + 1) {
-                path.takeLast(lastStepsCount + 1).dropLast(1)
+            val historyPath = if (path.size > 1) path.dropLast(1) else emptyList()
+            val displayPath = if (historyPath.size > lastStepsCount) {
+                historyPath.takeLast(lastStepsCount)
             } else {
-                path.dropLast(1)
+                historyPath
             }
             
             // Dim everything when viewing a different floor
@@ -145,7 +148,9 @@ fun PdrPathOverlay(
 }
 
 /**
- * Draws a direction cone (arrow) indicating the current heading direction.
+ * Draws a Google Maps–style location indicator: a wide translucent blue cone
+ * with radial gradient fade for heading, a solid blue dot with white border
+ * and subtle shadow. Sizes grow slightly as the user zooms in (sqrt scaling).
  */
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDirectionCone(
     position: Offset,
@@ -153,51 +158,94 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDirectionCone(
     scale: Float,
     alpha: Float = 1f
 ) {
-    // Cone dimensions (scale-independent)
-    val coneLength = 60f / scale
-    val coneWidth = 30f
-    val vertexRadius = 10f / scale
+    // sqrt(scale) gives gentle growth on zoom: not constant, not fully proportional
+    val s = 1f / sqrt(scale)
+    val dotRadius = 12f * s
+    val borderWidth = 3.5f * s
+    val shadowSpread = 4f * s
+    val coneLength = 100f * s
+    val coneHalfAngleDeg = 34f  // ~68° total spread
 
-    // heading is in radians: 0 = North, positive = clockwise
     val angleRad = heading
 
-    // Tip of the cone (forward direction)
-    val tipX = position.x + coneLength * sin(angleRad)
-    val tipY = position.y - coneLength * cos(angleRad)
+    // --- Build cone path ---
+    val steps = 40
+    val startAngle = angleRad - Math.toRadians(coneHalfAngleDeg.toDouble()).toFloat()
+    val endAngle = angleRad + Math.toRadians(coneHalfAngleDeg.toDouble()).toFloat()
+    val angleStep = (endAngle - startAngle) / steps
 
-    // Left edge of the cone base
-    val leftAngleRad = angleRad + Math.toRadians(coneWidth.toDouble()).toFloat()
-    val tipX1 = position.x + (coneLength * 0.6f) * sin(leftAngleRad)
-    val tipY1 = position.y - (coneLength * 0.6f) * cos(leftAngleRad)
-
-    // Right edge of the cone base
-    val rightAngleRad = angleRad - Math.toRadians(coneWidth.toDouble()).toFloat()
-    val tipX2 = position.x + (coneLength * 0.6f) * sin(rightAngleRad)
-    val tipY2 = position.y - (coneLength * 0.6f) * cos(rightAngleRad)
-
-    // Draw the cone triangle
     val conePath = Path().apply {
-        moveTo(tipX, tipY)
-        lineTo(tipX1, tipY1)
-        lineTo(tipX2, tipY2)
+        moveTo(position.x, position.y)
+        for (i in 0..steps) {
+            val a = startAngle + angleStep * i
+            val px = position.x + coneLength * sin(a)
+            val py = position.y - coneLength * cos(a)
+            lineTo(px, py)
+        }
         close()
     }
 
-    // Fill with Google Maps blue
-    drawPath(path = conePath, color = Color(0xFF4285F4).copy(alpha = alpha), style = Fill)
-    drawPath(path = conePath, color = Color(0x664285F4).copy(alpha = alpha * 0.4f), style = Fill)
+    // --- Shadow behind cone ---
+    clipPath(conePath) {
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color.Black.copy(alpha = 0.10f * alpha),
+                    Color.Black.copy(alpha = 0.04f * alpha),
+                    Color.Transparent
+                ),
+                center = position,
+                radius = coneLength
+            ),
+            radius = coneLength,
+            center = position
+        )
+    }
 
-    // Vertex circle (solid blue dot at user position)
+    // --- Cone fill with radial gradient fade ---
+    clipPath(conePath) {
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color(0xFF4285F4).copy(alpha = 0.42f * alpha),
+                    Color(0xFF4285F4).copy(alpha = 0.18f * alpha),
+                    Color(0xFF4285F4).copy(alpha = 0f)
+                ),
+                center = position,
+                radius = coneLength
+            ),
+            radius = coneLength,
+            center = position
+        )
+    }
+
+    // --- Shadow behind dot (radial gradient for soft glow) ---
+    val shadowRadius = dotRadius + borderWidth + shadowSpread * 3f
     drawCircle(
-        color = Color(0xFF4285F4).copy(alpha = alpha),
-        radius = vertexRadius,
+        brush = Brush.radialGradient(
+            colors = listOf(
+                Color.Black.copy(alpha = 0.35f * alpha),
+                Color.Black.copy(alpha = 0.15f * alpha),
+                Color.Transparent
+            ),
+            center = position,
+            radius = shadowRadius
+        ),
+        radius = shadowRadius,
         center = position
     )
 
-    // Outline
-    drawPath(
-        path = conePath,
-        color = Color(0xFF1E88E5).copy(alpha = alpha),
-        style = Stroke(width = 2f / scale)
+    // --- White border ring ---
+    drawCircle(
+        color = Color.White.copy(alpha = alpha),
+        radius = dotRadius + borderWidth,
+        center = position
+    )
+
+    // --- Solid blue dot ---
+    drawCircle(
+        color = Color(0xFF4285F4).copy(alpha = alpha),
+        radius = dotRadius,
+        center = position
     )
 }

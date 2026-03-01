@@ -116,8 +116,10 @@ class StepDetector(private val sensorManager: SensorManager) : SensorEventListen
             val timeSinceLastStep = currentTime - lastStepTime
             
             if (lastStepTime == 0L || timeSinceLastStep >= config.debounceMs) {
-                // Valid step detected
-                onStepDetected?.invoke(timeSinceLastStep)
+                // For the very first step, use a reasonable default interval (~2 steps/sec)
+                // instead of currentTime (which would be billions of ms and give cadence ≈ 0)
+                val effectiveInterval = if (lastStepTime == 0L) 500L else timeSinceLastStep
+                onStepDetected?.invoke(effectiveInterval)
                 lastStepTime = currentTime
             }
         }

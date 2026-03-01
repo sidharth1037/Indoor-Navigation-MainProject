@@ -158,9 +158,9 @@ fun DrawScope.drawStairwells(
             // Fraction along top->bottom (0 at top, 1 at bottom)
             val t = if (totalDist > 0f) (offset / totalDist) else 0f
 
-            // Draw the stair line. Stroke width varies from top (thick) to bottom (thin).
-            val topStroke = 3f
-            val bottomStroke = 1f
+            // Draw the stair line. Stroke width varies from top (thick) to bottom (thinner).
+            val topStroke = 3.5f
+            val bottomStroke = 1.5f
             val strokeWidthVar = max(0.5f, topStroke * (1f - t) + bottomStroke * t)
             drawLine(
                 color = Color.Black,
