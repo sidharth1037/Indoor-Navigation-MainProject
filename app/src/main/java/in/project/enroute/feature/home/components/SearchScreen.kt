@@ -38,14 +38,14 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-import `in`.project.enroute.feature.home.utils.searchMultiFloor
+import `in`.project.enroute.feature.home.utils.searchRooms
 import `in`.project.enroute.feature.home.utils.DestinationButton
 import `in`.project.enroute.feature.home.utils.SearchResult
 import `in`.project.enroute.data.model.Room
+import `in`.project.enroute.feature.floorplan.state.BuildingState
 
 /**
  * Full-screen search page showing an input box at the top.
@@ -53,15 +53,17 @@ import `in`.project.enroute.data.model.Room
  */
 @Composable
 fun SearchScreen(
+    buildingStates: Map<String, BuildingState>,
     onBack: () -> Unit,
-    onCenterView: (x: Float, y: Float, scale: Float) -> Unit = { _, _, _ -> },
+    onCenterView: (x: Float, y: Float, scale: Float, buildingId: String?) -> Unit = { _, _, _, _ -> },
     onRoomTap: (Room) -> Unit = { _ -> }
 ) {
     val query = remember { mutableStateOf("") }
     val searchResults = remember { mutableStateOf<List<SearchResult>>(emptyList()) }
+    // Tracks whether the search has completed for the current query
+    val hasSearched = remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
-    val context = LocalContext.current
     // Intercept system Back (gesture/button) and route it to the composable's back handler
     BackHandler(enabled = true) {
         focusManager.clearFocus()
@@ -69,14 +71,16 @@ fun SearchScreen(
     }
     
     // Track pending navigation to delay it until keyboard is hidden
-    val pendingNavigation = remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    // Stores (x, y, buildingId) for the target room
+    val pendingNavigation = remember { mutableStateOf<Triple<Float, Float, String?>?>(null) }
     
-    // Search across all available floors when query changes
-    LaunchedEffect(query.value) {
-        searchResults.value = searchMultiFloor(
-            context = context,
+    // Search across all loaded buildings when query changes
+    LaunchedEffect(query.value, buildingStates) {
+        searchResults.value = searchRooms(
+            buildingStates = buildingStates,
             query = query.value
         )
+        hasSearched.value = true
     }
 
     // Automatically focus the text field and show the keyboard when the screen is shown.
@@ -91,8 +95,8 @@ fun SearchScreen(
         if (pendingNavigation.value != null) {
             // Wait for keyboard hide animation (approximately 150ms)
             delay(150)
-            val (x, y) = pendingNavigation.value!!
-            onCenterView(x, y, 1.2f)
+            val (x, y, buildingId) = pendingNavigation.value!!
+            onCenterView(x, y, 1.2f, buildingId)
             onBack()
             pendingNavigation.value = null
         }
@@ -160,7 +164,10 @@ fun SearchScreen(
 
                             BasicTextField(
                                 value = query.value,
-                                onValueChange = { query.value = it },
+                                onValueChange = {
+                                    hasSearched.value = false
+                                    query.value = it
+                                },
                                 singleLine = true,
                                 textStyle = TextStyle(fontSize = 15.sp, color = MaterialTheme.colorScheme.onPrimaryContainer),
                                 cursorBrush = SolidColor(MaterialTheme.colorScheme.onBackground),
@@ -182,15 +189,16 @@ fun SearchScreen(
         }
 
         // Search results area
-        if (searchResults.value.isEmpty()) {
-            Column(
+        if (searchResults.value.isEmpty() && query.value.isNotBlank() && hasSearched.value) {
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(12.dp)
+                    .padding(top = 24.dp),
+                contentAlignment = Alignment.TopCenter
             ) {
                 Text("No results found", color = MaterialTheme.colorScheme.onBackground)
             }
-        } else {
+        } else if (searchResults.value.isNotEmpty()) {
             LazyColumn(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(0.dp)
@@ -204,10 +212,11 @@ fun SearchScreen(
                             // Hide keyboard immediately
                             focusManager.clearFocus()
                             // Schedule navigation after keyboard hide animation completes
-                            pendingNavigation.value = Pair(x, y)
+                            pendingNavigation.value = Triple(x, y, result.room.buildingId)
                         },
                         label = result.label,
                         roomNumber = result.roomNo,
+                        buildingName = result.buildingName,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

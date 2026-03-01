@@ -167,7 +167,7 @@ fun HomeScreen(
                 }
                 floorPlanViewModel.setCurrentFloor(it)
             },
-            onCenterView = { x, y, scale -> floorPlanViewModel.centerOnCoordinate(x, y, scale) },
+            onCenterView = { x, y, scale, buildingId -> floorPlanViewModel.centerOnCoordinate(x, y, scale, buildingId) },
             onRoomTap = { room ->
                 // Switch to the room's floor in the correct building
                 room.floorId?.let { fid ->
@@ -236,7 +236,7 @@ private fun HomeScreenContent(
     maxWidth: Dp,
     onCanvasStateChange: (CanvasState) -> Unit,
     onFloorChange: (Float) -> Unit,
-    onCenterView: (x: Float, y: Float, scale: Float) -> Unit,
+    onCenterView: (x: Float, y: Float, scale: Float, buildingId: String?) -> Unit,
     onRoomTap: (Room) -> Unit,
     onBackgroundTap: () -> Unit,
     onEnableTracking: (position: androidx.compose.ui.geometry.Offset, headingRadians: Float) -> Unit,
@@ -513,6 +513,7 @@ private fun HomeScreenContent(
                     exit = fadeOut(tween(500))
                 ) {
                     SearchScreen(
+                        buildingStates = uiState.buildingStates,
                         onBack = { 
                             showSearch = false 
                             isMorphingToSearch = false

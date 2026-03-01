@@ -948,13 +948,15 @@ class FloorPlanViewModel(
         x: Float,
         y: Float,
         scale: Float,
+        buildingId: String? = null,
         animationConfig: CenteringConfig = CenteringConfig()
     ) {
         viewModelScope.launch {
             val currentState = _uiState.value
 
-            // Use dominant building when available; otherwise fall back to any loaded building
-            val buildingState = currentState.dominantBuildingState
+            // Use the specified building if provided; otherwise fall back to dominant or first
+            val buildingState = (buildingId?.let { currentState.buildingStates[it] })
+                ?: currentState.dominantBuildingState
                 ?: currentState.buildingStates.values.firstOrNull()
                 ?: return@launch
 
