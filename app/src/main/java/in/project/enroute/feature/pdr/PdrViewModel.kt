@@ -5,8 +5,10 @@ import android.hardware.SensorManager
 import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import `in`.project.enroute.feature.pdr.correction.CampusBuilding
 import `in`.project.enroute.feature.pdr.correction.CorrectionConfig
 import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
+import `in`.project.enroute.feature.pdr.correction.StairPair
 import `in`.project.enroute.feature.pdr.data.model.PdrState
 import `in`.project.enroute.feature.pdr.data.model.StepDetectionConfig
 import `in`.project.enroute.feature.pdr.data.model.StrideConfig
@@ -109,6 +111,10 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
                         motionConfidence = event?.confidence ?: 0f
                     )
                 }
+                // Forward to repository for stairwell detection
+                if (event != null) {
+                    repository.onMotionLabel(event.classificationName, event.confidence)
+                }
             }
         }
     }
@@ -203,6 +209,29 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun updateCorrectionConfig(config: CorrectionConfig) {
         repository.updateCorrectionConfig(config)
+    }
+
+    /**
+     * Supplies pre-transformed campus building data for automatic
+     * building/floor detection during tracking.
+     */
+    fun loadBuildingData(campusBuildings: List<CampusBuilding>) {
+        repository.loadBuildingData(campusBuildings)
+    }
+
+    /**
+     * Supplies pre-computed stair pairs for stairwell transition detection.
+     */
+    fun loadStairPairs(pairs: List<StairPair>) {
+        repository.loadStairPairs(pairs)
+    }
+
+    /**
+     * Supplies constraint data for all floors so stairwell transitions
+     * can load destination floor data autonomously.
+     */
+    fun loadAllFloorConstraintData(data: Map<String, FloorConstraintData>) {
+        repository.loadAllFloorConstraintData(data)
     }
 
     /**

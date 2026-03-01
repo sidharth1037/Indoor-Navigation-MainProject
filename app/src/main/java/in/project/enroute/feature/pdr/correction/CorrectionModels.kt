@@ -46,8 +46,14 @@ data class WallConstraintResult(
 data class CampusEntrance(
     val id: Int,
     val position: Offset,
-    val name: String? = null
-)
+    val name: String? = null,
+    /** Stair position: "top", "bottom", or null for regular entrances. */
+    val stairs: String? = null,
+    /** The floor number this stair entrance connects to. */
+    val stairFloor: Float? = null
+) {
+    val isStairs: Boolean get() = stairs != null
+}
 
 /**
  * Result of attempting to snap a position to a nearby entrance.

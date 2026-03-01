@@ -16,7 +16,10 @@ import `in`.project.enroute.data.repository.FirebaseFloorPlanRepository
 import `in`.project.enroute.feature.floorplan.rendering.CanvasState
 import `in`.project.enroute.feature.floorplan.rendering.FloorPlanDisplayConfig
 import `in`.project.enroute.feature.floorplan.state.BuildingState
+import `in`.project.enroute.feature.pdr.correction.CampusBuilding
 import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
+import `in`.project.enroute.feature.pdr.correction.GeometryUtils
+import `in`.project.enroute.feature.pdr.correction.StairPair
 import `in`.project.enroute.feature.floorplan.utils.FollowingAnimator
 import `in`.project.enroute.feature.floorplan.utils.FollowingConfig
 import `in`.project.enroute.feature.floorplan.utils.CenteringConfig
@@ -767,6 +770,208 @@ class FloorPlanViewModel(
             )
         }
         return null
+    }
+
+    /**
+     * Builds a [List] of [CampusBuilding] from all loaded buildings.
+     * Each building's first-floor boundary polygons are transformed into
+     * campus-wide coordinates so the BuildingDetector can run point-in-polygon
+     * checks without needing to know about per-building transforms.
+     *
+     * Returns an empty list if no building data is loaded yet.
+     */
+    fun getCampusBuildings(): List<CampusBuilding> {
+        val state = _uiState.value
+        val result = mutableListOf<CampusBuilding>()
+
+        for ((_, buildingState) in state.buildingStates) {
+            val building = buildingState.building
+            // Use first floor (floor number 1) — for single-floor detection
+            val floorData = buildingState.floors[1f] ?: buildingState.currentFloorData ?: continue
+            if (floorData.boundaryPolygons.isEmpty()) continue
+
+            val meta = floorData.metadata
+            val scale = meta.scale
+            val rotRad = Math.toRadians(meta.rotation.toDouble()).toFloat()
+            val cosA = cos(rotRad)
+            val sinA = sin(rotRad)
+            val relX = building.relativePosition.x
+            val relY = building.relativePosition.y
+
+            val campusPolygons = floorData.boundaryPolygons.map { polygon ->
+                polygon.points.sortedBy { it.id }.map { p ->
+                    val px = p.x * scale
+                    val py = p.y * scale
+                    Pair(px * cosA - py * sinA + relX, px * sinA + py * cosA + relY)
+                }
+            }
+
+            val constraintData = FloorConstraintData(
+                floorPlanData = floorData,
+                scale = scale,
+                rotationDegrees = meta.rotation,
+                offsetX = relX,
+                offsetY = relY
+            )
+
+            result.add(
+                CampusBuilding(
+                    buildingId = building.buildingId,
+                    floorId = floorData.floorId,
+                    polygons = campusPolygons,
+                    constraintData = constraintData
+                )
+            )
+        }
+
+        return result
+    }
+
+    /**
+     * Builds a list of [StairPair]s from every loaded floor.
+     *
+     * For each floor, finds all "bottom" stair entrances (with `floor` ==
+     * that floor's number — meaning they START on that floor) and pairs each
+     * with the **nearest** "top" entrance (whose `floor` is higher, i.e. the
+     * destination).  For downstairs support, it also pairs each "top" entrance
+     * whose `floor` equals the current floor with the nearest "bottom" whose
+     * `floor` is lower.
+     *
+     * Both positions are transformed to campus-wide coordinates.
+     */
+    fun getStairPairs(): List<StairPair> {
+        val state = _uiState.value
+        val result = mutableListOf<StairPair>()
+
+        for ((_, buildingState) in state.buildingStates) {
+            val building = buildingState.building
+            val relX = building.relativePosition.x
+            val relY = building.relativePosition.y
+
+            for ((floorNumber, floorData) in buildingState.floors) {
+                val meta = floorData.metadata
+                val scale = meta.scale
+                val rotRad = Math.toRadians(meta.rotation.toDouble()).toFloat()
+                val cosA = cos(rotRad)
+                val sinA = sin(rotRad)
+
+                fun toCampus(x: Float, y: Float): Offset {
+                    val px = x * scale
+                    val py = y * scale
+                    return Offset(
+                        px * cosA - py * sinA + relX,
+                        px * sinA + py * cosA + relY
+                    )
+                }
+
+                val stairEntrances = floorData.entrances.filter { it.isStairs }
+
+                // ── Upstairs pairs: bottom(floor==current) → nearest top(floor>current)
+                val bottomsForUp = stairEntrances.filter {
+                    it.isStairsBottom && it.floor == floorNumber
+                }
+                val topsForUp = stairEntrances.filter {
+                    it.isStairsTop && it.floor != null && it.floor > floorNumber
+                }
+
+                for (bottom in bottomsForUp) {
+                    val bottomPos = toCampus(bottom.x, bottom.y)
+                    // Find nearest top entrance by floor-local distance
+                    val nearestTop = topsForUp.minByOrNull { top ->
+                        val dx = bottom.x - top.x
+                        val dy = bottom.y - top.y
+                        dx * dx + dy * dy
+                    } ?: continue
+                    val topPos = toCampus(nearestTop.x, nearestTop.y)
+
+                    // Resolve destination floor ID
+                    val destFloorNumber = nearestTop.floor ?: continue
+                    val destFloorData = buildingState.floors[destFloorNumber]
+                    val destFloorId = destFloorData?.floorId ?: "floor_${destFloorNumber.toInt()}"
+
+                    result.add(
+                        StairPair(
+                            bottomPosition = bottomPos,
+                            topPosition = topPos,
+                            bottomFloorId = floorData.floorId,
+                            topFloorId = destFloorId,
+                            bottomFloorNumber = floorNumber,
+                            topFloorNumber = destFloorNumber
+                        )
+                    )
+                }
+
+                // ── Downstairs pairs: top(floor==current) → nearest bottom(floor<current)
+                val topsForDown = stairEntrances.filter {
+                    it.isStairsTop && it.floor == floorNumber
+                }
+                val bottomsForDown = stairEntrances.filter {
+                    it.isStairsBottom && it.floor != null && it.floor < floorNumber
+                }
+
+                for (top in topsForDown) {
+                    val topPos = toCampus(top.x, top.y)
+                    val nearestBottom = bottomsForDown.minByOrNull { bot ->
+                        val dx = top.x - bot.x
+                        val dy = top.y - bot.y
+                        dx * dx + dy * dy
+                    } ?: continue
+                    val bottomPos = toCampus(nearestBottom.x, nearestBottom.y)
+
+                    val destFloorNumber = nearestBottom.floor ?: continue
+                    val destFloorData = buildingState.floors[destFloorNumber]
+                    val destFloorId = destFloorData?.floorId ?: "floor_${destFloorNumber.toInt()}"
+
+                    // Only add if this pair wasn't already created from the other side
+                    val alreadyExists = result.any { pair ->
+                        pair.bottomFloorId == destFloorId &&
+                                pair.topFloorId == floorData.floorId &&
+                                GeometryUtils.distance(pair.bottomPosition, bottomPos) < 5f &&
+                                GeometryUtils.distance(pair.topPosition, topPos) < 5f
+                    }
+                    if (!alreadyExists) {
+                        result.add(
+                            StairPair(
+                                bottomPosition = bottomPos,
+                                topPosition = topPos,
+                                bottomFloorId = destFloorId,
+                                topFloorId = floorData.floorId,
+                                bottomFloorNumber = destFloorNumber,
+                                topFloorNumber = floorNumber
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Returns [FloorConstraintData] for every loaded floor, keyed by floor ID.
+     * Allows the PDR stairwell transition to load destination floor data
+     * without going through the ViewModel.
+     */
+    fun getAllFloorConstraintData(): Map<String, FloorConstraintData> {
+        val state = _uiState.value
+        val result = mutableMapOf<String, FloorConstraintData>()
+
+        for ((_, buildingState) in state.buildingStates) {
+            val building = buildingState.building
+            for ((_, floorData) in buildingState.floors) {
+                val meta = floorData.metadata
+                result[floorData.floorId] = FloorConstraintData(
+                    floorPlanData = floorData,
+                    scale = meta.scale,
+                    rotationDegrees = meta.rotation,
+                    offsetX = building.relativePosition.x,
+                    offsetY = building.relativePosition.y
+                )
+            }
+        }
+
+        return result
     }
 
     /**

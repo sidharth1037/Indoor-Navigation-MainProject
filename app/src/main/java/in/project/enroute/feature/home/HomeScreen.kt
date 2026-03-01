@@ -88,6 +88,32 @@ fun HomeScreen(
         }
     }
 
+    // Supply building boundary data to PdrViewModel for automatic building detection
+    LaunchedEffect(uiState.buildingStates) {
+        if (uiState.buildingStates.isNotEmpty()) {
+            val campusBuildings = floorPlanViewModel.getCampusBuildings()
+            if (campusBuildings.isNotEmpty()) {
+                pdrViewModel.loadBuildingData(campusBuildings)
+            }
+
+            // Supply stair pairs and all floor constraint data
+            val stairPairs = floorPlanViewModel.getStairPairs()
+            pdrViewModel.loadStairPairs(stairPairs)
+
+            val allFloorData = floorPlanViewModel.getAllFloorConstraintData()
+            pdrViewModel.loadAllFloorConstraintData(allFloorData)
+        }
+    }
+
+    // Auto-switch visible floor when PDR detects a floor change (stairwell transition).
+    // Only switch the map if following mode is active — otherwise just update internal state.
+    val pdrCurrentFloor = pdrUiState.pdrState.currentFloor
+    LaunchedEffect(pdrCurrentFloor) {
+        if (pdrCurrentFloor != null && uiState.isFollowingMode) {
+            floorPlanViewModel.switchToFloorById(pdrCurrentFloor)
+        }
+    }
+
     // Keep screen on when PDR tracking is active
     DisposableEffect(pdrUiState.pdrState.isTracking) {
         if (pdrUiState.pdrState.isTracking) {
@@ -141,6 +167,15 @@ fun HomeScreen(
                 } else {
                     uiState.canvasState
                 }
+            }
+        }
+
+        // Keep dominant building and floor slider in sync during following mode.
+        // The effective canvas state is computed inline (not stored in ViewModel),
+        // so the ViewModel doesn't know the viewport changed. Feed it back here.
+        LaunchedEffect(effectiveCanvasState) {
+            if (uiState.isFollowingMode && !uiState.isFollowingAnimating) {
+                floorPlanViewModel.updateCanvasState(effectiveCanvasState, isFromGesture = false)
             }
         }
 
@@ -358,6 +393,8 @@ private fun HomeScreenContent(
                         canvasState = effectiveCanvasState,
                         isOnCurrentFloor = pdrUiState.pdrState.currentFloor == null ||
                                 pdrUiState.pdrState.currentFloor == uiState.currentFloorId,
+                        isOnStairs = pdrUiState.pdrState.isOnStairs,
+                        currentPosition = pdrUiState.pdrState.currentPosition,
                         modifier = Modifier.fillMaxSize()
                     )
                 }

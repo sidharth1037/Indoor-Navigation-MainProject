@@ -46,7 +46,13 @@ class FloorConstraintProvider {
 
         campusEntrances = floorPlanData.entrances.map { entrance ->
             val (cx, cy) = rawToCampus(entrance.x, entrance.y, scale, rotationDegrees, offsetX, offsetY)
-            CampusEntrance(id = entrance.id, position = Offset(cx, cy), name = entrance.name)
+            CampusEntrance(
+                id = entrance.id,
+                position = Offset(cx, cy),
+                name = entrance.name,
+                stairs = entrance.stairs,
+                stairFloor = entrance.floor
+            )
         }
     }
 
@@ -86,6 +92,10 @@ class FloorConstraintProvider {
 
     /** Unfiltered list of all campus-coordinate entrances. */
     fun getAllEntrances(): List<CampusEntrance> = campusEntrances
+
+    /** All stair entrances ("top" or "bottom") on the loaded floor. */
+    fun getStairEntrances(): List<CampusEntrance> =
+        campusEntrances.filter { it.isStairs }
 
     /** `true` after [loadFloor] has been called with non-empty wall data. */
     fun isLoaded(): Boolean = campusWalls.isNotEmpty()

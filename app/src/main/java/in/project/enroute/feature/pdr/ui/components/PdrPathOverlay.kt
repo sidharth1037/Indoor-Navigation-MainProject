@@ -41,7 +41,11 @@ fun PdrPathOverlay(
     currentHeading: Float,
     canvasState: CanvasState,
     modifier: Modifier = Modifier,
-    isOnCurrentFloor: Boolean = true
+    isOnCurrentFloor: Boolean = true,
+    /** When `true` the user is on stairs — footsteps are hidden, only the blue dot moves. */
+    isOnStairs: Boolean = false,
+    /** Live position for the direction cone. Falls back to path.last() when null. */
+    currentPosition: Offset? = null
 ) {
     if (path.isEmpty()) return
 
@@ -83,6 +87,8 @@ fun PdrPathOverlay(
             val floorAlphaMultiplier = if (isOnCurrentFloor) 1f else 0.25f
 
             // Draw footstep icons at each path point with variable opacity
+            // Suppressed while on stairs — only the blue dot is shown.
+            if (!isOnStairs) {
             displayPath.forEachIndexed { index, pathPoint ->
                 val isRightFoot = (path.size - 1 - displayPath.size + index) % 2 == 0
                 val point = pathPoint.position
@@ -123,6 +129,7 @@ fun PdrPathOverlay(
                     }
                 }
             }
+            } // end if (!isOnStairs)
             
             // Original red dot drawing (commented out)
             /*
@@ -135,10 +142,10 @@ fun PdrPathOverlay(
             }
             */
 
-            // Draw direction cone at the last point
-            val lastPathPoint = path.last()
+            // Draw direction cone at the live position (animated during stairs)
+            val conePosition = currentPosition ?: path.last().position
             drawDirectionCone(
-                position = lastPathPoint.position,
+                position = conePosition,
                 heading = currentHeading,
                 scale = canvasState.scale,
                 alpha = floorAlphaMultiplier

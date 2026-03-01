@@ -1,10 +1,17 @@
 package `in`.project.enroute.feature.pdr.data.repository
 
+import android.util.Log
 import androidx.compose.ui.geometry.Offset
 import `in`.project.enroute.feature.pdr.correction.CorrectionConfig
 import `in`.project.enroute.feature.pdr.correction.FloorConstraintProvider
 import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
+import `in`.project.enroute.feature.pdr.correction.BuildingDetector
+import `in`.project.enroute.feature.pdr.correction.CampusBuilding
 import `in`.project.enroute.feature.pdr.correction.StepCorrectionEngine
+import `in`.project.enroute.feature.pdr.correction.StairClimbingState
+import `in`.project.enroute.feature.pdr.correction.StairPair
+import `in`.project.enroute.feature.pdr.correction.StairwellTransitionAnimator
+import `in`.project.enroute.feature.pdr.correction.StairwellTransitionDetector
 import `in`.project.enroute.feature.pdr.data.model.CadenceState
 import `in`.project.enroute.feature.pdr.data.model.PathPoint
 import `in`.project.enroute.feature.pdr.data.model.PdrState
@@ -42,6 +49,17 @@ class PdrRepository {
     private var correctionEngine: StepCorrectionEngine? = null
     private var correctionConfig = CorrectionConfig()
 
+    // ── Building / floor detection ─────────────────────────────────────
+    private val buildingDetector = BuildingDetector()
+
+    // ── Stairwell transition ────────────────────────────────────────────
+    private val stairDetector = StairwellTransitionDetector()
+    private val stairAnimator = StairwellTransitionAnimator()
+    private var stairPairs: List<StairPair> = emptyList()
+    private var allFloorConstraintData: Map<String, FloorConstraintData> = emptyMap()
+    private var lastMotionLabel: String? = null
+    private var currentFloorNumber: Float = 1f
+
     /**
      * The overall PDR tracking state (path, origin, cadence, etc.).
      * Does NOT include heading — see [heading] for that.
@@ -72,25 +90,59 @@ class PdrRepository {
     // ── Floor constraints ───────────────────────────────────────────────
 
     /**
-     * Loads wall/entrance data for the current floor and creates the
+     * Loads wall/entrance data for the current floor and (re)creates the
      * correction engine.  Can be called before or after [setOrigin].
+     *
+     * When called **mid-tracking** (building transition) the existing
+     * engine's buffer is flushed so pending steps are committed with the
+     * old constraints, then the constraint provider is hot-swapped.  The
+     * engine keeps its committed path and current anchor — no position jump.
      */
     fun setFloorConstraints(data: FloorConstraintData) {
-        constraintProvider.loadFloor(
-            data.floorPlanData,
-            data.scale,
-            data.rotationDegrees,
-            data.offsetX,
-            data.offsetY
-        )
-        correctionEngine = StepCorrectionEngine(
-            config = correctionConfig,
-            constraintProvider = constraintProvider
-        )
-        // If already tracking, initialise the engine with the current origin.
-        val state = _pdrState.value
-        if (state.isTracking && state.origin != null) {
-            correctionEngine?.setOrigin(state.origin, _heading.value)
+        val existingEngine = correctionEngine
+
+        if (existingEngine != null && _pdrState.value.isTracking) {
+            // ── Mid-tracking transition: flush buffer, reload walls ──────
+            val flushed = existingEngine.flush()
+            if (flushed.isNotEmpty()) {
+                // Update the visual path so the flush isn't lost
+                val currentState = _pdrState.value
+                _pdrState.value = currentState.copy(
+                    path = existingEngine.visualPath,
+                    currentPosition = flushed.last().position
+                )
+            }
+            // Hot-swap the underlying wall/entrance data.
+            // The engine already holds a reference to constraintProvider,
+            // so future steps will use the new geometry automatically.
+            constraintProvider.loadFloor(
+                data.floorPlanData,
+                data.scale,
+                data.rotationDegrees,
+                data.offsetX,
+                data.offsetY
+            )
+        } else {
+            // ── First-time setup (before tracking or no engine yet) ─────
+            constraintProvider.loadFloor(
+                data.floorPlanData,
+                data.scale,
+                data.rotationDegrees,
+                data.offsetX,
+                data.offsetY
+            )
+            correctionEngine = StepCorrectionEngine(
+                config = correctionConfig,
+                constraintProvider = constraintProvider
+            )
+            // If already tracking, initialise the engine with the current position.
+            val state = _pdrState.value
+            if (state.isTracking) {
+                val anchor = state.currentPosition ?: state.origin ?: return
+                correctionEngine?.setOrigin(anchor, _heading.value)
+                // Seed the engine's committed path with the existing path
+                // so we don't lose history.
+            }
         }
     }
 
@@ -100,6 +152,39 @@ class PdrRepository {
     fun updateCorrectionConfig(config: CorrectionConfig) {
         correctionConfig = config
         correctionEngine?.updateConfig(config)
+    }
+
+    /**
+     * Loads pre-transformed campus building boundary data for
+     * automatic building/floor detection during tracking.
+     */
+    fun loadBuildingData(campusBuildings: List<CampusBuilding>) {
+        buildingDetector.loadBuildings(campusBuildings)
+    }
+
+    /**
+     * Supplies pre-computed stair pairs for the entire campus.
+     * Called once from HomeScreen when building data loads.
+     */
+    fun loadStairPairs(pairs: List<StairPair>) {
+        stairPairs = pairs
+    }
+
+    /**
+     * Supplies constraint data for ALL floors so the stairwell transition
+     * can load the destination floor's walls/entrances autonomously.
+     */
+    fun loadAllFloorConstraintData(data: Map<String, FloorConstraintData>) {
+        allFloorConstraintData = data
+    }
+
+    /**
+     * Called by PdrViewModel whenever a new ML motion classification arrives.
+     * Feeds the stairwell transition detector.
+     */
+    fun onMotionLabel(label: String, confidence: Float) {
+        lastMotionLabel = label
+        stairDetector.onMotionLabel(label, confidence)
     }
 
     /**
@@ -118,6 +203,15 @@ class PdrRepository {
         // Initialise correction engine if floor data is already loaded.
         correctionEngine?.setOrigin(origin, _heading.value)
 
+        // Reset stairwell transition state
+        stairDetector.reset()
+        stairAnimator.reset()
+        lastMotionLabel = null
+        // Derive floor number from floor ID (e.g. "floor_1" → 1f)
+        currentFloorNumber = currentFloor?.removePrefix("floor_")?.toFloatOrNull() ?: 1f
+
+        buildingDetector.setInitial(null, currentFloor)
+
         // Origin point with initial heading
         val originPoint = PathPoint(position = origin, heading = _heading.value)
         val path = listOf(originPoint)
@@ -128,7 +222,8 @@ class PdrRepository {
             currentPosition = origin,
             path = path,
             cadenceState = CadenceState(),
-            currentFloor = currentFloor
+            currentFloor = currentFloor ?: buildingDetector.currentFloorId,
+            currentBuilding = buildingDetector.currentBuildingId
         )
     }
 
@@ -136,16 +231,86 @@ class PdrRepository {
      * Processes a detected step and calculates the new position.
      * Only works if tracking is active (origin has been set).
      *
+     * Handles three modes:
+     * - **IDLE**: Normal PDR (correction engine or fallback).
+     *   Also checks whether the user is entering a stairwell.
+     * - **CLIMBING**: Steps advance the stairwell animation instead of XY
+     *   position. No footstep markers are emitted.
+     * - **ARRIVED**: Finalises the floor transition (loads new constraints,
+     *   resets the correction engine, resumes normal PDR).
+     *
      * @param stepIntervalMs Time since last step in milliseconds
      * @param heading Current heading in radians
      * @return The new position, or null if not tracking
      */
     fun processStep(stepIntervalMs: Long, heading: Float): Offset? {
-        val currentState = _pdrState.value
+        var currentState = _pdrState.value
         if (!currentState.isTracking || currentState.origin == null) {
             return null
         }
 
+        // ── Handle ARRIVED left over from a previous step ───────────────
+        if (stairAnimator.state == StairClimbingState.ARRIVED) {
+            finaliseStairTransition()
+            currentState = _pdrState.value
+        }
+
+        // ── Handle CANCELLED (turnaround) left over from a previous step
+        if (stairAnimator.state == StairClimbingState.CANCELLED) {
+            cancelStairTransition()
+            currentState = _pdrState.value
+        }
+
+        // ── Handle CLIMBING → advance animation ─────────────────────────
+        if (stairAnimator.state == StairClimbingState.CLIMBING) {
+            processStairStep(heading, currentState)
+
+            // If the step just triggered arrival (walking / 100%),
+            // finalise immediately and replay this step as a normal PDR
+            // footstep on the new floor so the turn produces a footprint.
+            if (stairAnimator.state == StairClimbingState.ARRIVED) {
+                finaliseStairTransition()
+                currentState = _pdrState.value
+                return processNormalStep(stepIntervalMs, heading, currentState)
+            }
+
+            // Turnaround detected → enters RETURNING; the dot will
+            // animate back in subsequent steps (handled below).
+            if (stairAnimator.state == StairClimbingState.RETURNING) {
+                return processReturnStep(currentState)
+            }
+
+            return stairAnimator.currentPosition
+        }
+
+        // ── Handle RETURNING → reverse animation back to origin ──────────
+        if (stairAnimator.state == StairClimbingState.RETURNING) {
+            val pos = processReturnStep(currentState)
+
+            // If the return animation just finished (→ CANCELLED),
+            // restore origin floor and replay this step normally.
+            if (stairAnimator.state == StairClimbingState.CANCELLED) {
+                cancelStairTransition()
+                currentState = _pdrState.value
+                return processNormalStep(stepIntervalMs, heading, currentState)
+            }
+
+            return pos
+        }
+
+        // ── Normal IDLE processing ──────────────────────────────────────
+        return processNormalStep(stepIntervalMs, heading, currentState)
+    }
+
+    /**
+     * Normal PDR step processing (IDLE state).
+     * After computing the new position, checks if the user is entering a stairwell.
+     */
+    private fun processNormalStep(
+        stepIntervalMs: Long,
+        heading: Float,
+        currentState: PdrState
+    ): Offset? {
         // Calculate cadence (steps per second)
         val cadence = if (stepIntervalMs > 0) 1000f / stepIntervalMs else 0f
 
@@ -193,11 +358,17 @@ class PdrRepository {
             // Use the engine's visual path (committed + buffered) so every
             // step shows immediately.  When correction fires the committed
             // tail shifts and the buffer is rebased → footsteps adjust.
+            val buildingResult = runBuildingDetection(result.correctedCurrentPosition, currentState)
             _pdrState.value = currentState.copy(
                 currentPosition = result.correctedCurrentPosition,
                 path = engine.visualPath,
-                cadenceState = cadenceState
+                cadenceState = cadenceState,
+                currentFloor = buildingResult?.first ?: currentState.currentFloor,
+                currentBuilding = buildingResult?.second ?: currentState.currentBuilding
             )
+
+            // ── Check for stairwell entry ───────────────────────────────
+            checkAndStartStairTransition(result.correctedCurrentPosition, heading)
 
             return result.correctedCurrentPosition
         }
@@ -232,13 +403,230 @@ class PdrRepository {
         )
 
         // Update PDR state (heading is stored separately)
+        val buildingResult = runBuildingDetection(newPosition, currentState)
         _pdrState.value = currentState.copy(
             currentPosition = newPosition,
             path = updatedPath,
-            cadenceState = cadenceState
+            cadenceState = cadenceState,
+            currentFloor = buildingResult?.first ?: currentState.currentFloor,
+            currentBuilding = buildingResult?.second ?: currentState.currentBuilding
         )
 
+        // ── Check for stairwell entry ───────────────────────────────────
+        checkAndStartStairTransition(newPosition, heading)
+
         return newPosition
+    }
+
+    /**
+     * Processes a step while the user is on stairs (CLIMBING state).
+     * The dot slides along the stairwell; no footstep is emitted.
+     * The floor plan stays on the origin floor during the animation.
+     */
+    private fun processStairStep(heading: Float, currentState: PdrState) {
+        val pos = stairAnimator.advanceStep(heading, lastMotionLabel)
+
+        // Sync internal trackers
+        currentX = pos.x
+        currentY = pos.y
+
+        // Don't switch floor during animation — stays on the origin floor.
+        // The floor switch happens in finaliseStairTransition() when ARRIVED.
+        _pdrState.value = currentState.copy(
+            currentPosition = pos,
+            isOnStairs = true,
+            stairTransitionProgress = stairAnimator.progress,
+            stairDestinationFloor = stairAnimator.activeEvent?.destinationFloorId
+        )
+    }
+
+    /**
+     * Processes a step while the user is RETURNING (reverse animation back
+     * to the origin floor).  Similar to [processStairStep] but uses
+     * [StairwellTransitionAnimator.advanceReturnStep] which decrements
+     * progress.
+     */
+    private fun processReturnStep(currentState: PdrState): Offset {
+        val pos = stairAnimator.advanceReturnStep(lastMotionLabel)
+
+        // Sync internal trackers
+        currentX = pos.x
+        currentY = pos.y
+
+        _pdrState.value = currentState.copy(
+            currentPosition = pos,
+            isOnStairs = true,
+            stairTransitionProgress = stairAnimator.progress,
+            stairDestinationFloor = stairAnimator.activeEvent?.destinationFloorId
+        )
+
+        return pos
+    }
+
+    /**
+     * Checks proximity/heading/ML conditions and triggers a stairwell
+     * transition if met.
+     */
+    private fun checkAndStartStairTransition(position: Offset, heading: Float) {
+        if (stairPairs.isEmpty()) return
+        if (stairAnimator.state != StairClimbingState.IDLE) return
+
+        val event = stairDetector.checkTransition(
+            position = position,
+            heading = heading,
+            stairPairs = stairPairs,
+            currentFloorNumber = currentFloorNumber
+        ) ?: return
+
+        // Transition confirmed — start the animation
+        stairAnimator.startTransition(event, heading)
+        stairDetector.reset() // prevent re-triggering
+
+        // Flush the correction engine buffer before entering stairs
+        correctionEngine?.flush()
+
+        val currentState = _pdrState.value
+        _pdrState.value = currentState.copy(
+            isOnStairs = true,
+            stairTransitionProgress = 0f,
+            stairDestinationFloor = event.destinationFloorId
+        )
+    }
+
+    /**
+     * Called when the animator reaches ARRIVED.  Loads the destination
+     * floor's constraint data, resets the correction engine, and resumes
+     * normal PDR from the stairwell endpoint.
+     *
+     * Uses StairTransitionEvent.endPosition directly as the arrival
+     * position.  This is the campus-coordinate endpoint of the StairPair,
+     * which matches the stairwell shaft location on the destination floor.
+     */
+    private fun finaliseStairTransition() {
+        val event = stairAnimator.activeEvent ?: run {
+            stairAnimator.finalize()
+            return
+        }
+
+        val destinationFloorId = event.destinationFloorId
+        // Use the StairPair endpoint — already in campus coordinates and
+        // known to be at the correct stairwell location.
+        val arrivalPosition = event.endPosition
+
+        // Update floor number
+        currentFloorNumber = destinationFloorId
+            .removePrefix("floor_").toFloatOrNull() ?: currentFloorNumber
+
+        // Load destination floor constraints if available
+        val destConstraints = allFloorConstraintData[destinationFloorId]
+        if (destConstraints != null) {
+            constraintProvider.loadFloor(
+                destConstraints.floorPlanData,
+                destConstraints.scale,
+                destConstraints.rotationDegrees,
+                destConstraints.offsetX,
+                destConstraints.offsetY
+            )
+            correctionEngine = StepCorrectionEngine(
+                config = correctionConfig,
+                constraintProvider = constraintProvider
+            )
+            correctionEngine?.setOrigin(arrivalPosition, _heading.value)
+        }
+
+        // Sync internal position
+        currentX = arrivalPosition.x
+        currentY = arrivalPosition.y
+
+        // Clear stair state, set new floor, and start a fresh path from
+        // the arrival point so old-floor footsteps are dropped.
+        val arrivalPoint = PathPoint(position = arrivalPosition, heading = _heading.value)
+        val currentState = _pdrState.value
+        _pdrState.value = currentState.copy(
+            currentPosition = arrivalPosition,
+            path = listOf(arrivalPoint),
+            isOnStairs = false,
+            stairTransitionProgress = 0f,
+            stairDestinationFloor = null,
+            stairBottomPosition = null,
+            stairTopPosition = null,
+            currentFloor = destinationFloorId
+        )
+
+        // Sync building detector so it doesn't detect a floor "change" on
+        // the next step and re-load the old floor's constraints.
+        buildingDetector.setInitial(
+            buildingDetector.currentBuildingId,
+            destinationFloorId
+        )
+
+        stairAnimator.finalize()
+    }
+
+    /**
+     * Called when the animator is CANCELLED (turnaround detected).
+     * Snaps the user back to the stairwell entry on the **origin** floor,
+     * restores the origin floor's correction engine, and resumes normal PDR.
+     * No floor change occurs.
+     */
+    private fun cancelStairTransition() {
+        val event = stairAnimator.activeEvent ?: run {
+            stairAnimator.finalize()
+            return
+        }
+
+        val originFloorId = event.originFloorId
+        val returnPosition = event.startPosition
+
+        Log.d("PdrRepo", "cancelStairTransition: returning to $originFloorId " +
+                "at (${returnPosition.x}, ${returnPosition.y})")
+
+        // Restore origin floor number
+        currentFloorNumber = originFloorId
+            .removePrefix("floor_").toFloatOrNull() ?: currentFloorNumber
+
+        // Reload origin floor constraints (they may have been flushed before
+        // entering stairs, but the correction engine is still for this floor)
+        val originConstraints = allFloorConstraintData[originFloorId]
+        if (originConstraints != null) {
+            constraintProvider.loadFloor(
+                originConstraints.floorPlanData,
+                originConstraints.scale,
+                originConstraints.rotationDegrees,
+                originConstraints.offsetX,
+                originConstraints.offsetY
+            )
+            correctionEngine = StepCorrectionEngine(
+                config = correctionConfig,
+                constraintProvider = constraintProvider
+            )
+            correctionEngine?.setOrigin(returnPosition, _heading.value)
+        }
+
+        // Sync internal position
+        currentX = returnPosition.x
+        currentY = returnPosition.y
+
+        // Clear stair state, stay on the origin floor, restart the path
+        // from the return position.
+        val returnPoint = PathPoint(position = returnPosition, heading = _heading.value)
+        val currentState = _pdrState.value
+        _pdrState.value = currentState.copy(
+            currentPosition = returnPosition,
+            path = listOf(returnPoint),
+            isOnStairs = false,
+            stairTransitionProgress = 0f,
+            stairDestinationFloor = null,
+            stairBottomPosition = null,
+            stairTopPosition = null,
+            currentFloor = originFloorId
+        )
+
+        stairAnimator.finalize()
+
+        // Re-arm the stair detector so the user can attempt the stairwell
+        // again if they change their mind.
+        stairDetector.reset()
     }
 
     /**
@@ -262,17 +650,64 @@ class PdrRepository {
         // Reset correction engine (discard buffer without flushing)
         correctionEngine?.reset()
 
+        // Reset building detection (but keep loaded building data)
+        buildingDetector.setInitial(null, null)
+
+        // Reset stairwell transition
+        stairDetector.reset()
+        stairAnimator.reset()
+        lastMotionLabel = null
+        currentFloorNumber = 1f
+
         _pdrState.value = PdrState(
             isTracking = false,
             origin = null,
             currentPosition = null,
             path = emptyList(),
             cadenceState = CadenceState(),
-            currentFloor = null
+            currentFloor = null,
+            currentBuilding = null
         )
         _heading.value = 0f
 
         _stepEvents.value = null
+    }
+
+    /**
+     * Runs building boundary detection on the given position.
+     *
+     * Only applies floor-constraint swaps when the **building** itself
+     * changed (entered/exited).  The building detector only stores one
+     * floor per building (the initial floor), so a floor change from a
+     * stairwell transition should NOT cause it to reload old constraints.
+     *
+     * @return A [Pair] of (floorId, buildingId) if a change was detected,
+     *         or `null` if unchanged or building data is not loaded.
+     */
+    private fun runBuildingDetection(position: Offset, currentState: PdrState): Pair<String?, String?>? {
+        if (!buildingDetector.isLoaded()) return null
+
+        val previousBuildingId = buildingDetector.currentBuildingId
+        val result = buildingDetector.detect(position)
+        if (!result.changed) return null
+
+        // Only swap wall constraints when the user moves between buildings
+        // (or enters/exits a building).  Within the same building, stairwell
+        // transitions handle floor switching independently.
+        val buildingChanged = result.buildingId != previousBuildingId
+        if (buildingChanged && result.newConstraintData != null) {
+            setFloorConstraints(result.newConstraintData)
+        }
+
+        // Return the floor/building update.  If the building didn't change
+        // (only the detector's internal floor tracking drifted), keep the
+        // current floor from pdrState — don't let the detector downgrade it.
+        return if (buildingChanged) {
+            Pair(result.floorId, result.buildingId)
+        } else {
+            // Same building — only report building ID, keep current floor
+            Pair(currentState.currentFloor, result.buildingId)
+        }
     }
 
     /**

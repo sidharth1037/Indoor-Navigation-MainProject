@@ -99,6 +99,19 @@ data class PdrState(
     val currentPosition: Offset? = null,
     val path: List<PathPoint> = emptyList(),
     val cadenceState: CadenceState = CadenceState(),
-    /** The floor the user is currently on (e.g. "floor_1"). Used for multi-floor navigation. */
-    val currentFloor: String? = null
+    /** The floor the user is currently on (e.g. "floor_1"), or null if outdoors. */
+    val currentFloor: String? = null,
+    /** The building the user is currently inside (e.g. "main_block"), or null if outdoors. */
+    val currentBuilding: String? = null,
+    // ── Stairwell transition state ──────────────────────────────────────
+    /** True while the user is climbing/descending stairs. */
+    val isOnStairs: Boolean = false,
+    /** 0..1 progress through the stairwell animation. */
+    val stairTransitionProgress: Float = 0f,
+    /** "floor_1" → "floor_2" — the floor the user is heading toward (null when not on stairs). */
+    val stairDestinationFloor: String? = null,
+    /** Campus-wide position of the bottom entrance (for rendering). */
+    val stairBottomPosition: Offset? = null,
+    /** Campus-wide position of the top entrance (for rendering). */
+    val stairTopPosition: Offset? = null
 )
