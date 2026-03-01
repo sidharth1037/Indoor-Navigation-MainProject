@@ -20,6 +20,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -31,6 +32,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import `in`.project.enroute.core.navigation.NavigationGraph
 import `in`.project.enroute.core.navigation.Screen
+import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import `in`.project.enroute.ui.theme.EnrouteTheme
 
 class MainActivity : ComponentActivity() {
@@ -52,6 +54,9 @@ fun MainScreen() {
     val currentDestination = navBackStackEntry?.destination
     val currentRoute = currentDestination?.route
 
+    // Observe admin auth state reactively
+    val isAdminLoggedIn by AdminAuthRepository.isLoggedIn.collectAsState()
+
     // Home tab is selected when on Welcome OR Home (they're the same tab conceptually)
     val isHomeTabSelected = currentRoute == Screen.Welcome.route ||
             currentRoute?.startsWith("home/") == true
@@ -69,9 +74,6 @@ fun MainScreen() {
                         label = { Text("Home", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
                         selected = isHomeTabSelected,
                         onClick = {
-                            // Navigate to Welcome (the tab root).
-                            // If Home is on top of Welcome, restoreState brings it back.
-                            // If user pressed back from Home, only Welcome is restored.
                             navController.navigate(Screen.Welcome.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
                                     saveState = true
@@ -95,20 +97,22 @@ fun MainScreen() {
                             }
                         }
                     )
-                    NavigationBarItem(
-                        icon = { Icon(Icons.Default.AdminPanelSettings, contentDescription = "Admin") },
-                        label = { Text("Admin", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
-                        selected = currentDestination?.hierarchy?.any { it.route == Screen.Admin.route } == true,
-                        onClick = {
-                            navController.navigate(Screen.Admin.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
+                    if (isAdminLoggedIn) {
+                        NavigationBarItem(
+                            icon = { Icon(Icons.Default.AdminPanelSettings, contentDescription = "Admin") },
+                            label = { Text("Admin", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
+                            selected = currentDestination?.hierarchy?.any { it.route == Screen.Admin.route } == true,
+                            onClick = {
+                                navController.navigate(Screen.Admin.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
                                 }
-                                launchSingleTop = true
-                                restoreState = true
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }

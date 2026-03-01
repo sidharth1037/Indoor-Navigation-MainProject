@@ -9,6 +9,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import `in`.project.enroute.feature.admin.AdminScreen
+import `in`.project.enroute.feature.admin.auth.AdminLoginScreen
 import `in`.project.enroute.feature.floorplan.FloorPlanViewModel
 import `in`.project.enroute.feature.home.HomeScreen
 import `in`.project.enroute.feature.navigation.NavigationViewModel
@@ -22,6 +23,7 @@ sealed class Screen(val route: String) {
         fun createRoute(campusId: String) = "home/$campusId"
     }
     data object Settings : Screen("settings")
+    data object AdminLogin : Screen("admin_login")
     data object Admin : Screen("admin")
 }
 
@@ -62,7 +64,21 @@ fun NavigationGraph(
             )
         }
         composable(Screen.Settings.route) {
-            SettingsScreen()
+            SettingsScreen(
+                onAdminLogin = {
+                    navController.navigate(Screen.AdminLogin.route)
+                }
+            )
+        }
+        composable(Screen.AdminLogin.route) {
+            AdminLoginScreen(
+                onLoginSuccess = {
+                    navController.popBackStack()
+                },
+                onBack = {
+                    navController.popBackStack()
+                }
+            )
         }
         composable(Screen.Admin.route) {
             AdminScreen()

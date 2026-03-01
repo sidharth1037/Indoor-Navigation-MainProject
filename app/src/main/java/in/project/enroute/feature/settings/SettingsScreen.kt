@@ -1,13 +1,17 @@
 package `in`.project.enroute.feature.settings
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -20,13 +24,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import `in`.project.enroute.feature.settings.components.HeightSettingItem
 
 @Composable
 fun SettingsScreen(
-    viewModel: SettingsViewModel = viewModel()
+    viewModel: SettingsViewModel = viewModel(),
+    onAdminLogin: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val isAdminLoggedIn by AdminAuthRepository.isLoggedIn.collectAsState()
     
     Column(
         modifier = Modifier
@@ -82,6 +89,34 @@ fun SettingsScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp)
         )
+
+        Spacer(Modifier.height(24.dp))
+
+        // Admin login / logout section
+        if (isAdminLoggedIn) {
+            Text(
+                text = "Signed in as ${AdminAuthRepository.currentUser?.email ?: "admin"}",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            OutlinedButton(
+                onClick = { AdminAuthRepository.logout() },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Text("Logout Admin")
+            }
+        } else {
+            OutlinedButton(
+                onClick = onAdminLogin,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Admin Login")
+            }
+        }
     }
 }
 
