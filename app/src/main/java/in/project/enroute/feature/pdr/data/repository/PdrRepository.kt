@@ -310,7 +310,7 @@ class PdrRepository {
         stepIntervalMs: Long,
         heading: Float,
         currentState: PdrState
-    ): Offset? {
+    ): Offset {
         // Calculate cadence (steps per second)
         val cadence = if (stepIntervalMs > 0) 1000f / stepIntervalMs else 0f
 
