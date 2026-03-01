@@ -16,6 +16,7 @@ import `in`.project.enroute.data.repository.FirebaseFloorPlanRepository
 import `in`.project.enroute.feature.floorplan.rendering.CanvasState
 import `in`.project.enroute.feature.floorplan.rendering.FloorPlanDisplayConfig
 import `in`.project.enroute.feature.floorplan.state.BuildingState
+import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
 import `in`.project.enroute.feature.floorplan.utils.FollowingAnimator
 import `in`.project.enroute.feature.floorplan.utils.FollowingConfig
 import `in`.project.enroute.feature.floorplan.utils.CenteringConfig
@@ -687,6 +688,85 @@ class FloorPlanViewModel(
         }
         // Point is outside all buildings but inside campus bounds → use default floor
         return state.buildingStates.values.firstOrNull()?.currentFloorData?.floorId
+    }
+
+    /**
+     * Returns the [FloorConstraintData] bundle for the floor containing [point]
+     * (campus-wide coordinates). Used by PDR error correction to constraint-check
+     * against walls and snap to entrances.
+     *
+     * @return Bundle with FloorPlanData + transform parameters, or `null` if no
+     *         floor data is available.
+     */
+    fun getFloorConstraintData(point: Offset): FloorConstraintData? {
+        val state = _uiState.value
+
+        // Try to find the building whose boundary contains the point
+        for ((_, buildingState) in state.buildingStates) {
+            val building = buildingState.building
+            val relX = building.relativePosition.x
+            val relY = building.relativePosition.y
+            val floorData = buildingState.currentFloorData ?: continue
+
+            val meta = floorData.metadata
+            val scale = meta.scale
+            val rotRad = Math.toRadians(meta.rotation.toDouble()).toFloat()
+            val cosA = cos(rotRad)
+            val sinA = sin(rotRad)
+
+            for (polygon in floorData.boundaryPolygons) {
+                if (polygon.points.isEmpty()) continue
+                val transformed = polygon.points.sortedBy { it.id }.map { p ->
+                    val px = p.x * scale
+                    val py = p.y * scale
+                    Pair(px * cosA - py * sinA + relX, px * sinA + py * cosA + relY)
+                }
+                if (isPointInPolygon(point.x, point.y, transformed)) {
+                    return FloorConstraintData(
+                        floorPlanData = floorData,
+                        scale = scale,
+                        rotationDegrees = meta.rotation,
+                        offsetX = relX,
+                        offsetY = relY
+                    )
+                }
+            }
+        }
+
+        // Fallback: first building's current floor
+        val fallback = state.buildingStates.values.firstOrNull() ?: return null
+        val floorData = fallback.currentFloorData ?: return null
+        val building = fallback.building
+        val meta = floorData.metadata
+        return FloorConstraintData(
+            floorPlanData = floorData,
+            scale = meta.scale,
+            rotationDegrees = meta.rotation,
+            offsetX = building.relativePosition.x,
+            offsetY = building.relativePosition.y
+        )
+    }
+
+    /**
+     * Returns floor constraint data for a specific floor ID across all buildings.
+     * Useful when the user switches floors after PDR origin has been set.
+     */
+    fun getFloorConstraintDataByFloorId(floorId: String): FloorConstraintData? {
+        val state = _uiState.value
+        for ((_, buildingState) in state.buildingStates) {
+            val floorData = buildingState.floors.values.find { it.floorId == floorId }
+                ?: continue
+            val building = buildingState.building
+            val meta = floorData.metadata
+            return FloorConstraintData(
+                floorPlanData = floorData,
+                scale = meta.scale,
+                rotationDegrees = meta.rotation,
+                offsetX = building.relativePosition.x,
+                offsetY = building.relativePosition.y
+            )
+        }
+        return null
     }
 
     /**

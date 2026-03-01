@@ -1,6 +1,10 @@
 package `in`.project.enroute.feature.pdr.data.repository
 
 import androidx.compose.ui.geometry.Offset
+import `in`.project.enroute.feature.pdr.correction.CorrectionConfig
+import `in`.project.enroute.feature.pdr.correction.FloorConstraintProvider
+import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
+import `in`.project.enroute.feature.pdr.correction.StepCorrectionEngine
 import `in`.project.enroute.feature.pdr.data.model.CadenceState
 import `in`.project.enroute.feature.pdr.data.model.PathPoint
 import `in`.project.enroute.feature.pdr.data.model.PdrState
@@ -33,6 +37,11 @@ class PdrRepository {
     private var currentY = 0f
     private var stepCount = 0
 
+    // ── Error-correction engine ─────────────────────────────────────────
+    private val constraintProvider = FloorConstraintProvider()
+    private var correctionEngine: StepCorrectionEngine? = null
+    private var correctionConfig = CorrectionConfig()
+
     /**
      * The overall PDR tracking state (path, origin, cadence, etc.).
      * Does NOT include heading — see [heading] for that.
@@ -51,13 +60,46 @@ class PdrRepository {
      * Emits individual step events for observers that need per-step updates.
      */
     private val _stepEvents = MutableStateFlow<StepEvent?>(null)
-    val stepEvents: StateFlow<StepEvent?> = _stepEvents.asStateFlow()
+//    val stepEvents: StateFlow<StepEvent?> = _stepEvents.asStateFlow()
 
     /**
      * Updates the stride calculation configuration.
      */
     fun updateStrideConfig(config: StrideConfig) {
         strideConfig = config
+    }
+
+    // ── Floor constraints ───────────────────────────────────────────────
+
+    /**
+     * Loads wall/entrance data for the current floor and creates the
+     * correction engine.  Can be called before or after [setOrigin].
+     */
+    fun setFloorConstraints(data: FloorConstraintData) {
+        constraintProvider.loadFloor(
+            data.floorPlanData,
+            data.scale,
+            data.rotationDegrees,
+            data.offsetX,
+            data.offsetY
+        )
+        correctionEngine = StepCorrectionEngine(
+            config = correctionConfig,
+            constraintProvider = constraintProvider
+        )
+        // If already tracking, initialise the engine with the current origin.
+        val state = _pdrState.value
+        if (state.isTracking && state.origin != null) {
+            correctionEngine?.setOrigin(state.origin, _heading.value)
+        }
+    }
+
+    /**
+     * Hot-swaps correction parameters without resetting the path.
+     */
+    fun updateCorrectionConfig(config: CorrectionConfig) {
+        correctionConfig = config
+        correctionEngine?.updateConfig(config)
     }
 
     /**
@@ -72,6 +114,9 @@ class PdrRepository {
         currentY = origin.y
         stepCount = 0
         recentCadences.clear()
+
+        // Initialise correction engine if floor data is already loaded.
+        correctionEngine?.setOrigin(origin, _heading.value)
 
         // Origin point with initial heading
         val originPoint = PathPoint(position = origin, heading = _heading.value)
@@ -116,12 +161,50 @@ class PdrRepository {
         }
 
         // Calculate dynamic stride length based on cadence and height
-        val strideLengthCm = calculateStrideLength(cadence,averageCadence)
-        val strideInPixels = strideLengthCm * pixelsPerCm
-
-        // Calculate new position using heading
-        // heading is in radians: 0 = North, positive = clockwise
+        val rawStrideCm = calculateStrideLength(cadence, averageCadence)
         stepCount++
+
+        // ── Route through correction engine if active ───────────────────
+        val engine = correctionEngine
+        if (engine != null && engine.isActive) {
+            // Apply stride calibration from previous snap corrections
+            val calibratedCm = rawStrideCm * engine.strideCalibrationFactor
+            val strideUnits = calibratedCm * pixelsPerCm
+
+            val result = engine.processStep(heading, strideUnits)
+
+            // Sync internal position tracker with engine output
+            currentX = result.correctedCurrentPosition.x
+            currentY = result.correctedCurrentPosition.y
+
+            val cadenceState = CadenceState(
+                averageCadence = averageCadence,
+                lastStrideLengthCm = calibratedCm,
+                stepCount = stepCount
+            )
+
+            _stepEvents.value = StepEvent(
+                strideLengthCm = calibratedCm,
+                cadence = cadence,
+                position = result.correctedCurrentPosition,
+                heading = heading
+            )
+
+            // Use the engine's visual path (committed + buffered) so every
+            // step shows immediately.  When correction fires the committed
+            // tail shifts and the buffer is rebased → footsteps adjust.
+            _pdrState.value = currentState.copy(
+                currentPosition = result.correctedCurrentPosition,
+                path = engine.visualPath,
+                cadenceState = cadenceState
+            )
+
+            return result.correctedCurrentPosition
+        }
+
+        // ── Fallback: no correction engine (original behaviour) ─────────
+        val strideLengthCm = rawStrideCm
+        val strideInPixels = strideLengthCm * pixelsPerCm
 
         val newX = currentX + strideInPixels * sin(heading)
         val newY = currentY - strideInPixels * cos(heading)
@@ -175,6 +258,9 @@ class PdrRepository {
         currentY = 0f
         stepCount = 0
         recentCadences.clear()
+
+        // Reset correction engine (discard buffer without flushing)
+        correctionEngine?.reset()
 
         _pdrState.value = PdrState(
             isTracking = false,

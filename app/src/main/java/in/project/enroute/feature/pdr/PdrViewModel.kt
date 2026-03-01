@@ -5,6 +5,8 @@ import android.hardware.SensorManager
 import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import `in`.project.enroute.feature.pdr.correction.CorrectionConfig
+import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
 import `in`.project.enroute.feature.pdr.data.model.PdrState
 import `in`.project.enroute.feature.pdr.data.model.StepDetectionConfig
 import `in`.project.enroute.feature.pdr.data.model.StrideConfig
@@ -161,16 +163,46 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
      *
      * @param origin The starting coordinate in campus-wide space
      * @param currentFloor The floor the user is on (e.g. "floor_1")
+     * @param floorConstraintData Optional floor plan data for error correction.
+     *                            When provided, wall constraint, turn detection,
+     *                            and entrance snapping are enabled.
      */
-    fun setOrigin(origin: Offset, currentFloor: String? = null) {
+    fun setOrigin(
+        origin: Offset,
+        currentFloor: String? = null,
+        floorConstraintData: FloorConstraintData? = null
+    ) {
         // Exit selection mode
         _uiState.update { it.copy(isSelectingOrigin = false) }
-        
+
+        // Supply floor constraints to the repository (if available)
+        if (floorConstraintData != null) {
+            repository.setFloorConstraints(floorConstraintData)
+        }
+
         // Set origin in repository (this enables tracking)
         repository.setOrigin(origin, currentFloor)
         
         // Start sensors
         startSensors()
+    }
+
+    // ── Floor constraint management ──────────────────────────────────
+
+    /**
+     * Supplies (or replaces) the floor plan wall/entrance data used for
+     * error correction.  Can be called independently of [setOrigin] to
+     * support floor switching later.
+     */
+    fun setFloorConstraints(data: FloorConstraintData) {
+        repository.setFloorConstraints(data)
+    }
+
+    /**
+     * Hot-swaps correction tuning parameters without resetting the path.
+     */
+    fun updateCorrectionConfig(config: CorrectionConfig) {
+        repository.updateCorrectionConfig(config)
     }
 
     /**

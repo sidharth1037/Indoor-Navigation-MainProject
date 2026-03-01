@@ -205,7 +205,8 @@ fun HomeScreen(
                 // Origin tap is already in campus-wide coordinates
                 // Use findFloorAtPoint so origin works even when zoomed out (no dominant building)
                 val currentFloor = floorPlanViewModel.findFloorAtPoint(origin)
-                pdrViewModel.setOrigin(origin, currentFloor)
+                val constraintData = floorPlanViewModel.getFloorConstraintData(origin)
+                pdrViewModel.setOrigin(origin, currentFloor, constraintData)
             },
             onCancelOriginSelection = { pdrViewModel.cancelOriginSelection() },
             onDismissHeightRequired = { pdrViewModel.dismissHeightRequired() },
