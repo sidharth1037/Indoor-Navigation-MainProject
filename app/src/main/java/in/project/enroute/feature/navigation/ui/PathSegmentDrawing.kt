@@ -31,7 +31,7 @@ internal fun DrawScope.drawSegmentFull(
     // Outline for contrast
     drawPath(
         path = linePath,
-        color = Color(0xFF00695C),
+        color = Color(0xFF0D47A1),
         style = Stroke(
             width = (pathWidth + 4f) / canvasScale,
             cap = StrokeCap.Round,
