@@ -75,6 +75,39 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        // Load stride K constant from settings
+        viewModelScope.launch {
+            settingsRepository.strideK.collect { k ->
+                if (k != null) {
+                    val updatedConfig = _uiState.value.strideConfig.copy(kValue = k)
+                    _uiState.update { it.copy(strideConfig = updatedConfig) }
+                    repository.updateStrideConfig(updatedConfig)
+                }
+            }
+        }
+
+        // Load stride C constant from settings
+        viewModelScope.launch {
+            settingsRepository.strideC.collect { c ->
+                if (c != null) {
+                    val updatedConfig = _uiState.value.strideConfig.copy(cValue = c)
+                    _uiState.update { it.copy(strideConfig = updatedConfig) }
+                    repository.updateStrideConfig(updatedConfig)
+                }
+            }
+        }
+
+        // Load step detection threshold from settings
+        viewModelScope.launch {
+            settingsRepository.stepThreshold.collect { threshold ->
+                if (threshold != null) {
+                    val updatedConfig = _uiState.value.stepDetectionConfig.copy(threshold = threshold)
+                    _uiState.update { it.copy(stepDetectionConfig = updatedConfig) }
+                    stepDetector.updateConfig(updatedConfig)
+                }
+            }
+        }
+
         // Set up step detector callback
         stepDetector.onStepDetected = { stepIntervalMs ->
             // Only process steps if we're tracking (origin is set)

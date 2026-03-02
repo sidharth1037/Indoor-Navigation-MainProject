@@ -35,7 +35,7 @@ class StairwellTransitionDetector(
     /** Campus-coordinate radius to consider "near" a stair entrance. */
     private val proximityRadius: Float = 100f,   // ~2 m
     /** Half-angle of the field-of-view cone (radians). */
-    private val fovHalfAngle: Float = 0.785f,    // 45° → 90° total
+    private val fovHalfAngle: Float = 1.047f,   // 60° → 120° total
     /** Sliding window size for ML labels. */
     private val windowSize: Int = 3,
     /** How many labels inside the window must match to confirm. */
@@ -45,7 +45,18 @@ class StairwellTransitionDetector(
     /** Steps to keep a candidate alive after the user leaves proximity. */
     private val candidateExpirySteps: Int = 8,
     /** Number of recent headings to keep for the lagged FOV check. */
-    private val headingBufferSize: Int = 3
+    private val headingBufferSize: Int = 3,
+    /**
+     * Number of consecutive same-direction stair labels required to
+     * trigger a sustained-ML transition (no spatial/FOV constraints).
+     */
+    private val sustainedLabelThreshold: Int = 3,
+    /**
+     * Expanded proximity radius for sustained-ML detection.
+     * Larger than [proximityRadius] because the user may have walked
+     * past the entrance by the time 4 labels accumulate.
+     */
+    private val sustainedProximityRadius: Float = 200f   // ~4 m
 ) {
 
     companion object {
@@ -57,6 +68,12 @@ class StairwellTransitionDetector(
     /** Ring buffer of recent accepted labels (low-confidence ones are skipped). */
     private val labelWindow = mutableListOf<String>()
 
+    // ── Consecutive stair label tracking (for sustained-ML detection) ─────
+    /** The stair label currently being counted ("upstairs" or "downstairs"). */
+    private var consecutiveStairLabel: String? = null
+    /** How many consecutive times that label has appeared. */
+    private var consecutiveStairCount: Int = 0
+
     /**
      * Feed every ML classification result here.
      * Low-confidence predictions are silently dropped.
@@ -67,6 +84,20 @@ class StairwellTransitionDetector(
         labelWindow.add(label)
         while (labelWindow.size > windowSize) {
             labelWindow.removeAt(0)
+        }
+
+        // Track consecutive stair labels for sustained-ML detection
+        if (label == "upstairs" || label == "downstairs") {
+            if (label == consecutiveStairLabel) {
+                consecutiveStairCount++
+            } else {
+                consecutiveStairLabel = label
+                consecutiveStairCount = 1
+            }
+        } else {
+            // Any non-stair label breaks the streak
+            consecutiveStairLabel = null
+            consecutiveStairCount = 0
         }
     }
 
@@ -101,6 +132,8 @@ class StairwellTransitionDetector(
         candidatePair = null
         candidateStepsRemaining = 0
         stepsSinceCandidateLatch = 0
+        consecutiveStairLabel = null
+        consecutiveStairCount = 0
     }
 
     /**
@@ -198,7 +231,157 @@ class StairwellTransitionDetector(
             preClimbedSteps = preClimbed
         )
     }
+    // ── Stage 3: Sustained ML detection (independent fallback) ─────────
 
+    /**
+     * Independent stairwell detection based purely on sustained ML output.
+     *
+     * If the model has output the same stair label ("upstairs" / "downstairs")
+     * for [sustainedLabelThreshold] or more consecutive classifications, find
+     * the nearest stairwell the user can take in that direction — using
+     * **proximity only** (no FOV / heading constraint).
+     *
+     * This covers cases where the spatial candidate was never latched (e.g.
+     * user entered the stairwell from an unexpected angle) but the ML model
+     * is very confident.
+     *
+     * @return A [StairTransitionEvent] if a sustained transition is confirmed,
+     *         or `null` otherwise.
+     */
+    fun checkSustainedMLTransition(
+        position: Offset,
+        stairPairs: List<StairPair>,
+        currentFloorNumber: Float
+    ): StairTransitionEvent? {
+        if (consecutiveStairCount < sustainedLabelThreshold) return null
+
+        Log.d(TAG, "sustainedML: ${consecutiveStairCount}× \"$consecutiveStairLabel\" " +
+                "at (${position.x.toInt()},${position.y.toInt()}) floor=$currentFloorNumber, " +
+                "${stairPairs.size} stair pairs available")
+
+        val goingUp = consecutiveStairLabel == "upstairs"
+
+        // Find the nearest stairwell by proximity only (no FOV check)
+        val pair = findNearestPairByProximity(
+            position, stairPairs, currentFloorNumber, goingUp
+        ) ?: return null
+
+        val direction = if (goingUp) StairDirection.UP else StairDirection.DOWN
+
+        val startPos: Offset
+        val endPos: Offset
+        val originFloor: String
+        val destFloor: String
+
+        if (direction == StairDirection.UP) {
+            startPos = pair.bottomPosition
+            endPos = pair.topPosition
+            originFloor = pair.bottomFloorId
+            destFloor = pair.topFloorId
+        } else {
+            startPos = pair.topPosition
+            endPos = pair.bottomPosition
+            originFloor = pair.topFloorId
+            destFloor = pair.bottomFloorId
+        }
+
+        Log.d(TAG, "SUSTAINED-ML TRANSITION: $direction from $originFloor → $destFloor " +
+                "(${consecutiveStairCount} consecutive \"$consecutiveStairLabel\" labels)")
+
+        return StairTransitionEvent(
+            stairPair = pair,
+            direction = direction,
+            startPosition = startPos,
+            endPosition = endPos,
+            originFloorId = originFloor,
+            destinationFloorId = destFloor,
+            preClimbedSteps = consecutiveStairCount
+        )
+    }
+
+    /**
+     * Finds the nearest stair pair by proximity only — no heading / FOV
+     * constraint.  Used by the sustained-ML fallback path.
+     *
+     * First tries to find a pair whose start entrance is on the current floor.
+     * If nothing is found, falls back to checking **both** entrances of every
+     * pair regardless of floor — the stairwell entrance the user is closest
+     * to might be stored on the other floor's data due to how stair pairs
+     * are built.
+     */
+    private fun findNearestPairByProximity(
+        position: Offset,
+        stairPairs: List<StairPair>,
+        currentFloorNumber: Float,
+        goingUp: Boolean
+    ): StairPair? {
+        var bestPair: StairPair? = null
+        var bestDist = Float.MAX_VALUE
+
+        // Pass 1: Strict floor match on the expected start entrance
+        for (pair in stairPairs) {
+            val startPos: Offset
+            val startFloorNumber: Float
+
+            if (goingUp) {
+                startPos = pair.bottomPosition
+                startFloorNumber = pair.bottomFloorNumber
+            } else {
+                startPos = pair.topPosition
+                startFloorNumber = pair.topFloorNumber
+            }
+
+            if (startFloorNumber != currentFloorNumber) continue
+
+            val dist = GeometryUtils.distance(position, startPos)
+            if (dist > sustainedProximityRadius) continue
+
+            if (dist < bestDist) {
+                bestDist = dist
+                bestPair = pair
+            }
+        }
+
+        if (bestPair != null) {
+            Log.d(TAG, "sustainedML-proximity: found pair on current floor (dist=${"%.1f".format(bestDist)})")
+            return bestPair
+        }
+
+        // Pass 2: Cross-floor fallback — check proximity to EITHER entrance
+        // of every pair that connects to the current floor.  The stairwell
+        // geometry may be stored on the adjacent floor's data.
+        for (pair in stairPairs) {
+            // The pair must connect the current floor in the correct direction
+            val connects = if (goingUp) {
+                pair.bottomFloorNumber == currentFloorNumber ||
+                        pair.topFloorNumber > currentFloorNumber
+            } else {
+                pair.topFloorNumber == currentFloorNumber ||
+                        pair.bottomFloorNumber < currentFloorNumber
+            }
+            if (!connects) continue
+
+            // Check distance to both entrances
+            val distBottom = GeometryUtils.distance(position, pair.bottomPosition)
+            val distTop = GeometryUtils.distance(position, pair.topPosition)
+            val minDist = minOf(distBottom, distTop)
+
+            if (minDist > sustainedProximityRadius) continue
+
+            if (minDist < bestDist) {
+                bestDist = minDist
+                bestPair = pair
+            }
+        }
+
+        if (bestPair != null) {
+            Log.d(TAG, "sustainedML-proximity: cross-floor fallback found pair (dist=${"%.1f".format(bestDist)})")
+        } else {
+            Log.d(TAG, "sustainedML-proximity: no pair found within ${sustainedProximityRadius} units")
+        }
+
+        return bestPair
+    }
     // ── Internals ───────────────────────────────────────────────────────────
 
     /**

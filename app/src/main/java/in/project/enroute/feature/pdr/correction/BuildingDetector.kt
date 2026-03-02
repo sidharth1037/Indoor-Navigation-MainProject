@@ -93,7 +93,6 @@ class BuildingDetector {
      */
     fun detect(position: Offset): BuildingDetectionResult {
         val previousBuildingId = _currentBuildingId
-        val previousFloorId = _currentFloorId
 
         var foundBuildingId: String? = null
         var foundFloorId: String? = null
@@ -108,16 +107,21 @@ class BuildingDetector {
             }
         }
 
-        _currentBuildingId = foundBuildingId
-        _currentFloorId = foundFloorId
+        val buildingChanged = foundBuildingId != previousBuildingId
 
-        val changed = foundBuildingId != previousBuildingId || foundFloorId != previousFloorId
+        _currentBuildingId = foundBuildingId
+        // Only update the tracked floor when the user enters a *new* building.
+        // Floor changes within a building are handled by stairwell transitions
+        // in PdrRepository — the detector must not overwrite them.
+        if (buildingChanged) {
+            _currentFloorId = foundFloorId
+        }
 
         return BuildingDetectionResult(
             buildingId = foundBuildingId,
-            floorId = foundFloorId,
-            changed = changed,
-            newConstraintData = if (changed) foundConstraintData else null
+            floorId = _currentFloorId,
+            changed = buildingChanged,
+            newConstraintData = if (buildingChanged) foundConstraintData else null
         )
     }
 

@@ -114,6 +114,15 @@ fun HomeScreen(
         }
     }
 
+    // Feed user position into NavigationViewModel for progressive path consumption
+    // and auto-rerouting. Triggers on every PDR step when a navigation path exists.
+    val pdrCurrentPosition = pdrUiState.pdrState.currentPosition
+    LaunchedEffect(pdrCurrentPosition, pdrCurrentFloor) {
+        if (pdrCurrentPosition != null && pdrCurrentFloor != null && navUiState.hasPath) {
+            navigationViewModel.updateUserPosition(pdrCurrentPosition, pdrCurrentFloor)
+        }
+    }
+
     // Keep screen on when PDR tracking is active
     DisposableEffect(pdrUiState.pdrState.isTracking) {
         if (pdrUiState.pdrState.isTracking) {
@@ -367,7 +376,7 @@ private fun HomeScreenContent(
                 // other floors faded+dashed with floor labels
                 if (navUiState.hasPath) {
                     NavigationPathOverlay(
-                        multiFloorPath = navUiState.multiFloorPath,
+                        multiFloorPath = navUiState.displayPath,
                         currentVisibleFloor = uiState.currentFloorId,
                         canvasState = effectiveCanvasState,
                         modifier = Modifier.fillMaxSize()

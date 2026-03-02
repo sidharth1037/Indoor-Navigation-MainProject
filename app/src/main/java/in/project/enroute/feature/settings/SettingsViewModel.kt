@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import `in`.project.enroute.data.cache.FloorPlanCache
 import `in`.project.enroute.feature.settings.data.SettingsRepository
+import `in`.project.enroute.feature.pdr.data.model.StrideConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,7 +17,13 @@ data class SettingsUiState(
     val currentHeight: Float? = null,
     val isEditingHeight: Boolean = false,
     val heightInputValue: String = "",
-    val showEntrances: Boolean = false
+    val showEntrances: Boolean = false,
+    /** Stride K value (cadence sensitivity). Null = default. */
+    val strideK: Float = StrideConfig().kValue,
+    /** Stride C value (base stride constant). Null = default. */
+    val strideC: Float = StrideConfig().cValue,
+    /** Step detection threshold in m/s². Null = default (12f). */
+    val stepThreshold: Float = 12f
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -42,6 +49,33 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             repository.showEntrances.collect { showEntrances ->
                 _uiState.update {
                     it.copy(showEntrances = showEntrances)
+                }
+            }
+        }
+
+        // Load stride K constant
+        viewModelScope.launch {
+            repository.strideK.collect { k ->
+                if (k != null) {
+                    _uiState.update { it.copy(strideK = k) }
+                }
+            }
+        }
+
+        // Load stride C constant
+        viewModelScope.launch {
+            repository.strideC.collect { c ->
+                if (c != null) {
+                    _uiState.update { it.copy(strideC = c) }
+                }
+            }
+        }
+
+        // Load step detection threshold
+        viewModelScope.launch {
+            repository.stepThreshold.collect { threshold ->
+                if (threshold != null) {
+                    _uiState.update { it.copy(stepThreshold = threshold) }
                 }
             }
         }
@@ -108,6 +142,36 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         _uiState.update { it.copy(showEntrances = newValue) }
         viewModelScope.launch {
             repository.saveShowEntrances(newValue)
+        }
+    }
+
+    /**
+     * Updates the stride K constant (cadence sensitivity) and persists it.
+     */
+    fun updateStrideK(k: Float) {
+        _uiState.update { it.copy(strideK = k) }
+        viewModelScope.launch {
+            repository.saveStrideK(k)
+        }
+    }
+
+    /**
+     * Updates the stride C constant (base stride) and persists it.
+     */
+    fun updateStrideC(c: Float) {
+        _uiState.update { it.copy(strideC = c) }
+        viewModelScope.launch {
+            repository.saveStrideC(c)
+        }
+    }
+
+    /**
+     * Updates the step detection threshold (acceleration in m/s²) and persists it.
+     */
+    fun updateStepThreshold(threshold: Float) {
+        _uiState.update { it.copy(stepThreshold = threshold) }
+        viewModelScope.launch {
+            repository.saveStepThreshold(threshold)
         }
     }
 }

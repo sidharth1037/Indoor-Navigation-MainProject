@@ -54,6 +54,6 @@ data class CorrectionConfig(
 
     // ── Stride calibration ─────────────────────────────────────────────────
     /** Maximum stride adjustment factor per snap event.
-     *  0.15 → stride can be scaled by [0.85, 1.15] from a single snap. */
-    val maxStrideAdjustment: Float = 0.15f
+     *  0.08 → stride can be scaled by [0.92, 1.08] from a single snap. */
+    val maxStrideAdjustment: Float = 0.08f
 )

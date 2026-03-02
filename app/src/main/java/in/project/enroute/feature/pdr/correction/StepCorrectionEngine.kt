@@ -161,9 +161,10 @@ class StepCorrectionEngine(
             )
             if (snapResult.wasSnapped) {
                 applySnapCorrection(turnEvent.bufferIndex, snapResult)
-                // Blend calibration toward the new factor (don't replace outright)
-                _strideCalibrationFactor = _strideCalibrationFactor * 0.7f +
-                        snapResult.strideCalibrationFactor * 0.3f
+                // Blend calibration toward the new factor subtly
+                // (90% keep / 10% new) so each snap nudges rather than jumps.
+                _strideCalibrationFactor = _strideCalibrationFactor * 0.9f +
+                        snapResult.strideCalibrationFactor * 0.1f
             }
         }
 

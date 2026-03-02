@@ -8,8 +8,10 @@ import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
 import `in`.project.enroute.feature.pdr.correction.BuildingDetector
 import `in`.project.enroute.feature.pdr.correction.CampusBuilding
 import `in`.project.enroute.feature.pdr.correction.StepCorrectionEngine
+import `in`.project.enroute.feature.pdr.correction.ArrivalReason
 import `in`.project.enroute.feature.pdr.correction.StairClimbingState
 import `in`.project.enroute.feature.pdr.correction.StairPair
+import `in`.project.enroute.feature.pdr.correction.StairTransitionEvent
 import `in`.project.enroute.feature.pdr.correction.StairwellTransitionAnimator
 import `in`.project.enroute.feature.pdr.correction.StairwellTransitionDetector
 import `in`.project.enroute.feature.pdr.data.model.CadenceState
@@ -210,7 +212,15 @@ class PdrRepository {
         // Derive floor number from floor ID (e.g. "floor_1" → 1f)
         currentFloorNumber = currentFloor?.removePrefix("floor_")?.toFloatOrNull() ?: 1f
 
-        buildingDetector.setInitial(null, currentFloor)
+        // Detect the building at the origin position so the first step
+        // doesn't see a building "change" (null → real building) that
+        // would override the user-selected floor with the building default.
+        if (buildingDetector.isLoaded()) {
+            buildingDetector.detect(origin)  // sets _currentBuildingId
+            buildingDetector.setInitial(buildingDetector.currentBuildingId, currentFloor)
+        } else {
+            buildingDetector.setInitial(null, currentFloor)
+        }
 
         // Origin point with initial heading
         val originPoint = PathPoint(position = origin, heading = _heading.value)
@@ -251,7 +261,11 @@ class PdrRepository {
 
         // ── Handle ARRIVED left over from a previous step ───────────────
         if (stairAnimator.state == StairClimbingState.ARRIVED) {
-            finaliseStairTransition()
+            val wasWalkingArrival = stairAnimator.arrivalReason == ArrivalReason.WALKING
+            val compensationSteps = if (wasWalkingArrival) {
+                stairAnimator.preClimbedStepsAtDetection.coerceIn(1, 4)
+            } else 0
+            finaliseStairTransition(compensationSteps)
             currentState = _pdrState.value
         }
 
@@ -269,7 +283,11 @@ class PdrRepository {
             // finalise immediately and replay this step as a normal PDR
             // footstep on the new floor so the turn produces a footprint.
             if (stairAnimator.state == StairClimbingState.ARRIVED) {
-                finaliseStairTransition()
+                val wasWalkingArrival = stairAnimator.arrivalReason == ArrivalReason.WALKING
+                val compensationSteps = if (wasWalkingArrival) {
+                    stairAnimator.preClimbedStepsAtDetection.coerceIn(1, 4)
+                } else 0
+                finaliseStairTransition(compensationSteps)
                 currentState = _pdrState.value
                 return processNormalStep(stepIntervalMs, heading, currentState)
             }
@@ -465,18 +483,43 @@ class PdrRepository {
 
     /**
      * Checks proximity/heading/ML conditions and triggers a stairwell
-     * transition if met.
+     * transition if met.  Two independent detection paths:
+     *
+     * 1. **Spatial + ML** (two-stage): candidate latch near entrance + ML
+     *    confirmation within the sliding window.
+     * 2. **Sustained ML** (fallback): 3+ consecutive same-direction stair
+     *    labels → nearest stairwell by proximity only (no FOV).
+     *
+     * Both paths produce the same [StairTransitionEvent]; the first one
+     * to fire wins.
      */
     private fun checkAndStartStairTransition(position: Offset, heading: Float) {
         if (stairPairs.isEmpty()) return
         if (stairAnimator.state != StairClimbingState.IDLE) return
 
-        val event = stairDetector.checkTransition(
+        // Path 1: Spatial candidate + ML window confirmation
+        val isSustainedPath: Boolean
+        val event: StairTransitionEvent
+
+        val path1 = stairDetector.checkTransition(
             position = position,
             heading = heading,
             stairPairs = stairPairs,
             currentFloorNumber = currentFloorNumber
-        ) ?: return
+        )
+        if (path1 != null) {
+            event = path1
+            isSustainedPath = false
+        } else {
+            // Path 2: Sustained ML fallback (independent of spatial candidate)
+            val path2 = stairDetector.checkSustainedMLTransition(
+                position = position,
+                stairPairs = stairPairs,
+                currentFloorNumber = currentFloorNumber
+            ) ?: return
+            event = path2
+            isSustainedPath = true
+        }
 
         // Transition confirmed — start the animation
         stairAnimator.startTransition(event, heading)
@@ -485,8 +528,18 @@ class PdrRepository {
         // Flush the correction engine buffer before entering stairs
         correctionEngine?.flush()
 
+        // Snap the user position to the stairwell entrance.  This is
+        // especially important for sustained-ML triggers where the user
+        // may be some distance from the entrance by the time 3+ labels
+        // accumulate.
+        if (isSustainedPath) {
+            currentX = event.startPosition.x
+            currentY = event.startPosition.y
+        }
+
         val currentState = _pdrState.value
         _pdrState.value = currentState.copy(
+            currentPosition = if (isSustainedPath) event.startPosition else currentState.currentPosition,
             isOnStairs = true,
             stairTransitionProgress = 0f,
             stairDestinationFloor = event.destinationFloorId
@@ -498,11 +551,18 @@ class PdrRepository {
      * floor's constraint data, resets the correction engine, and resumes
      * normal PDR from the stairwell endpoint.
      *
+     * @param compensationSteps Number of extra steps to replay on the new
+     *        floor to account for ML detection lag.  Only non-zero when
+     *        arrival was triggered by "walking" label (the user already
+     *        walked past the top of the stairwell).  When arrival is
+     *        triggered by a heading turn, no compensation is needed
+     *        because the user is exactly at the landing.
+     *
      * Uses StairTransitionEvent.endPosition directly as the arrival
      * position.  This is the campus-coordinate endpoint of the StairPair,
      * which matches the stairwell shaft location on the destination floor.
      */
-    private fun finaliseStairTransition() {
+    private fun finaliseStairTransition(compensationSteps: Int = 0) {
         val event = stairAnimator.activeEvent ?: run {
             stairAnimator.finalize()
             return
@@ -561,6 +621,23 @@ class PdrRepository {
         )
 
         stairAnimator.finalize()
+        // Re-arm the detector so the user can enter another stairwell on
+        // the new floor.  Clear stale ML labels to prevent instant triggers.
+        stairDetector.reset()
+
+        // ── Walking-arrival compensation ────────────────────────────────
+        // When the ML model said "walking" to trigger arrival, the user
+        // has already taken a few steps past the top of the stairwell.
+        // Replay those steps as normal PDR so the position isn't stuck
+        // at the stairwell entrance.
+        if (compensationSteps > 0) {
+            val heading = _heading.value
+            val defaultIntervalMs = 500L  // assume ~2 steps/sec
+            for (i in 0 until compensationSteps) {
+                processNormalStep(defaultIntervalMs, heading, _pdrState.value)
+            }
+            Log.d("PdrRepo", "Walking-arrival compensation: replayed $compensationSteps steps")
+        }
     }
 
     /**
@@ -681,33 +758,24 @@ class PdrRepository {
      * floor per building (the initial floor), so a floor change from a
      * stairwell transition should NOT cause it to reload old constraints.
      *
-     * @return A [Pair] of (floorId, buildingId) if a change was detected,
-     *         or `null` if unchanged or building data is not loaded.
+     * @return A [Pair] of (floorId, buildingId) if a building change was
+     *         detected, or `null` if unchanged or building data is not loaded.
      */
     private fun runBuildingDetection(position: Offset, currentState: PdrState): Pair<String?, String?>? {
         if (!buildingDetector.isLoaded()) return null
 
-        val previousBuildingId = buildingDetector.currentBuildingId
         val result = buildingDetector.detect(position)
         if (!result.changed) return null
 
-        // Only swap wall constraints when the user moves between buildings
-        // (or enters/exits a building).  Within the same building, stairwell
-        // transitions handle floor switching independently.
-        val buildingChanged = result.buildingId != previousBuildingId
-        if (buildingChanged && result.newConstraintData != null) {
+        // Building changed — load the new building's wall constraints.
+        if (result.newConstraintData != null) {
             setFloorConstraints(result.newConstraintData)
         }
 
-        // Return the floor/building update.  If the building didn't change
-        // (only the detector's internal floor tracking drifted), keep the
-        // current floor from pdrState — don't let the detector downgrade it.
-        return if (buildingChanged) {
-            Pair(result.floorId, result.buildingId)
-        } else {
-            // Same building — only report building ID, keep current floor
-            Pair(currentState.currentFloor, result.buildingId)
-        }
+        // When entering a new building, use the building's default floor.
+        // Within the same building, stairwell transitions manage floor changes
+        // independently (detect().changed is only true for building changes now).
+        return Pair(result.floorId, result.buildingId)
     }
 
     /**

@@ -10,6 +10,7 @@ import `in`.project.enroute.data.model.Room
 import `in`.project.enroute.data.model.Wall
 import `in`.project.enroute.feature.navigation.data.CampusBoundaryPolygon
 import `in`.project.enroute.feature.navigation.data.CampusEntrance
+import `in`.project.enroute.feature.navigation.data.FloorPathSegment
 import `in`.project.enroute.feature.navigation.data.MultiFloorPath
 import `in`.project.enroute.feature.navigation.data.MultiFloorPathfinder
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * UI state for the navigation / pathfinding feature.
@@ -31,6 +33,8 @@ import kotlin.math.sin
  * No per-building offset is needed when rendering.
  *
  * @param multiFloorPath The computed path, possibly spanning multiple floors.
+ * @param displayPath The path to render — trimmed as the user walks along it.
+ *                    Falls back to [multiFloorPath] when no trimming has occurred.
  * @param isCalculating True while the pathfinding coroutine is running.
  * @param targetRoom The room the user requested directions to.
  * @param targetEntrance The entrance matched for the target room.
@@ -38,16 +42,17 @@ import kotlin.math.sin
  */
 data class NavigationUiState(
     val multiFloorPath: MultiFloorPath = MultiFloorPath.EMPTY,
+    val displayPath: MultiFloorPath = MultiFloorPath.EMPTY,
     val isCalculating: Boolean = false,
     val targetRoom: Room? = null,
     val targetEntrance: Entrance? = null,
     val error: String? = null
 ) {
     /** Convenience: true when a path is available. */
-    val hasPath: Boolean get() = !multiFloorPath.isEmpty
+    val hasPath: Boolean get() = !displayPath.isEmpty
 
     /** Backwards-compatible flat list of all waypoints (for simple consumers). */
-    val path: List<Offset> get() = multiFloorPath.allPoints
+    val path: List<Offset> get() = displayPath.allPoints
 }
 
 /**
@@ -76,6 +81,18 @@ class NavigationViewModel : ViewModel() {
 
     companion object {
         private const val TAG = "NavigationVM"
+        /**
+         * Reroute threshold in campus-wide units (1 unit = 2cm).
+         * 3 meters = 300cm = 150 units.
+         */
+        private const val REROUTE_DISTANCE_THRESHOLD = 150f
+
+        /**
+         * Maximum distance between consecutive path points (campus-wide units).
+         * Long straight segments are subdivided to this interval so the path
+         * disappears smoothly as the user walks along it.
+         */
+        private const val SUBDIVISION_INTERVAL = 30f
     }
 
     private val _uiState = MutableStateFlow(NavigationUiState())
@@ -113,6 +130,9 @@ class NavigationViewModel : ViewModel() {
 
     /** Running pathfinding job — cancelled if a new request comes in. */
     private var pathfindingJob: Job? = null
+
+    /** Running reroute job — cancelled if a new reroute or path request comes in. */
+    private var rerouteJob: Job? = null
 
     // ──────────────────────────────────────────────
     // Public API
@@ -190,6 +210,7 @@ class NavigationViewModel : ViewModel() {
      */
     fun requestDirections(room: Room, userPosition: Offset, currentFloor: String) {
         pathfindingJob?.cancel()
+        rerouteJob?.cancel()
 
         // Find the entrance that matches this room
         val campusEntrance = findEntranceForRoom(room)
@@ -237,7 +258,12 @@ class NavigationViewModel : ViewModel() {
                 if (result.isEmpty) {
                     it.copy(isCalculating = false, error = "Could not find a path")
                 } else {
-                    it.copy(isCalculating = false, multiFloorPath = result)
+                    val subdivided = subdividePath(result)
+                    it.copy(
+                        isCalculating = false,
+                        multiFloorPath = subdivided,
+                        displayPath = subdivided
+                    )
                 }
             }
         }
@@ -248,7 +274,208 @@ class NavigationViewModel : ViewModel() {
      */
     fun clearPath() {
         pathfindingJob?.cancel()
+        rerouteJob?.cancel()
         _uiState.update { NavigationUiState() }
+    }
+
+    // ──────────────────────────────────────────────
+    // Path consumption & rerouting
+    // ──────────────────────────────────────────────
+
+    /**
+     * Called when the user's position changes (every PDR step).
+     * Trims the displayed path so past segments disappear, and triggers
+     * a silent reroute if the user strays > 3 m from the path.
+     *
+     * @param userPosition Current user position in campus-wide coordinates.
+     * @param currentFloor The floor ID the user is on.
+     */
+    fun updateUserPosition(userPosition: Offset, currentFloor: String) {
+        val state = _uiState.value
+        if (!state.hasPath) return
+
+        // Find the nearest point across all segments of the full path
+        val (nearestSegIdx, nearestPtIdx, distSq) = findNearestPointOnPath(
+            state.multiFloorPath, userPosition, currentFloor
+        ) ?: return
+
+        val distance = sqrt(distSq)
+
+        if (distance > REROUTE_DISTANCE_THRESHOLD) {
+            // User is too far from the path — reroute silently
+            triggerSilentReroute(userPosition, currentFloor)
+        } else {
+            // Trim the path: remove all segments before the nearest segment,
+            // and within that segment remove points before the nearest point.
+            val trimmed = trimPath(state.multiFloorPath, nearestSegIdx, nearestPtIdx)
+            if (trimmed != null) {
+                _uiState.update { it.copy(displayPath = trimmed) }
+            }
+        }
+    }
+
+    /**
+     * Finds the nearest path point to [userPosition] on segments matching [currentFloor].
+     * Returns (segmentIndex, pointIndex, squaredDistance), or null if no match.
+     */
+    private fun findNearestPointOnPath(
+        path: MultiFloorPath,
+        userPosition: Offset,
+        currentFloor: String
+    ): Triple<Int, Int, Float>? {
+        var bestSegIdx = -1
+        var bestPtIdx = -1
+        var bestDistSq = Float.MAX_VALUE
+
+        for (segIdx in path.segments.indices) {
+            val segment = path.segments[segIdx]
+            // Only check segments on the user's current floor
+            if (segment.floorId != currentFloor) continue
+
+            for (ptIdx in segment.points.indices) {
+                val pt = segment.points[ptIdx]
+                val dx = pt.x - userPosition.x
+                val dy = pt.y - userPosition.y
+                val distSq = dx * dx + dy * dy
+                if (distSq < bestDistSq) {
+                    bestDistSq = distSq
+                    bestSegIdx = segIdx
+                    bestPtIdx = ptIdx
+                }
+            }
+        }
+
+        if (bestSegIdx < 0) return null
+        return Triple(bestSegIdx, bestPtIdx, bestDistSq)
+    }
+
+    /**
+     * Trims the [MultiFloorPath] so it starts from the given segment and point
+     * index, removing already-walked portions.
+     * Consumes one extra point ahead of the nearest so the path disappears
+     * slightly in front of the user rather than behind.
+     */
+    private fun trimPath(
+        fullPath: MultiFloorPath,
+        fromSegIdx: Int,
+        fromPtIdx: Int
+    ): MultiFloorPath? {
+        if (fromSegIdx >= fullPath.segments.size) return null
+
+        // Advance one point ahead so path disappears in front of the user
+        var trimSegIdx = fromSegIdx
+        var trimPtIdx = fromPtIdx + 1
+        val seg = fullPath.segments[trimSegIdx]
+        if (trimPtIdx >= seg.points.size) {
+            // Overflow into next segment
+            trimSegIdx++
+            trimPtIdx = 0
+        }
+        if (trimSegIdx >= fullPath.segments.size) return null
+
+        val newSegments = mutableListOf<FloorPathSegment>()
+
+        // First segment: keep points from trimPtIdx onward
+        val firstSeg = fullPath.segments[trimSegIdx]
+        if (trimPtIdx < firstSeg.points.size) {
+            val trimmedPoints = firstSeg.points.subList(trimPtIdx, firstSeg.points.size)
+            if (trimmedPoints.isNotEmpty()) {
+                newSegments.add(firstSeg.copy(points = trimmedPoints))
+            }
+        }
+
+        // All subsequent segments remain intact
+        for (i in (trimSegIdx + 1) until fullPath.segments.size) {
+            newSegments.add(fullPath.segments[i])
+        }
+
+        if (newSegments.isEmpty()) return null
+
+        return MultiFloorPath(
+            segments = newSegments,
+            totalFloors = newSegments.map { it.floorId }.distinct().size,
+            isMultiFloor = newSegments.map { it.floorId }.distinct().size > 1
+        )
+    }
+
+    /**
+     * Subdivides long straight segments into smaller intervals so the path
+     * disappears smoothly as the user walks. Each pair of consecutive waypoints
+     * that is longer than [SUBDIVISION_INTERVAL] is split into evenly spaced
+     * intermediate points.
+     */
+    private fun subdividePath(path: MultiFloorPath): MultiFloorPath {
+        val subdivided = path.segments.map { segment ->
+            segment.copy(points = subdividePoints(segment.points))
+        }
+        return path.copy(segments = subdivided)
+    }
+
+    /**
+     * Inserts intermediate points between consecutive waypoints so no gap
+     * exceeds [SUBDIVISION_INTERVAL] units.
+     */
+    private fun subdividePoints(points: List<Offset>): List<Offset> {
+        if (points.size < 2) return points
+        val result = mutableListOf(points.first())
+        for (i in 1 until points.size) {
+            val from = points[i - 1]
+            val to = points[i]
+            val dx = to.x - from.x
+            val dy = to.y - from.y
+            val dist = sqrt(dx * dx + dy * dy)
+            if (dist > SUBDIVISION_INTERVAL) {
+                val steps = (dist / SUBDIVISION_INTERVAL).toInt()
+                for (s in 1..steps) {
+                    val t = s.toFloat() / (steps + 1)
+                    result.add(Offset(from.x + dx * t, from.y + dy * t))
+                }
+            }
+            result.add(to)
+        }
+        return result
+    }
+
+    /**
+     * Silently recalculates the path from the user's current position to the
+     * original destination. The UI continues showing the old path until the
+     * new one is ready, then swaps seamlessly.
+     */
+    private fun triggerSilentReroute(userPosition: Offset, currentFloor: String) {
+        // Don't stack reroutes — cancel any previous reroute in progress
+        if (rerouteJob?.isActive == true) return
+
+        val state = _uiState.value
+        val goalEntrance = findEntranceForRoom(state.targetRoom ?: return) ?: return
+
+        Log.d(TAG, "Rerouting from (${userPosition.x}, ${userPosition.y}) floor=$currentFloor")
+
+        rerouteJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.Default) {
+                multiFloorPathfinder.findMultiFloorPath(
+                    start = userPosition,
+                    startFloorId = currentFloor,
+                    goalEntrance = goalEntrance,
+                    allEntrances = campusEntrances.toList(),
+                    wallsByFloor = campusWallsByFloor.toMap(),
+                    boundaryByFloor = campusBoundaryByFloor.toMap(),
+                    repoByFloor = repositoryByFloor
+                )
+            }
+
+            if (!result.isEmpty) {
+                val subdivided = subdividePath(result)
+                Log.d(TAG, "Reroute complete: ${subdivided.allPoints.size} waypoints")
+                _uiState.update {
+                    it.copy(
+                        multiFloorPath = subdivided,
+                        displayPath = subdivided
+                    )
+                }
+            } else {
+                Log.w(TAG, "Reroute failed — keeping existing path")
+            }
+        }
     }
 
     // ──────────────────────────────────────────────

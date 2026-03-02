@@ -3,6 +3,8 @@ package `in`.project.enroute.feature.pdr.correction
 import android.util.Log
 import androidx.compose.ui.geometry.Offset
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * Manages the stairwell transition when a user climbs or descends stairs.
@@ -12,47 +14,35 @@ import kotlin.math.abs
  * IDLE ──(startTransition)──► CLIMBING ──(advanceStep)──► ARRIVED
  *   ▲                                        │               │
  *   │                                        ▼               │
+ *   │                                    RETURNING           │
+ *   │                                        │               │
+ *   │                                        ▼               │
  *   │                                    CANCELLED           │
  *   └─────────────────────(finalize)──────────┴───────────────┘
  * ```
  *
- * ## Design
+ * ## Arrival & Cancellation Logic
  *
- * During **CLIMBING** the user dot is linearly interpolated from
- * [startPosition] to [endPosition] based on [progress].  Each real step
- * from the step detector advances the progress.  No footstep markers are
- * rendered — only the blue dot slides along the stairwell.
+ * ### Arrival (any of these, after progress > [minProgressForArrival]):
+ *  1. **Walking counter ≥ [walkingArrivalCount]**: Consecutive "walking"
+ *     labels → the user has left the stairs.
+ *  2. **Heading turn + off-stairs**: The heading deviates [sharpTurnThreshold]
+ *     or more from the recent heading window average AND the latest ML label
+ *     is NOT a stair label → the user turned at the landing.
+ *  3. **Step cap**: Steps received ≥ [estimatedTotalSteps] AND the latest
+ *     label is NOT the same-direction stair label → the animation is full
+ *     and the user is no longer on stairs.
  *
- * ### Head-start
+ * ### Cancellation (u-turn, ML only):
+ *  - **Opposite label counter ≥ [oppositeDirectionCancelCount]**: Consecutive
+ *    opposite-direction labels after ≥ [minStepsBeforeCancel] total steps.
+ *  - Transitions to RETURNING; the dot animates back to the origin.
  *
- * By the time the ML model confirms stair climbing, the user has already
- * taken several steps.  [startTransition] accepts a `preClimbedSteps` count
- * and seeds the animation progress so the dot doesn't start from 0%.
- *
- * ### Arrival vs Cancellation
- *
- * A **sharp heading change** during climbing triggers either arrival or
- * cancellation, depending on the ML label at that moment:
- *
- *  - **Arrival** (turn at the landing):
- *    - ML label = "walking" (user left the stairs), OR
- *    - ML label matches the travel direction ("upstairs" when going UP,
- *      "downstairs" when going DOWN), OR
- *    - ML label is null / unknown — benefit of the doubt → arrival.
- *    - 100% progress does **not** auto-arrive; the dot holds at the end
- *      point until walking or a turn is detected.
- *
- *  - **Cancellation** (mid-stairwell turnaround):
- *    - Sharp turn + ML label is the **opposite** direction ("downstairs"
- *      when going UP, "upstairs" when going DOWN) → user reversed.
- *    - Also triggers if ML firmly shows the opposite direction even
- *      without a sharp turn (after minimum progress).
- *
- * When arrival is triggered by a turn, the caller should **replay** that
- * step as a normal PDR step on the new floor so it produces a footprint.
- *
- * Once ARRIVED, the caller must [finalize] to move back to IDLE and resume
- * normal PDR on the new floor.
+ * ### Heading reference
+ * A sliding window of the last [headingWindowSize] headings is maintained.
+ * Each new heading is compared to the **average** of this window, not to a
+ * fixed heading captured at transition start.  This makes the turn detection
+ * robust to IMU drift on stairs.
  */
 class StairwellTransitionAnimator(
     /**
@@ -65,10 +55,18 @@ class StairwellTransitionAnimator(
     private val minEstimatedSteps: Int = 6,
     /** Maximum estimated steps (caps long staircases). */
     private val maxEstimatedSteps: Int = 20,
-    /** Heading change threshold (radians) that triggers forced arrival. */
-    private val sharpTurnThreshold: Float = 1.05f,  // 60°
-    /** Minimum progress before arrival conditions are checked. */
-    private val minProgressForArrival: Float = 0.3f
+    /** Heading change threshold (radians) for landing-turn arrival. */
+    private val sharpTurnThreshold: Float = 1.05f,  // ~60°
+    /** Minimum progress before any arrival/cancel check fires. */
+    private val minProgressForArrival: Float = 0.3f,
+    /** Consecutive "walking" labels needed to trigger walking-arrival. */
+    private val walkingArrivalCount: Int = 2,
+    /** Consecutive opposite-direction labels needed to trigger cancel. */
+    private val oppositeDirectionCancelCount: Int = 3,
+    /** Minimum total steps before cancellation is allowed. */
+    private val minStepsBeforeCancel: Int = 3,
+    /** Number of headings stored in the sliding window. */
+    private val headingWindowSize: Int = 3
 ) {
 
     companion object {
@@ -92,17 +90,52 @@ class StairwellTransitionAnimator(
     var activeEvent: StairTransitionEvent? = null
         private set
 
+    /** How the most recent arrival was triggered. */
+    var arrivalReason: ArrivalReason = ArrivalReason.NONE
+        private set
+
+    /** Number of pre-climbed steps at the time of detection. */
+    var preClimbedStepsAtDetection: Int = 0
+        private set
+
     // ── Internal ────────────────────────────────────────────────────────────
 
     private var startPosition: Offset = Offset.Zero
     private var endPosition: Offset = Offset.Zero
     private var estimatedTotalSteps: Int = 0
     private var stepsReceived: Int = 0
-    private var headingAtStart: Float = 0f
-    /** Travel direction — used to distinguish "same" vs "opposite" ML labels. */
+    /** Travel direction — used to classify "same" vs "opposite" ML labels. */
     private var direction: StairDirection = StairDirection.UP
 
+    // ── Heading sliding window ──────────────────────────────────────────────
+
+    /** Ring buffer of recent headings (stored as radians). */
+    private val headingWindow = mutableListOf<Float>()
+
+    /**
+     * Returns the circular mean of the headings in [headingWindow].
+     * Falls back to [fallback] if the window is empty.
+     */
+    private fun headingWindowAverage(fallback: Float): Float {
+        if (headingWindow.isEmpty()) return fallback
+        var sinSum = 0f
+        var cosSum = 0f
+        for (h in headingWindow) {
+            sinSum += sin(h)
+            cosSum += cos(h)
+        }
+        return kotlin.math.atan2(sinSum, cosSum)
+    }
+
+    // ── ML label counters ───────────────────────────────────────────────────
+
+    /** Consecutive "walking" labels while climbing. */
+    private var consecutiveWalkingCount: Int = 0
+    /** Consecutive opposite-direction stair labels while climbing. */
+    private var consecutiveOppositeCount: Int = 0
+
     // ── Return animation state ──────────────────────────────────────────────
+
     private var returnTotalSteps: Int = 0
     private var returnStepsReceived: Int = 0
     private var progressAtTurnaround: Float = 0f
@@ -119,56 +152,38 @@ class StairwellTransitionAnimator(
         activeEvent = event
         startPosition = event.startPosition
         endPosition = event.endPosition
-        headingAtStart = heading
         direction = event.direction
         stepsReceived = 0
         progress = 0f
         currentPosition = startPosition
+        arrivalReason = ArrivalReason.NONE
+        preClimbedStepsAtDetection = event.preClimbedSteps
+
+        // Seed heading window with the initial heading
+        headingWindow.clear()
+        headingWindow.add(heading)
+
+        // Reset ML counters
+        consecutiveWalkingCount = 0
+        consecutiveOppositeCount = 0
 
         // Estimate total steps from the stairwell drawing length
         val dist = GeometryUtils.distance(startPosition, endPosition)
         estimatedTotalSteps = (dist / stairStepUnitLength).toInt()
             .coerceIn(minEstimatedSteps, maxEstimatedSteps)
 
-        // ── Head-start: the user already climbed some steps before the ML
-        // model confirmed the transition.  Seed the progress so the
-        // animation doesn't visually lag behind reality.
-        val preClimbed = event.preClimbedSteps.coerceAtMost(estimatedTotalSteps - 1)
-        if (preClimbed > 0) {
-            stepsReceived = preClimbed
-            progress = (preClimbed.toFloat() / estimatedTotalSteps).coerceAtMost(0.6f)
-            currentPosition = Offset(
-                startPosition.x + (endPosition.x - startPosition.x) * progress,
-                startPosition.y + (endPosition.y - startPosition.y) * progress
-            )
-        }
-
         state = StairClimbingState.CLIMBING
         Log.d(TAG, "startTransition: ${event.originFloorId} → ${event.destinationFloorId}, " +
-                "dist=${"%.1f".format(dist)}, estSteps=$estimatedTotalSteps, " +
-                "preClimbed=$preClimbed, initialProgress=${"%.2f".format(progress)}")
+                "dist=${"%.1f".format(dist)}, estSteps=$estimatedTotalSteps")
     }
 
     /**
      * Called on each real step from the step detector while CLIMBING.
      * Advances the dot along the interpolation line and checks for arrival
-     * or cancellation (turnaround).
-     *
-     * ### Arrival triggers
-     *  - ML label = "walking" (user left the stairs) **after min progress**.
-     *  - Sharp heading change + ML label is the **same** direction as travel
-     *    (or "walking" / null) — user turned at the landing.
-     *  - 100% progress does **not** auto-arrive; the dot holds at the end
-     *    position until one of the above signals fires.
-     *
-     * ### Cancellation triggers
-     *  - Sharp heading change + ML label is the **opposite** direction —
-     *    user reversed mid-stairwell.
-     *  - ML label firmly shows opposite direction after min progress, even
-     *    without a turn (sustained opposite signal).
+     * or cancellation.
      *
      * @param currentHeading The user's heading at this step.
-     * @param motionLabel    Latest ML classification label.
+     * @param motionLabel    Latest ML classification label (may be stale).
      * @return The interpolated position to use as the user dot location.
      */
     fun advanceStep(currentHeading: Float, motionLabel: String?): Offset {
@@ -193,47 +208,73 @@ class StairwellTransitionAnimator(
             StairDirection.UP   -> "downstairs"
             StairDirection.DOWN -> "upstairs"
         }
-        val isOppositeLabel = motionLabel == oppositeDirectionLabel
         val isSameDirectionLabel = motionLabel == sameDirectionLabel
-        // "walking", "idle", or null — user is NOT on stairs
+        val isOppositeLabel = motionLabel == oppositeDirectionLabel
         val isOffStairsOrUnknown = !isSameDirectionLabel && !isOppositeLabel
 
-        // ── Heading check ───────────────────────────────────────────────
-        val headingDelta = abs(GeometryUtils.angleDifference(headingAtStart, currentHeading))
+        // ── Update consecutive ML counters ──────────────────────────────
+        // Walking counter: increments on "walking", resets on anything else
+        if (motionLabel == "walking") {
+            consecutiveWalkingCount++
+        } else {
+            consecutiveWalkingCount = 0
+        }
+
+        // Opposite counter: increments on opposite stair label, resets otherwise
+        if (isOppositeLabel) {
+            consecutiveOppositeCount++
+        } else {
+            consecutiveOppositeCount = 0
+        }
+
+        // ── Heading turn check (vs sliding window average) ──────────────
+        val windowAvg = headingWindowAverage(currentHeading)
+        val headingDelta = abs(GeometryUtils.angleDifference(windowAvg, currentHeading))
         val isSharpTurn = headingDelta > sharpTurnThreshold
 
+        // Update the heading window AFTER comparing to the average, so the
+        // current heading doesn't pollute the reference.
+        headingWindow.add(currentHeading)
+        while (headingWindow.size > headingWindowSize) {
+            headingWindow.removeAt(0)
+        }
+
         // ── Arrival conditions ──────────────────────────────────────────
-        // The dot holds at the end position until a real signal confirms
-        // the user has left the stairs.  100% progress alone does NOT
-        // trigger arrival — it just means the dot stops advancing.
-        //
-        // Key distinction: if ML still says the user is on stairs (same
-        // direction label), a sharp turn is a TURNAROUND, not a landing
-        // turn.  Only "walking" / "idle" / null confirms the user left
-        // the stairs.
-        val arrived = progress > minProgressForArrival && (
-                // ML says "walking" → user left the stairs
-                motionLabel == "walking" ||
-                // Sharp turn + ML is NOT a stair label → landing turn
-                (isSharpTurn && isOffStairsOrUnknown)
-        )
+        val pastMinProgress = progress > minProgressForArrival
 
-        // ── Cancellation conditions (turnaround) ────────────────────────
-        // Sharp turn + ML says still on stairs (same OR opposite) → going back
-        // Sustained opposite label after min progress → going back
-        val cancelled = !arrived && stepsReceived >= 3 && (
-                (isSharpTurn && (isSameDirectionLabel || isOppositeLabel)) ||
-                (progress > minProgressForArrival && isOppositeLabel)
-        )
+        val arrivedByWalking = pastMinProgress &&
+                consecutiveWalkingCount >= walkingArrivalCount
 
-        Log.d(TAG, "step #$stepsReceived  progress=${"%.2f".format(progress)}  " +
-                "label=$motionLabel  turn=$isSharpTurn  " +
-                "headingΔ=${"%.1f".format(Math.toDegrees(headingDelta.toDouble()))}°  " +
-                "arrived=$arrived  cancelled=$cancelled")
+        val arrivedByTurn = pastMinProgress &&
+                isSharpTurn && isOffStairsOrUnknown
+
+        val arrivedByStepCap = stepsReceived >= estimatedTotalSteps &&
+                !isSameDirectionLabel
+
+        val arrived = arrivedByWalking || arrivedByTurn || arrivedByStepCap
+
+        // ── Cancellation conditions (u-turn, ML only) ───────────────────
+        val cancelled = !arrived &&
+                stepsReceived >= minStepsBeforeCancel &&
+                consecutiveOppositeCount >= oppositeDirectionCancelCount
+
+        Log.d(TAG, "step #$stepsReceived  prog=${"%.2f".format(progress)}  " +
+                "label=$motionLabel  " +
+                "walkCnt=$consecutiveWalkingCount  oppCnt=$consecutiveOppositeCount  " +
+                "headΔ=${"%.0f".format(Math.toDegrees(headingDelta.toDouble()))}°  " +
+                "sharpTurn=$isSharpTurn  " +
+                "arrW=$arrivedByWalking arrT=$arrivedByTurn arrS=$arrivedByStepCap  " +
+                "cancel=$cancelled")
 
         when {
-            arrived -> forceArrive()
-            cancelled -> cancelTransition()
+            arrived -> {
+                val reason = when {
+                    arrivedByWalking -> ArrivalReason.WALKING
+                    else             -> ArrivalReason.TURN
+                }
+                forceArrive(reason)
+            }
+            cancelled -> beginReturn()
         }
 
         return currentPosition
@@ -243,22 +284,22 @@ class StairwellTransitionAnimator(
      * Forces immediate arrival — snaps to the end position and transitions
      * to ARRIVED state.
      */
-    fun forceArrive() {
+    fun forceArrive(reason: ArrivalReason = ArrivalReason.TURN) {
+        arrivalReason = reason
         progress = 1f
         currentPosition = endPosition
         state = StairClimbingState.ARRIVED
-        Log.d(TAG, "ARRIVED after $stepsReceived steps")
+        Log.d(TAG, "ARRIVED after $stepsReceived steps (reason=$reason)")
     }
 
     /**
      * Begins the reverse animation back to the origin floor.
      * Transitions to RETURNING state; subsequent [advanceReturnStep] calls
-     * will decrement progress until arrivedBack at the start position.
+     * will decrement progress until the dot reaches the start position.
      */
-    fun cancelTransition() {
-        // Record how far the user got — this determines how many steps
-        // the return animation needs.
-        returnTotalSteps = (stepsReceived * progress).toInt().coerceAtLeast(minEstimatedSteps / 2)
+    private fun beginReturn() {
+        returnTotalSteps = (stepsReceived * progress).toInt()
+            .coerceAtLeast(minEstimatedSteps / 2)
         returnStepsReceived = 0
         progressAtTurnaround = progress
         state = StairClimbingState.RETURNING
@@ -291,8 +332,8 @@ class StairwellTransitionAnimator(
 
         val arrivedBack = returnProgress >= 1f || motionLabel == "walking"
 
-        Log.d(TAG, "return step #$returnStepsReceived  progress=${"%.2f".format(progress)}  " +
-                "returnProgress=${"%.2f".format(returnProgress)}  arrivedBack=$arrivedBack")
+        Log.d(TAG, "return step #$returnStepsReceived  prog=${"%.2f".format(progress)}  " +
+                "returnProg=${"%.2f".format(returnProgress)}  arrivedBack=$arrivedBack")
 
         if (arrivedBack) {
             progress = 0f
@@ -317,6 +358,10 @@ class StairwellTransitionAnimator(
         returnTotalSteps = 0
         returnStepsReceived = 0
         progressAtTurnaround = 0f
+        arrivalReason = ArrivalReason.NONE
+        consecutiveWalkingCount = 0
+        consecutiveOppositeCount = 0
+        headingWindow.clear()
     }
 
     /** Full reset (e.g. tracking cleared). */
@@ -325,7 +370,6 @@ class StairwellTransitionAnimator(
         currentPosition = Offset.Zero
         startPosition = Offset.Zero
         endPosition = Offset.Zero
-        headingAtStart = 0f
         direction = StairDirection.UP
     }
 }

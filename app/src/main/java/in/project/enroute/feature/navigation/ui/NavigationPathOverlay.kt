@@ -37,7 +37,7 @@ fun NavigationPathOverlay(
     currentVisibleFloor: String?,
     canvasState: CanvasState,
     modifier: Modifier = Modifier,
-    pathColor: Color = Color(0xFF4285F4),       // Google Maps blue
+    pathColor: Color = Color(0xFF009688),       // Teal — distinct from blue PDR indicator
     pathWidth: Float = 10f,
     destinationColor: Color = Color(0xFFEA4335) // Google Maps red
 ) {

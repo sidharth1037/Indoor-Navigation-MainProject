@@ -7,6 +7,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -39,6 +42,7 @@ fun SettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
+            .verticalScroll(rememberScrollState())
     ) {
         // Settings label
         Text(
@@ -69,6 +73,81 @@ fun SettingsScreen(
                 modifier = Modifier.padding(start = 16.dp)
             )
         }
+
+        Spacer(Modifier.height(8.dp))
+
+        // ── Stride tuning sliders ───────────────────────────────────────
+        Text(
+            text = "Stride Tuning",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        // K value slider (cadence sensitivity)
+        Text(
+            text = "K (cadence sensitivity): ${"%.3f".format(uiState.strideK)}",
+            fontSize = 14.sp
+        )
+        Slider(
+            value = uiState.strideK,
+            onValueChange = { viewModel.updateStrideK(it) },
+            valueRange = 0.05f..0.30f,
+            steps = 24,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(Modifier.height(4.dp))
+
+        // C value slider (base stride constant)
+        Text(
+            text = "C (base stride): ${"%.3f".format(uiState.strideC)}",
+            fontSize = 14.sp
+        )
+        Slider(
+            value = uiState.strideC,
+            onValueChange = { viewModel.updateStrideC(it) },
+            valueRange = 0.10f..0.40f,
+            steps = 29,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text(
+            text = "Lower values = shorter steps on map",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+
+        // ── Step detection threshold slider ────────────────────────────────────
+        Text(
+            text = "Step Detection Threshold",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        // Step threshold slider (acceleration in m/s²)
+        Text(
+            text = "Threshold: ${"%.1f".format(uiState.stepThreshold)} m/s²",
+            fontSize = 14.sp
+        )
+        Slider(
+            value = uiState.stepThreshold,
+            onValueChange = { viewModel.updateStepThreshold(it) },
+            valueRange = 9.4f..12f,
+            steps = 13,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text(
+            text = "Higher values = fewer false steps, may miss real steps",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+
+        Spacer(Modifier.height(8.dp))
 
         // Clear cache button
         var cacheCleared by remember { mutableStateOf(false) }

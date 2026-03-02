@@ -69,3 +69,14 @@ enum class StairClimbingState {
     /** Return animation finished — waiting to restore origin floor. */
     CANCELLED
 }
+
+/** How the stairwell arrival was triggered — determines whether
+ *  compensation steps should be replayed on the new floor. */
+enum class ArrivalReason {
+    /** Not arrived yet. */
+    NONE,
+    /** Arrived because ML said "walking" — user already walked past top. */
+    WALKING,
+    /** Arrived because a sharp heading turn was detected at the landing. */
+    TURN
+}
