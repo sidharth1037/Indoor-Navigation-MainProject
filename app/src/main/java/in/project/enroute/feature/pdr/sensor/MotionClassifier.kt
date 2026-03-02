@@ -16,8 +16,8 @@ import java.nio.channels.FileChannel
  */
 class MotionClassifier(
     context: Context,
-    modelFileName: String = "model/model_v5.tflite",
-    metaFileName: String = "model/model_meta_v5.json"
+    modelFileName: String = "model/model_v6.tflite",
+    metaFileName: String = "model/model_meta_v6.json"
 ) {
 
     val meta: MotionMeta = MotionMeta.fromAssets(context, metaFileName)

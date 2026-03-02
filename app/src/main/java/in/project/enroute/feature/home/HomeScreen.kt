@@ -408,17 +408,6 @@ private fun HomeScreenContent(
                     )
                 }
 
-                // Motion classification label — small chip when tracking
-                if (pdrUiState.pdrState.isTracking && pdrUiState.motionLabel != null) {
-                    MotionLabel(
-                        label = pdrUiState.motionLabel,
-                        confidence = pdrUiState.motionConfidence,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(top = 80.dp, end = 8.dp)
-                    )
-                }
-
                 // Origin selection overlay with instructions (when in selection mode)
                 if (pdrUiState.isSelectingOrigin) {
                     OriginSelectionOverlay(
@@ -430,6 +419,14 @@ private fun HomeScreenContent(
                 // Floor slider and search button positioned at top, layered over canvas
                 // Hidden during origin selection mode
                 if (!pdrUiState.isSelectingOrigin) {
+                    // Shared animated top padding for left-side elements (mirrors CompassButton logic)
+                    val isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch
+                    val motionLabelTopPadding by animateDpAsState(
+                        targetValue = if (isSliderVisible) 88.dp else 52.dp,
+                        animationSpec = dpTween(durationMillis = 300),
+                        label = "MotionLabelTopPadding"
+                    )
+
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -466,10 +463,21 @@ private fun HomeScreenContent(
                             campusNorthDegrees = uiState.campusMetadata.north,
                             canvasRotationDegrees = effectiveCanvasState.rotation,
                             onClick = { /* Could reset canvas rotation */ },
-                            isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
+                            isSliderVisible = isSliderVisible,
                             isSearching = isMorphingToSearch,
                             modifier = Modifier.align(Alignment.TopEnd)
                         )
+
+                        // Motion classification label — left edge, tracks slider visibility
+                        if (pdrUiState.pdrState.isTracking && pdrUiState.motionLabel != null) {
+                            MotionLabel(
+                                label = pdrUiState.motionLabel,
+                                confidence = pdrUiState.motionConfidence,
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(top = motionLabelTopPadding)
+                            )
+                        }
                     }
                 }
 

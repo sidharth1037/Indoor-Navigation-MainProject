@@ -6,7 +6,7 @@ import com.google.gson.annotations.SerializedName
 import java.io.InputStreamReader
 
 /**
- * Metadata loaded from model_meta_v5.json.
+ * Metadata loaded from model metadata json.
  * Provides normalization params, class names, and sliding window config.
  */
 data class MotionMeta(
