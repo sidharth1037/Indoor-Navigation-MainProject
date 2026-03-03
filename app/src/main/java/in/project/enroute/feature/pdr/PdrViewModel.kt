@@ -57,6 +57,14 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(PdrUiState())
     val uiState: StateFlow<PdrUiState> = _uiState.asStateFlow()
 
+    // ── Motion-gated step detection ──────────────────────────────────
+    // The TFLite model needs ~1.9 s (96 samples @ 50 Hz) before its
+    // first classification.  Steps detected before that are buffered and
+    // replayed once the first non-idle label arrives.
+    private data class BufferedStep(val intervalMs: Long, val heading: Float)
+    private val stepBuffer = mutableListOf<BufferedStep>()
+    private var hasReceivedMotionClassification = false
+
     /**
      * Current heading exposed as a separate flow so compass-only changes
      * don't cause full HomeScreen recomposition.
@@ -97,26 +105,40 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Load step detection threshold from settings
-        viewModelScope.launch {
-            settingsRepository.stepThreshold.collect { threshold ->
-                if (threshold != null) {
-                    val updatedConfig = _uiState.value.stepDetectionConfig.copy(threshold = threshold)
-                    _uiState.update { it.copy(stepDetectionConfig = updatedConfig) }
-                    stepDetector.updateConfig(updatedConfig)
+        // Load step detection parameters from settings
+        fun collectStepParam(flow: kotlinx.coroutines.flow.Flow<Float?>, update: StepDetectionConfig.(Float) -> StepDetectionConfig) {
+            viewModelScope.launch {
+                flow.collect { value ->
+                    if (value != null) {
+                        val updated = _uiState.value.stepDetectionConfig.update(value)
+                        _uiState.update { it.copy(stepDetectionConfig = updated) }
+                        stepDetector.updateConfig(updated)
+                    }
                 }
             }
         }
+        collectStepParam(settingsRepository.stepThreshold)     { copy(threshold = it) }
+        collectStepParam(settingsRepository.highPassAlpha)     { copy(highPassAlpha = it) }
+        collectStepParam(settingsRepository.minProminence)     { copy(minProminence = it) }
+        collectStepParam(settingsRepository.rhythmToleranceLow)  { copy(rhythmToleranceLow = it) }
+        collectStepParam(settingsRepository.rhythmToleranceHigh) { copy(rhythmToleranceHigh = it) }
+        collectStepParam(settingsRepository.floorThreshold)    { copy(floorThreshold = it) }
 
-        // Set up step detector callback
+        // Set up step detector callbacks — gated by motion classification.
+        // Before first model output: buffer steps.
+        // After first output: only register if model says non-idle.
         stepDetector.onStepDetected = { stepIntervalMs ->
-            // Only process steps if we're tracking (origin is set)
             if (_uiState.value.pdrState.isTracking) {
-                repository.processStep(stepIntervalMs, headingDetector.heading.value)
+                if (!hasReceivedMotionClassification) {
+                    // Model hasn't produced output yet — buffer the step
+                    stepBuffer.add(BufferedStep(stepIntervalMs, headingDetector.heading.value))
+                } else if (_uiState.value.motionLabel != LABEL_IDLE) {
+                    // Active motion (walking / upstairs / downstairs) — register
+                    repository.processStep(stepIntervalMs, headingDetector.heading.value)
+                }
+                // else: idle — discard step
             }
         }
-
-        // Forward raw accelerometer data to motion classifier
         stepDetector.onAccelerometerData = { x, y, z ->
             motionRepository.onAccelerometerSample(x, y, z)
         }
@@ -135,7 +157,7 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Observe motion classification results
+        // Observe motion classification results & flush step buffer on first output
         viewModelScope.launch {
             motionRepository.motionEvent.collect { event ->
                 _uiState.update {
@@ -147,6 +169,16 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
                 // Forward to repository for stairwell detection
                 if (event != null) {
                     repository.onMotionLabel(event.classificationName, event.confidence)
+
+                    // First classification after tracking started
+                    if (!hasReceivedMotionClassification) {
+                        hasReceivedMotionClassification = true
+                        if (event.classificationName != LABEL_IDLE) {
+                            flushStepBuffer()
+                        } else {
+                            stepBuffer.clear()
+                        }
+                    }
                 }
             }
         }
@@ -219,6 +251,9 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
             repository.setFloorConstraints(floorConstraintData)
         }
 
+        // Reset motion gate for this new tracking session
+        resetMotionGate()
+
         // Set origin in repository (this enables tracking)
         repository.setOrigin(origin, currentFloor)
         
@@ -277,6 +312,9 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         
         // Clear repository state
         repository.clearAndStopTracking()
+
+        // Reset motion gate
+        resetMotionGate()
     }
 
     /**
@@ -308,6 +346,22 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         headingDetector.setTrackingMode(enabled)
     }
 
+    // ── Motion-gate helpers ─────────────────────────────────────────
+
+    /** Replays all buffered early steps through the repository. */
+    private fun flushStepBuffer() {
+        for (step in stepBuffer) {
+            repository.processStep(step.intervalMs, step.heading)
+        }
+        stepBuffer.clear()
+    }
+
+    /** Resets buffer and flag for a new tracking session. */
+    private fun resetMotionGate() {
+        stepBuffer.clear()
+        hasReceivedMotionClassification = false
+    }
+
     /**
      * Starts all PDR sensors: heading, step detector, and motion classifier.
      * Called internally when origin is set and tracking begins.
@@ -330,9 +384,13 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        // Clean up all sensors when ViewModel is destroyed
         headingDetector.stop()
         stepDetector.stop()
         motionRepository.stop()
+    }
+
+    companion object {
+        /** Label emitted by TFLite model when the user is stationary. */
+        private const val LABEL_IDLE = "idle"
     }
 }

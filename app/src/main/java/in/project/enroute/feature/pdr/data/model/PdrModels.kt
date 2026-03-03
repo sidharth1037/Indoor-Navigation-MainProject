@@ -37,14 +37,37 @@ data class CadenceState(
 /**
  * Configuration parameters for step detection.
  *
- * @param threshold Acceleration threshold for step detection
- * @param debounceMs Minimum time between steps in milliseconds
- * @param windowSize Window size for peak detection
+ * Combines four anti-false-positive techniques:
+ *   A) High-pass filter strips gravity DC, leaving only dynamic acceleration
+ *   B) Peak prominence ensures a real valley precedes each counted peak
+ *   C) Cadence rhythm gate rejects peaks outside the user's walking rhythm
+ *   D) Floor threshold requires signal to return to rest between steps
+ *
+ * All thresholds are in the **filtered** z domain (roughly ±0–4 m/s²).
+ *
+ * @param threshold        Filtered |z| peak must exceed this (m/s²)
+ * @param debounceMs       Hard minimum time between steps (ms)
+ * @param windowSize       Sliding window depth for peak detection
+ * @param highPassAlpha    High-pass filter coefficient (0–1). Higher = more
+ *                         responsive but less gravity rejection.
+ * @param minProminence    Valley-to-peak height required (m/s²). Ensures
+ *                         the step has a proper preceding trough.
+ * @param rhythmToleranceLow   Lower bound: next step must arrive after
+ *                             avgInterval × this factor.
+ * @param rhythmToleranceHigh  Upper bound: next step must arrive before
+ *                             avgInterval × this factor.
+ * @param floorThreshold   Filtered |z| must drop below this between steps (m/s²).
+ *                         Ensures each step completes a full oscillation cycle.
  */
 data class StepDetectionConfig(
-    val threshold: Float = 12f,
+    val threshold: Float = 2.0f,
     val debounceMs: Long = 300L,
-    val windowSize: Int = 6
+    val windowSize: Int = 6,
+    val highPassAlpha: Float = 0.9f,
+    val minProminence: Float = 1.5f,
+    val rhythmToleranceLow: Float = 0.4f,
+    val rhythmToleranceHigh: Float = 1.8f,
+    val floorThreshold: Float = 0.8f
 )
 
 /**

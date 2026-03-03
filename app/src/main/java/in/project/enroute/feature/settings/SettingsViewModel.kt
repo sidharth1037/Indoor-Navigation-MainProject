@@ -18,12 +18,15 @@ data class SettingsUiState(
     val isEditingHeight: Boolean = false,
     val heightInputValue: String = "",
     val showEntrances: Boolean = false,
-    /** Stride K value (cadence sensitivity). Null = default. */
     val strideK: Float = StrideConfig().kValue,
-    /** Stride C value (base stride constant). Null = default. */
     val strideC: Float = StrideConfig().cValue,
-    /** Step detection threshold in m/s². Null = default (12f). */
-    val stepThreshold: Float = 12f
+    // Step detection — filtered z domain
+    val stepThreshold: Float = 2.0f,
+    val highPassAlpha: Float = 0.9f,
+    val minProminence: Float = 1.5f,
+    val rhythmToleranceLow: Float = 0.4f,
+    val rhythmToleranceHigh: Float = 1.8f,
+    val floorThreshold: Float = 0.8f
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -71,14 +74,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             }
         }
 
-        // Load step detection threshold
-        viewModelScope.launch {
-            repository.stepThreshold.collect { threshold ->
-                if (threshold != null) {
-                    _uiState.update { it.copy(stepThreshold = threshold) }
-                }
-            }
-        }
+        // Load step detection parameters
+        viewModelScope.launch { repository.stepThreshold.collect     { if (it != null) _uiState.update { s -> s.copy(stepThreshold = it) } } }
+        viewModelScope.launch { repository.highPassAlpha.collect     { if (it != null) _uiState.update { s -> s.copy(highPassAlpha = it) } } }
+        viewModelScope.launch { repository.minProminence.collect     { if (it != null) _uiState.update { s -> s.copy(minProminence = it) } } }
+        viewModelScope.launch { repository.rhythmToleranceLow.collect  { if (it != null) _uiState.update { s -> s.copy(rhythmToleranceLow = it) } } }
+        viewModelScope.launch { repository.rhythmToleranceHigh.collect { if (it != null) _uiState.update { s -> s.copy(rhythmToleranceHigh = it) } } }
+        viewModelScope.launch { repository.floorThreshold.collect    { if (it != null) _uiState.update { s -> s.copy(floorThreshold = it) } } }
     }
 
     fun toggleEditHeight() {
@@ -165,13 +167,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /**
-     * Updates the step detection threshold (acceleration in m/s²) and persists it.
-     */
-    fun updateStepThreshold(threshold: Float) {
-        _uiState.update { it.copy(stepThreshold = threshold) }
-        viewModelScope.launch {
-            repository.saveStepThreshold(threshold)
-        }
-    }
+    fun updateStepThreshold(v: Float)       { _uiState.update { it.copy(stepThreshold = v) };        viewModelScope.launch { repository.saveStepThreshold(v) } }
+    fun updateHighPassAlpha(v: Float)       { _uiState.update { it.copy(highPassAlpha = v) };        viewModelScope.launch { repository.saveHighPassAlpha(v) } }
+    fun updateMinProminence(v: Float)       { _uiState.update { it.copy(minProminence = v) };        viewModelScope.launch { repository.saveMinProminence(v) } }
+    fun updateRhythmToleranceLow(v: Float)  { _uiState.update { it.copy(rhythmToleranceLow = v) };  viewModelScope.launch { repository.saveRhythmToleranceLow(v) } }
+    fun updateRhythmToleranceHigh(v: Float) { _uiState.update { it.copy(rhythmToleranceHigh = v) }; viewModelScope.launch { repository.saveRhythmToleranceHigh(v) } }
+    fun updateFloorThreshold(v: Float)      { _uiState.update { it.copy(floorThreshold = v) };      viewModelScope.launch { repository.saveFloorThreshold(v) } }
 }
