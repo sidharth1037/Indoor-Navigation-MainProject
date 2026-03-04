@@ -41,19 +41,14 @@ data class WallConstraintResult(
 // ── Entrance snapping ───────────────────────────────────────────────────────
 
 /**
- * An entrance point already transformed to campus-wide coordinates.
+ * A room entrance point already transformed to campus-wide coordinates.
+ * Stair entrances are excluded during loading (see [FloorConstraintProvider]).
  */
 data class CampusEntrance(
     val id: Int,
     val position: Offset,
-    val name: String? = null,
-    /** Stair position: "top", "bottom", or null for regular entrances. */
-    val stairs: String? = null,
-    /** The floor number this stair entrance connects to. */
-    val stairFloor: Float? = null
-) {
-    val isStairs: Boolean get() = stairs != null
-}
+    val name: String? = null
+)
 
 /**
  * Result of attempting to snap a position to a nearby entrance.

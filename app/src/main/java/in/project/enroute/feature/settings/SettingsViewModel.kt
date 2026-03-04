@@ -34,9 +34,9 @@ data class SettingsUiState(
     // ML model & stair detection
     val mlModel: String = "v6",
     val stairEntryThreshold: Int = 2,
+    val stairProximityRadius: Float = 150f,
     val stairLookback: Int = 3,
-    val stairReplayCount: Int = 3,
-    val stairProximityRadius: Float = 150f
+    val stairReplayCount: Int = 3
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -95,9 +95,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         // Load ML model & stair detection settings
         viewModelScope.launch { repository.mlModel.collect             { if (it != null) _uiState.update { s -> s.copy(mlModel = it) } } }
         viewModelScope.launch { repository.stairEntryThreshold.collect { if (it != null) _uiState.update { s -> s.copy(stairEntryThreshold = it) } } }
+        viewModelScope.launch { repository.stairProximityRadius.collect { if (it != null) _uiState.update { s -> s.copy(stairProximityRadius = it) } } }
         viewModelScope.launch { repository.stairLookback.collect       { if (it != null) _uiState.update { s -> s.copy(stairLookback = it) } } }
         viewModelScope.launch { repository.stairReplayCount.collect    { if (it != null) _uiState.update { s -> s.copy(stairReplayCount = it) } } }
-        viewModelScope.launch { repository.stairProximityRadius.collect { if (it != null) _uiState.update { s -> s.copy(stairProximityRadius = it) } } }
 
         // Load stride tuning — height & turn
         viewModelScope.launch { repository.heightKInfluence.collect  { if (it != null) _uiState.update { s -> s.copy(heightKInfluence = it) } } }
@@ -199,9 +199,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun updateMlModel(v: String)             { _uiState.update { it.copy(mlModel = v) };             viewModelScope.launch { repository.saveMlModel(v) } }
     fun updateStairEntryThreshold(v: Int)    { _uiState.update { it.copy(stairEntryThreshold = v) };  viewModelScope.launch { repository.saveStairEntryThreshold(v) } }
+    fun updateStairProximityRadius(v: Float)  { _uiState.update { it.copy(stairProximityRadius = v) }; viewModelScope.launch { repository.saveStairProximityRadius(v) } }
     fun updateStairLookback(v: Int)           { _uiState.update { it.copy(stairLookback = v) };       viewModelScope.launch { repository.saveStairLookback(v) } }
     fun updateStairReplayCount(v: Int)        { _uiState.update { it.copy(stairReplayCount = v) };    viewModelScope.launch { repository.saveStairReplayCount(v) } }
-    fun updateStairProximityRadius(v: Float) { _uiState.update { it.copy(stairProximityRadius = v) }; viewModelScope.launch { repository.saveStairProximityRadius(v) } }
 
     fun updateHeightKInfluence(v: Float)  { _uiState.update { it.copy(heightKInfluence = v) };  viewModelScope.launch { repository.saveHeightKInfluence(v) } }
     fun updateTurnWindow(v: Int)          { _uiState.update { it.copy(turnWindow = v) };        viewModelScope.launch { repository.saveTurnWindow(v) } }

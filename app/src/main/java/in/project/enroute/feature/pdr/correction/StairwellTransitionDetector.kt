@@ -6,8 +6,9 @@ import androidx.compose.ui.geometry.Offset
 /**
  * Boundary-based stairwell entry detector.
  *
- * Uses [StairwellZone] polygon boundaries instead of entrance-proximity
- * checks, which gives accurate start/end positioning even for wide stairwells.
+ * Uses [StairwellZone] polygon boundaries and top/bottom edges instead
+ * of entrance-proximity checks, giving accurate start/end positioning
+ * even for wide stairwells.
  *
  * ## Detection modes
  *
@@ -26,6 +27,13 @@ import androidx.compose.ui.geometry.Offset
  * confirms climbing, the detector uses the stored crossing point as the
  * entry position and fires a retroactive transition.
  *
+ * ### 3. Edge-proximity + ML
+ * When the user is within [proximityRadius] of a stairwell's entry
+ * edge (bottom edge when going up, top edge when going down) and ML
+ * threshold is met, a transition fires.  This mirrors the old
+ * entrance-proximity approach but uses edge line segments instead of
+ * entrance points, giving better coverage for wide stairwells.
+ *
  * ### Same-floor stairwells
  * Stairwells whose [StairwellZone.isSameFloor] is true (e.g. 0.3↔0.6
  * within the same floor plan) produce transitions with
@@ -37,6 +45,12 @@ class StairwellTransitionDetector(
     private var entryThreshold: Int = 2,
     /** Minimum ML confidence to accept a label. */
     private val minConfidence: Float = 0.45f,
+    /**
+     * Maximum distance (campus units) from a stairwell top/bottom edge
+     * to trigger proximity-based detection (Mode 3).  Mirrors the old
+     * entrance-proximity approach but uses edge segments instead of points.
+     */
+    private var proximityRadius: Float = 150f,
     /**
      * Maximum age (in label ticks) of a stored boundary crossing before
      * it expires.  Prevents stale crossings from triggering transitions
@@ -73,8 +87,9 @@ class StairwellTransitionDetector(
 
     // ── Settings ────────────────────────────────────────────────────────
 
-    fun updateSettings(entryThreshold: Int? = null) {
+    fun updateSettings(entryThreshold: Int? = null, proximityRadius: Float? = null) {
         if (entryThreshold != null) this.entryThreshold = entryThreshold
+        if (proximityRadius != null) this.proximityRadius = proximityRadius
     }
 
     // ── Label feed ──────────────────────────────────────────────────────
@@ -188,6 +203,14 @@ class StairwellTransitionDetector(
             )
         }
 
+        // ── Mode 3: Edge-proximity — near a top/bottom edge ─────────
+        val nearEdge = findNearestEdgeZone(position, zones, currentFloorNumber, goingUp)
+        if (nearEdge != null) {
+            Log.d(TAG, "edge proximity: polygon=${nearEdge.polygonId} " +
+                    "dist within $proximityRadius")
+            return buildTransition(nearEdge, position, heading, goingUp)
+        }
+
         Log.d(TAG, "no zone match for position or stored crossings")
         return null
     }
@@ -224,6 +247,39 @@ class StairwellTransitionDetector(
             return record
         }
         return null
+    }
+
+    /**
+     * Finds the nearest stairwell zone where the user is within
+     * [proximityRadius] of the relevant entry edge (bottom edge when
+     * going up, top edge when going down).  Mirrors the old
+     * entrance-proximity logic but uses edge line segments.
+     */
+    private fun findNearestEdgeZone(
+        position: Offset,
+        zones: List<StairwellZone>,
+        currentFloorNumber: Float,
+        goingUp: Boolean
+    ): StairwellZone? {
+        var bestZone: StairwellZone? = null
+        var bestDist = Float.MAX_VALUE
+
+        for (zone in zones) {
+            if (currentFloorNumber !in zone.floorsConnected) continue
+            if (goingUp && zone.bottomFloorNumber != currentFloorNumber) continue
+            if (!goingUp && zone.topFloorNumber != currentFloorNumber) continue
+
+            // Check distance to the entry edge (bottom when going up, top when going down)
+            val entryEdge = if (goingUp) zone.bottomEdge else zone.topEdge
+            val dist = GeometryUtils.distanceToSegment(position, entryEdge.first, entryEdge.second)
+
+            if (dist <= proximityRadius && dist < bestDist) {
+                bestDist = dist
+                bestZone = zone
+            }
+        }
+
+        return bestZone
     }
 
     private fun buildTransition(

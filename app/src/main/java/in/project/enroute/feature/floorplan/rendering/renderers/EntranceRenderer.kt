@@ -8,33 +8,32 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Renders entrance points on the canvas.
- * Regular entrances are yellow, stairwell entrances are green.
+ * Renders room entrance points on the canvas as yellow dots.
+ * Stair entrances are excluded — stairwell access is handled via polygon data.
  */
 fun DrawScope.drawEntrances(
     entrances: List<Entrance>,
     scale: Float,
     rotationDegrees: Float,
     radius: Float = 8f,
-    regularColor: Color = Color(0xFFFFFF00), // Yellow
-    stairColor: Color = Color(0xFF00FF00)    // Green
+    color: Color = Color(0xFFFFFF00) // Yellow
 ) {
     val angleRad = Math.toRadians(rotationDegrees.toDouble()).toFloat()
     val cosAngle = cos(angleRad)
     val sinAngle = sin(angleRad)
 
-    // Draw entrance circles
+    // Draw only room entrances (skip stair entrances)
     for (entrance in entrances) {
+        if (entrance.isStairs) continue
+
         val x = entrance.x * scale
         val y = entrance.y * scale
 
         val rotatedX = x * cosAngle - y * sinAngle
         val rotatedY = x * sinAngle + y * cosAngle
 
-        val entranceColor = if (entrance.isStairs) stairColor else regularColor
-
         drawCircle(
-            color = entranceColor,
+            color = color,
             radius = radius,
             center = Offset(rotatedX, rotatedY)
         )

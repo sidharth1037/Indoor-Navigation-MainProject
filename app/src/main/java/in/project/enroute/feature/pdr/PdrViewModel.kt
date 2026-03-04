@@ -6,7 +6,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import `in`.project.enroute.feature.pdr.correction.CampusBuilding
-import `in`.project.enroute.feature.pdr.correction.CorrectionConfig
 import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
 import `in`.project.enroute.feature.pdr.correction.StairwellZone
 import `in`.project.enroute.feature.pdr.data.model.PdrState
@@ -194,7 +193,11 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
                 if (v != null) repository.updateStairSettings(replayCount = v)
             }
         }
-        // proximityRadius no longer used — detector is boundary-based
+        viewModelScope.launch {
+            settingsRepository.stairProximityRadius.collect { v ->
+                if (v != null) repository.updateStairSettings(proximityRadius = v)
+            }
+        }
 
         // Set up step detector callbacks — gated by motion classification.
         // Before first model output: buffer steps.
@@ -335,21 +338,6 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Floor constraint management ──────────────────────────────────
 
-    /**
-     * Supplies (or replaces) the floor plan wall/entrance data used for
-     * error correction.  Can be called independently of [setOrigin] to
-     * support floor switching later.
-     */
-    fun setFloorConstraints(data: FloorConstraintData) {
-        repository.setFloorConstraints(data)
-    }
-
-    /**
-     * Hot-swaps correction tuning parameters without resetting the path.
-     */
-    fun updateCorrectionConfig(config: CorrectionConfig) {
-        repository.updateCorrectionConfig(config)
-    }
 
     /**
      * Supplies pre-transformed campus building data for automatic

@@ -204,11 +204,15 @@ class PdrRepository {
      */
     fun updateStairSettings(
         entryThreshold: Int? = null,
+        proximityRadius: Float? = null,
         lookback: Int? = null,
         replayCount: Int? = null
     ) {
-        if (entryThreshold != null) {
-            stairDetector.updateSettings(entryThreshold = entryThreshold)
+        if (entryThreshold != null || proximityRadius != null) {
+            stairDetector.updateSettings(
+                entryThreshold = entryThreshold,
+                proximityRadius = proximityRadius
+            )
         }
         if (lookback != null)    stairLookback    = lookback
         if (replayCount != null) stairReplayCount = replayCount
@@ -522,10 +526,12 @@ class PdrRepository {
     }
 
     /**
-     * Boundary-based stairwell check.  Two detection modes:
+     * Boundary-based stairwell check.  Three detection modes:
      *  1. User is inside a stairwell polygon AND ML threshold met → immediate.
      *  2. User previously crossed a stairwell boundary (stored crossing) AND
      *     ML later confirms climbing → retroactive transition.
+     *  3. User is within proximity radius of a stairwell entry edge AND
+     *     ML threshold met → edge-proximity transition.
      *
      * Boundary crossings are recorded on every step via
      * [StairwellTransitionDetector.recordBoundaryCrossings].

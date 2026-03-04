@@ -248,6 +248,11 @@ fun SettingsScreen(
         Slider(value = uiState.stairEntryThreshold.toFloat(), onValueChange = { viewModel.updateStairEntryThreshold(it.toInt()) }, valueRange = 1f..5f, steps = 3, modifier = Modifier.fillMaxWidth())
         Text("Consecutive stair labels needed before triggering transition. Default 2.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
 
+        // Edge proximity radius
+        Text("Edge proximity: ${uiState.stairProximityRadius.toInt()} units", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairProximityRadius, onValueChange = { viewModel.updateStairProximityRadius(it) }, valueRange = 50f..400f, steps = 13, modifier = Modifier.fillMaxWidth())
+        Text("Max distance from a stairwell edge to trigger proximity detection. Default 150.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
         // Lookback
         Text("Lookback: ${uiState.stairLookback} steps", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         Slider(value = uiState.stairLookback.toFloat(), onValueChange = { viewModel.updateStairLookback(it.toInt()) }, valueRange = 0f..8f, steps = 7, modifier = Modifier.fillMaxWidth())
@@ -257,11 +262,6 @@ fun SettingsScreen(
         Text("Replay count: ${uiState.stairReplayCount} steps", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         Slider(value = uiState.stairReplayCount.toFloat(), onValueChange = { viewModel.updateStairReplayCount(it.toInt()) }, valueRange = 0f..8f, steps = 7, modifier = Modifier.fillMaxWidth())
         Text("How many buffered steps to replay on the new floor. Default 3.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
-
-        // Proximity radius
-        Text("Proximity radius: ${"%.0f".format(uiState.stairProximityRadius)} px", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
-        Slider(value = uiState.stairProximityRadius, onValueChange = { viewModel.updateStairProximityRadius(it) }, valueRange = 50f..300f, steps = 24, modifier = Modifier.fillMaxWidth())
-        Text("Max distance to stairwell entrance to trigger transition. Default 150.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
 
         // ─────────────────────────────────────────────────────────────────────
         // 4. ADMIN

@@ -88,6 +88,14 @@ fun HomeScreen(
         }
     }
 
+    // Supply stairwell connections for cross-floor navigation
+    LaunchedEffect(uiState.buildingStates) {
+        if (uiState.buildingStates.isNotEmpty()) {
+            val connections = floorPlanViewModel.getStairwellConnections()
+            navigationViewModel.supplyStairwellConnections(connections)
+        }
+    }
+
     // Supply building boundary data to PdrViewModel for automatic building detection
     LaunchedEffect(uiState.buildingStates) {
         if (uiState.buildingStates.isNotEmpty()) {

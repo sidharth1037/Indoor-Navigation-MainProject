@@ -44,16 +44,17 @@ class FloorConstraintProvider {
             CampusWall(start = Offset(sx, sy), end = Offset(ex, ey))
         }
 
-        campusEntrances = floorPlanData.entrances.map { entrance ->
-            val (cx, cy) = rawToCampus(entrance.x, entrance.y, scale, rotationDegrees, offsetX, offsetY)
-            CampusEntrance(
-                id = entrance.id,
-                position = Offset(cx, cy),
-                name = entrance.name,
-                stairs = entrance.stairs,
-                stairFloor = entrance.floor
-            )
-        }
+        // Only keep room entrances — stair entrances are handled via StairwellZone/StairwellConnection
+        campusEntrances = floorPlanData.entrances
+            .filter { it.stairs == null }
+            .map { entrance ->
+                val (cx, cy) = rawToCampus(entrance.x, entrance.y, scale, rotationDegrees, offsetX, offsetY)
+                CampusEntrance(
+                    id = entrance.id,
+                    position = Offset(cx, cy),
+                    name = entrance.name
+                )
+            }
     }
 
     /** All walls within [radius] units of [position]. */
@@ -89,13 +90,6 @@ class FloorConstraintProvider {
 
     /** Unfiltered list of all campus-coordinate walls. */
     fun getAllWalls(): List<CampusWall> = campusWalls
-
-    /** Unfiltered list of all campus-coordinate entrances. */
-    fun getAllEntrances(): List<CampusEntrance> = campusEntrances
-
-    /** All stair entrances ("top" or "bottom") on the loaded floor. */
-    fun getStairEntrances(): List<CampusEntrance> =
-        campusEntrances.filter { it.isStairs }
 
     /** `true` after [loadFloor] has been called with non-empty wall data. */
     fun isLoaded(): Boolean = campusWalls.isNotEmpty()

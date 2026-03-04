@@ -31,9 +31,9 @@ class SettingsRepository(private val context: Context) {
         // Stair detection / model
         val ML_MODEL          = stringPreferencesKey("ml_model")
         val STAIR_ENTRY_THRESHOLD  = intPreferencesKey("stair_entry_threshold")
+        val STAIR_PROXIMITY_RADIUS = floatPreferencesKey("stair_proximity_radius")
         val STAIR_LOOKBACK         = intPreferencesKey("stair_lookback")
         val STAIR_REPLAY_COUNT     = intPreferencesKey("stair_replay_count")
-        val STAIR_PROXIMITY_RADIUS = floatPreferencesKey("stair_proximity_radius")
         // Stride tuning — height & turn
         val HEIGHT_K_INFLUENCE = floatPreferencesKey("height_k_influence")
         val TURN_WINDOW        = intPreferencesKey("turn_window")
@@ -141,6 +141,10 @@ class SettingsRepository(private val context: Context) {
     val stairEntryThreshold: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_ENTRY_THRESHOLD] }
     suspend fun saveStairEntryThreshold(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_ENTRY_THRESHOLD] = v }
 
+    /** Max distance (campus units) from a stairwell edge to trigger proximity detection. Null = default 150. */
+    val stairProximityRadius: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_PROXIMITY_RADIUS] }
+    suspend fun saveStairProximityRadius(v: Float) = context.dataStore.edit { it[PreferencesKeys.STAIR_PROXIMITY_RADIUS] = v }
+
     /** How many steps back from arrival to find the first compensation step. Null = default 3. */
     val stairLookback: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_LOOKBACK] }
     suspend fun saveStairLookback(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_LOOKBACK] = v }
@@ -148,10 +152,6 @@ class SettingsRepository(private val context: Context) {
     /** How many buffered steps to replay on the new floor. Null = default 3. */
     val stairReplayCount: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_REPLAY_COUNT] }
     suspend fun saveStairReplayCount(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_REPLAY_COUNT] = v }
-
-    /** Proximity radius (campus units) for stair detection. Null = default 150. */
-    val stairProximityRadius: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_PROXIMITY_RADIUS] }
-    suspend fun saveStairProximityRadius(v: Float) = context.dataStore.edit { it[PreferencesKeys.STAIR_PROXIMITY_RADIUS] = v }
 
     // ── Stride tuning ─ height & turn ─────────────────────────────────────
 

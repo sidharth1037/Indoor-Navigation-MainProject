@@ -13,6 +13,7 @@ import `in`.project.enroute.feature.navigation.data.CampusEntrance
 import `in`.project.enroute.feature.navigation.data.FloorPathSegment
 import `in`.project.enroute.feature.navigation.data.MultiFloorPath
 import `in`.project.enroute.feature.navigation.data.MultiFloorPathfinder
+import `in`.project.enroute.feature.navigation.data.StairwellConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,7 +61,7 @@ data class NavigationUiState(
  *
  * Supports **multi-floor** navigation: when the destination room is on a different
  * floor the [MultiFloorPathfinder] stitches per-floor A* segments together via
- * stair entrances.
+ * stairwell connections (polygon midpoints).
  *
  * Uses a **single global grid** in campus-wide coordinates. All building walls
  * are transformed (scale → rotate → offset by relativePosition) at supply time
@@ -106,6 +107,12 @@ class NavigationViewModel : ViewModel() {
      * coordinates.  Populated by [supplyFloorData].
      */
     private val campusEntrances = mutableListOf<CampusEntrance>()
+
+    /**
+     * Pre-computed stairwell connections for cross-floor navigation.
+     * Populated by [supplyStairwellConnections].
+     */
+    private var stairwellConnections: List<StairwellConnection> = emptyList()
 
     /**
      * Campus-wide walls **grouped by floor ID**.
@@ -199,6 +206,16 @@ class NavigationViewModel : ViewModel() {
     }
 
     /**
+     * Supplies pre-computed stairwell connections for cross-floor navigation.
+     * Call whenever building states change (same lifecycle as [supplyFloorData]).
+     */
+    fun supplyStairwellConnections(connections: List<StairwellConnection>) {
+        stairwellConnections = connections
+        repositoryByFloor.clear()
+        Log.d(TAG, "Supplied ${connections.size} stairwell connections")
+    }
+
+    /**
      * Requests a path from the user's current position to the entrance of [room].
      *
      * Delegates to [MultiFloorPathfinder] which handles both same-floor and
@@ -248,6 +265,7 @@ class NavigationViewModel : ViewModel() {
                     startFloorId = currentFloor,
                     goalEntrance = campusEntrance,
                     allEntrances = campusEntrances.toList(),
+                    stairConnections = stairwellConnections,
                     wallsByFloor = campusWallsByFloor.toMap(),
                     boundaryByFloor = campusBoundaryByFloor.toMap(),
                     repoByFloor = repositoryByFloor
@@ -457,6 +475,7 @@ class NavigationViewModel : ViewModel() {
                     startFloorId = currentFloor,
                     goalEntrance = goalEntrance,
                     allEntrances = campusEntrances.toList(),
+                    stairConnections = stairwellConnections,
                     wallsByFloor = campusWallsByFloor.toMap(),
                     boundaryByFloor = campusBoundaryByFloor.toMap(),
                     repoByFloor = repositoryByFloor

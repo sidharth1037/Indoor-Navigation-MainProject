@@ -2,43 +2,17 @@ package `in`.project.enroute.feature.pdr.correction
 
 import androidx.compose.ui.geometry.Offset
 
-// ── Stair pair (pre-computed in FloorPlanViewModel) ─────────────────────────
-
-/**
- * A matched pair of stairwell entrances already transformed to campus-wide
- * coordinates.  Pre-computed so the PDR pipeline only needs proximity checks.
- *
- * Each pair links a "bottom" entrance to the **nearest** "top" entrance on
- * the same stairwell (identified by spatial proximity, since multiple
- * stairwells may lead to the same destination floor).
- *
- * @param bottomPosition Campus-coordinate position of the bottom entrance.
- * @param topPosition    Campus-coordinate position of the top entrance.
- * @param bottomFloorId  Floor ID of the floor the bottom entrance lives on (e.g. "floor_1").
- * @param topFloorId     Floor ID of the destination floor (e.g. "floor_2").
- * @param bottomFloorNumber Numeric floor value for the bottom (e.g. 1f).
- * @param topFloorNumber    Numeric floor value for the top (e.g. 2f).
- */
-data class StairPair(
-    val bottomPosition: Offset,
-    val topPosition: Offset,
-    val bottomFloorId: String,
-    val topFloorId: String,
-    val bottomFloorNumber: Float,
-    val topFloorNumber: Float
-)
-
 // ── Stairwell zone (boundary-based, pre-computed) ───────────────────────────
 
 /**
  * A stairwell polygon transformed to campus-wide coordinates, with its
  * "top" and "bottom" edges identified.
  *
- * Built from [Stairwell] geometry (which in turn comes from grouped StairLines).
+ * Built from Stairwell geometry (which in turn comes from grouped StairLines).
  * The detector uses polygon containment and boundary-crossing instead of
  * entrance proximity, giving much better position accuracy for wide stairwells.
  *
- * @param polygonId     Matches the original [Stairwell.polygonId].
+ * @param polygonId     Matches the original Stairwell.polygonId.
  * @param boundary      Ordered polygon vertices in campus coords.
  * @param topEdge       The edge marked "top" (line segment, campus coords).
  *                      Pair.first / Pair.second are the two endpoints.

@@ -12,11 +12,16 @@ import kotlin.math.sqrt
  * Algorithm overview:
  *  1. Determine whether the user needs to go **up** or **down** to reach
  *     the destination floor.
- *  2. On the current floor, find all stair entrances that connect toward
- *     the destination direction.
- *  3. For every candidate stairwell, compute the full multi-floor path
- *     (current floor → stair → next floor → … → destination entrance).
+ *  2. On the current floor, find all [StairwellConnection]s that connect
+ *     toward the destination direction.
+ *  3. For every candidate connection, compute the full multi-floor path
+ *     (current floor → stair midpoint → next floor → … → destination).
  *  4. Pick the route with the shortest total distance.
+ *
+ * Stairwell connections replace the old entrance-based stair pairing.
+ * Since all floors share the same campus-wide coordinate system, the
+ * exit midpoint of a stairwell on one floor is a valid start position
+ * on the adjacent floor — no cross-floor pairing is needed.
  *
  * This class is stateless — it receives all required data via method
  * parameters and can be called from any coroutine context.
@@ -35,7 +40,9 @@ class MultiFloorPathfinder {
      * @param startFloorId     Floor the user is currently on (e.g. "floor_1").
      * @param goalEntrance     The destination room's entrance (campus-wide).
      * @param allEntrances     Every entrance across all buildings/floors (campus-wide).
+     * @param stairConnections All stairwell connections across the campus.
      * @param wallsByFloor     Campus-wide walls grouped by floorId.
+     * @param boundaryByFloor  Campus-wide boundary polygons grouped by floorId.
      * @param repoByFloor      Lazily-built [NavigationRepository] per floor.
      * @return A [MultiFloorPath] with per-floor segments, or empty if no route exists.
      */
@@ -44,6 +51,7 @@ class MultiFloorPathfinder {
         startFloorId: String,
         goalEntrance: CampusEntrance,
         allEntrances: List<CampusEntrance>,
+        stairConnections: List<StairwellConnection>,
         wallsByFloor: Map<String, List<Wall>>,
         boundaryByFloor: Map<String, List<CampusBoundaryPolygon>>,
         repoByFloor: MutableMap<String, NavigationRepository>
@@ -52,7 +60,10 @@ class MultiFloorPathfinder {
 
         // ── Same-floor fast path ─────────────────────────
         if (startFloorId == goalFloorId) {
-            val repo = getOrBuildRepo(startFloorId, wallsByFloor, boundaryByFloor, repoByFloor, allEntrances) ?: return MultiFloorPath.EMPTY
+            val repo = getOrBuildRepo(
+                startFloorId, wallsByFloor, boundaryByFloor, repoByFloor,
+                allEntrances, stairConnections
+            ) ?: return MultiFloorPath.EMPTY
             val path = repo.findPath(start, goalEntrance.campusOffset)
             if (path.isEmpty()) return MultiFloorPath.EMPTY
 
@@ -79,7 +90,7 @@ class MultiFloorPathfinder {
 
         // Build the sequence of floors to traverse
         val floorSequence = buildFloorSequence(
-            startFloorNum, goalFloorNum, goingUp, allEntrances
+            startFloorNum, goalFloorNum, goingUp, allEntrances, stairConnections
         )
         if (floorSequence.isEmpty()) {
             Log.e(TAG, "Could not build floor sequence from $startFloorId to $goalFloorId")
@@ -87,29 +98,30 @@ class MultiFloorPathfinder {
         }
         Log.d(TAG, "Floor sequence: ${floorSequence.joinToString(" → ")}")
 
-        // For the first floor, find all candidate stair entrances
-        val firstFloorStairs = findCandidateStairs(
+        // Find all stairwell connections that leave the starting floor
+        val firstFloorConnections = findCandidateConnections(
             floorId = startFloorId,
             goingUp = goingUp,
-            allEntrances = allEntrances
+            stairConnections = stairConnections
         )
-        if (firstFloorStairs.isEmpty()) {
-            Log.e(TAG, "No stair entrances found on $startFloorId going ${if (goingUp) "up" else "down"}")
+        if (firstFloorConnections.isEmpty()) {
+            Log.e(TAG, "No stairwell connections on $startFloorId going ${if (goingUp) "up" else "down"}")
             return MultiFloorPath.EMPTY
         }
-        Log.d(TAG, "Found ${firstFloorStairs.size} candidate stair(s) on $startFloorId")
+        Log.d(TAG, "Found ${firstFloorConnections.size} candidate connection(s) on $startFloorId")
 
-        // Try each candidate stairwell on the first floor and compute full route
+        // Try each candidate connection and compute full route
         var bestPath: MultiFloorPath = MultiFloorPath.EMPTY
         var bestDistance = Float.MAX_VALUE
 
-        for (stairEntrance in firstFloorStairs) {
+        for (connection in firstFloorConnections) {
             val candidate = computeCandidateRoute(
                 start = start,
                 floorSequence = floorSequence,
-                firstStair = stairEntrance,
+                firstConnection = connection,
                 goalEntrance = goalEntrance,
                 goingUp = goingUp,
+                stairConnections = stairConnections,
                 allEntrances = allEntrances,
                 wallsByFloor = wallsByFloor,
                 boundaryByFloor = boundaryByFloor,
@@ -137,19 +149,32 @@ class MultiFloorPathfinder {
 
     /**
      * Builds the ordered list of floor IDs the user must traverse.
-     * e.g. ["floor_1", "floor_1.5", "floor_2"] when going from floor_1 to floor_2.
+     * Uses both entrance data and stair connections to discover known floors.
      */
     private fun buildFloorSequence(
         startFloorNum: Float,
         goalFloorNum: Float,
         goingUp: Boolean,
-        allEntrances: List<CampusEntrance>
+        allEntrances: List<CampusEntrance>,
+        stairConnections: List<StairwellConnection>
     ): List<String> {
-        // Collect all known floor IDs and their numbers
-        val knownFloors = allEntrances
+        // Collect known floor IDs from entrances
+        val entranceFloors = allEntrances
             .map { it.floorId }
             .distinct()
             .map { it to extractFloorNumber(it) }
+
+        // Also collect floor IDs from stair connections
+        val connectionFloors = stairConnections.flatMap { conn ->
+            listOf(
+                conn.bottomFloorId to conn.bottomFloorNumber,
+                conn.topFloorId to conn.topFloorNumber
+            )
+        }
+
+        // Merge and deduplicate
+        val knownFloors = (entranceFloors + connectionFloors)
+            .distinctBy { it.first }
             .sortedBy { it.second }
 
         // Filter to floors in the range [start, goal] (inclusive)
@@ -163,64 +188,65 @@ class MultiFloorPathfinder {
     }
 
     /**
-     * Finds stair entrances on [floorId] suitable for the given direction.
+     * Finds stairwell connections accessible from [floorId] in the given direction.
      *
-     * **Going up**: Find entrances with `stairs != null` whose `floor` value
-     * is higher than the current floor (i.e. the stairwell leads up).
+     * **Going up**: Connections whose [StairwellConnection.bottomFloorId]
+     * matches [floorId] (enter from the bottom, exit at the top).
      *
-     * **Going down**: Find entrances with `stairs == "top"` whose `floor` value
-     * equals the current floor number (i.e. this is where a lower stairwell
-     * arrives, so we can descend from here).
+     * **Going down**: Connections whose [StairwellConnection.topFloorId]
+     * matches [floorId] (enter from the top, exit at the bottom).
      */
-    private fun findCandidateStairs(
+    private fun findCandidateConnections(
         floorId: String,
         goingUp: Boolean,
-        allEntrances: List<CampusEntrance>
-    ): List<CampusEntrance> {
-        val floorNum = extractFloorNumber(floorId)
-        return allEntrances.filter { ce ->
-            ce.floorId == floorId && ce.original.isStairs && run {
-                val stairFloor = ce.original.floor ?: return@run false
-                if (goingUp) {
-                    // Going up: find stairs whose connected floor is above current
-                    stairFloor > floorNum
-                } else {
-                    // Going down: find "top" stairs (arrival from below) with
-                    // floor == current floor number, meaning we can descend from here
-                    ce.original.isStairsTop && stairFloor == floorNum
-                }
-            }
+        stairConnections: List<StairwellConnection>
+    ): List<StairwellConnection> {
+        return if (goingUp) {
+            stairConnections.filter { it.bottomFloorId == floorId }
+        } else {
+            stairConnections.filter { it.topFloorId == floorId }
         }
     }
 
     /**
-     * Finds the matching stair entrance on the next floor.
+     * Returns the path target and next-floor start position for a [connection].
      *
-     * Stair pairs across floors share (nearly) the same campus-wide coordinates.
-     * We match by finding the closest stair entrance on [nextFloorId] within a
-     * distance threshold.
+     * The **far edge** of the stairwell is used as the path target so the A*
+     * path physically traverses the stairwell polygon (bottom→top or top→bottom)
+     * rather than stopping at the near edge and leaving the stairwell undrawn.
+     *
+     * Going up:   path targets topMidpoint;    next floor starts at topMidpoint.
+     * Going down: path targets bottomMidpoint; next floor starts at bottomMidpoint.
+     *
+     * Entry and exit are the same point because the far-edge midpoint is valid
+     * in the shared campus-wide coordinate space on both floors.
      */
-    private fun findPairedStairOnFloor(
-        stairEntrance: CampusEntrance,
-        nextFloorId: String,
-        allEntrances: List<CampusEntrance>,
-        maxDistance: Float = 50f
-    ): CampusEntrance? {
-        return allEntrances
-            .filter { it.floorId == nextFloorId && it.original.isStairs }
-            .minByOrNull { distance(stairEntrance.campusOffset, it.campusOffset) }
-            ?.takeIf { distance(stairEntrance.campusOffset, it.campusOffset) < maxDistance }
+    private fun connectionEndpoints(
+        connection: StairwellConnection,
+        goingUp: Boolean
+    ): Pair<Offset, Offset> {
+        return if (goingUp) {
+            connection.topMidpoint to connection.topMidpoint
+        } else {
+            connection.bottomMidpoint to connection.bottomMidpoint
+        }
     }
 
     /**
-     * Computes the full route through the floor sequence starting from [firstStair].
+     * Computes the full route through the floor sequence starting from
+     * [firstConnection].
+     *
+     * Since all floors share the same campus-wide coordinate system,
+     * the exit midpoint of a stairwell on one floor is a valid start
+     * position on the adjacent floor — no cross-floor pairing is needed.
      */
     private fun computeCandidateRoute(
         start: Offset,
         floorSequence: List<String>,
-        firstStair: CampusEntrance,
+        firstConnection: StairwellConnection,
         goalEntrance: CampusEntrance,
         goingUp: Boolean,
+        stairConnections: List<StairwellConnection>,
         allEntrances: List<CampusEntrance>,
         wallsByFloor: Map<String, List<Wall>>,
         boundaryByFloor: Map<String, List<CampusBoundaryPolygon>>,
@@ -230,7 +256,7 @@ class MultiFloorPathfinder {
         val visitedFloors = mutableSetOf<String>()
 
         var currentPosition = start
-        var currentStairTarget = firstStair
+        var currentConnection = firstConnection
 
         for (i in floorSequence.indices) {
             val floorId = floorSequence[i]
@@ -238,7 +264,10 @@ class MultiFloorPathfinder {
             val isLastFloor = (i == floorSequence.size - 1)
             visitedFloors.add(floorId)
 
-            val repo = getOrBuildRepo(floorId, wallsByFloor, boundaryByFloor, repoByFloor, allEntrances) ?: return MultiFloorPath.EMPTY
+            val repo = getOrBuildRepo(
+                floorId, wallsByFloor, boundaryByFloor, repoByFloor,
+                allEntrances, stairConnections
+            ) ?: return MultiFloorPath.EMPTY
 
             if (isLastFloor) {
                 // Last floor: pathfind to the destination entrance
@@ -252,48 +281,40 @@ class MultiFloorPathfinder {
                     points = path
                 ))
             } else {
-                // Intermediate floor: pathfind to the stair entrance
-                val stairGoal = currentStairTarget.campusOffset
-                val path = repo.findPath(currentPosition, stairGoal)
+                // Intermediate floor: pathfind to the stairwell entry midpoint
+                val (entryMidpoint, exitMidpoint) = connectionEndpoints(currentConnection, goingUp)
+                val path = repo.findPath(currentPosition, entryMidpoint)
                 if (path.isEmpty()) return MultiFloorPath.EMPTY
 
                 segments.add(FloorPathSegment(
                     floorId = floorId,
                     floorNumber = floorNum,
-                    buildingId = currentStairTarget.buildingId,
+                    buildingId = currentConnection.buildingId,
                     points = path
                 ))
 
-                // Find the paired stair entrance on the next floor
-                val nextFloorId = floorSequence[i + 1]
-                val pairedStair = findPairedStairOnFloor(
-                    currentStairTarget, nextFloorId, allEntrances
-                )
-                if (pairedStair == null) {
-                    Log.e(TAG, "No paired stair found on $nextFloorId for stair at " +
-                            "(${currentStairTarget.campusX}, ${currentStairTarget.campusY})")
-                    return MultiFloorPath.EMPTY
-                }
+                // Exit midpoint is the start position on the next floor
+                // (campus-wide coordinates are shared, so it's already valid)
+                currentPosition = exitMidpoint
 
-                // Update position to the paired stair's location on the next floor
-                currentPosition = pairedStair.campusOffset
-
-                // Find the next stair to use on the next floor (unless next is last)
+                // Find the next connection on the next floor (unless next is last)
                 if (i + 1 < floorSequence.size - 1) {
-                    val nextFloorStairs = findCandidateStairs(
+                    val nextFloorId = floorSequence[i + 1]
+                    val nextConnections = findCandidateConnections(
                         floorId = nextFloorId,
                         goingUp = goingUp,
-                        allEntrances = allEntrances
+                        stairConnections = stairConnections
                     )
-                    // Pick the stair on the next floor closest to where we arrive
-                    val nextStair = nextFloorStairs.minByOrNull {
-                        distance(currentPosition, it.campusOffset)
+                    // Pick the connection closest to where we arrive
+                    val nextConnection = nextConnections.minByOrNull { conn ->
+                        val (entry, _) = connectionEndpoints(conn, goingUp)
+                        distance(currentPosition, entry)
                     }
-                    if (nextStair == null) {
-                        Log.e(TAG, "No onward stair found on $nextFloorId")
+                    if (nextConnection == null) {
+                        Log.e(TAG, "No onward stairwell connection found on $nextFloorId")
                         return MultiFloorPath.EMPTY
                     }
-                    currentStairTarget = nextStair
+                    currentConnection = nextConnection
                 }
             }
         }
@@ -307,12 +328,17 @@ class MultiFloorPathfinder {
 
     // ── Utility ──────────────────────────────────────────────────
 
+    /**
+     * Gets or lazily builds a [NavigationRepository] for the given floor.
+     * The grid bounds include both entrance positions and stairwell midpoints.
+     */
     private fun getOrBuildRepo(
         floorId: String,
         wallsByFloor: Map<String, List<Wall>>,
         boundaryByFloor: Map<String, List<CampusBoundaryPolygon>>,
         repoByFloor: MutableMap<String, NavigationRepository>,
-        allEntrances: List<CampusEntrance>
+        allEntrances: List<CampusEntrance>,
+        stairConnections: List<StairwellConnection>
     ): NavigationRepository? {
         return repoByFloor[floorId] ?: run {
             val walls = wallsByFloor[floorId]
@@ -320,10 +346,17 @@ class MultiFloorPathfinder {
                 Log.e(TAG, "No walls for floor $floorId — cannot pathfind")
                 return null
             }
-            // Collect entrance positions on this floor so the grid covers them
+            // Collect entrance positions + stair midpoints so the grid covers them
             val entrancePoints = allEntrances
                 .filter { it.floorId == floorId }
                 .map { it.campusOffset }
+            val stairPoints = stairConnections.flatMap { conn ->
+                buildList {
+                    if (conn.bottomFloorId == floorId) add(conn.bottomMidpoint)
+                    if (conn.topFloorId == floorId) add(conn.topMidpoint)
+                }
+            }
+            val allBoundPoints = entrancePoints + stairPoints
             // Skip boundary blocking on ground floors (floor_1) so that
             // cross-building outdoor navigation remains possible.
             val floorNum = extractFloorNumber(floorId)
@@ -333,9 +366,9 @@ class MultiFloorPathfinder {
                 boundaryByFloor[floorId] ?: emptyList()
             }
             Log.d(TAG, "Building distance transform for floor $floorId " +
-                    "(${walls.size} walls, ${entrancePoints.size} entrance bounds, " +
+                    "(${walls.size} walls, ${allBoundPoints.size} bound points, " +
                     "${boundaries.size} boundary polygons, ground=${floorNum <= 1f})")
-            NavigationRepository(walls, entrancePoints, boundaries).also { repoByFloor[floorId] = it }
+            NavigationRepository(walls, allBoundPoints, boundaries).also { repoByFloor[floorId] = it }
         }
     }
 
