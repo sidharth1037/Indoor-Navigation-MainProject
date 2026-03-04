@@ -40,12 +40,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalDensity
 
 @Composable
 fun FloorSlider(
@@ -97,13 +95,13 @@ private fun FloorSliderContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(85.dp)
+            .height(77.dp)
             .background(
                 color = MaterialTheme.colorScheme.primaryContainer,
                 shape = RoundedCornerShape(28.dp)
             )
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         AnimatedContent(
@@ -127,7 +125,7 @@ private fun FloorSliderContent(
             if (name.isNotEmpty()) {
                 Text(
                     text = name,
-                    fontSize = 16.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     textAlign = TextAlign.Center
@@ -155,64 +153,40 @@ private fun FloorControls(
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
     val disabledColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-    val minButtonWidthPx = with(LocalDensity.current) { 48.dp.roundToPx() }
+    val buttonWidth = 62.dp
 
-    Layout(
-        modifier = Modifier.fillMaxWidth(),
-        content = {
-            FloorButton(
-                enabled = prevFloor != null,
-                onClick = { prevFloor?.let { onFloorChange(it) } },
-                isPrevious = true,
-                primaryColor = primaryColor,
-                disabledColor = disabledColor,
-                modifier = Modifier
-            )
-
-            FloorDisplay(
-                currentFloor = currentFloor,
-                floors = availableFloors,
-                onFloorChange = onFloorChange,
-                primaryColor = primaryColor,
-                modifier = Modifier
-            )
-
-            FloorButton(
-                enabled = nextFloor != null,
-                onClick = { nextFloor?.let { onFloorChange(it) } },
-                isPrevious = false,
-                primaryColor = primaryColor,
-                disabledColor = disabledColor,
-                modifier = Modifier
-            )
-        }
-    ) { measurables, constraints ->
-        val maxWidth = constraints.maxWidth
-
-        // Measure center first to determine height for all
-        val centerPlaceable = measurables[1].measure(constraints.copy(minWidth = 0, minHeight = 0))
-        val centerHeight = centerPlaceable.height
-
-        val remaining = (maxWidth - centerPlaceable.width).coerceAtLeast(0)
-        val buttonWidth = (remaining / 2f * 0.95f).toInt().coerceAtLeast(minButtonWidthPx)
-
-        // Force buttons to have same height as center pill
-        val buttonConstraints = constraints.copy(
-            minWidth = buttonWidth,
-            maxWidth = buttonWidth,
-            minHeight = centerHeight,
-            maxHeight = centerHeight
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(32.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        FloorButton(
+            enabled = prevFloor != null,
+            onClick = { prevFloor?.let { onFloorChange(it) } },
+            isPrevious = true,
+            primaryColor = primaryColor,
+            disabledColor = disabledColor,
+            modifier = Modifier.width(buttonWidth)
         )
 
-        val leftPlaceable = measurables[0].measure(buttonConstraints)
-        val rightPlaceable = measurables[2].measure(buttonConstraints)
+        FloorDisplay(
+            currentFloor = currentFloor,
+            floors = availableFloors,
+            onFloorChange = onFloorChange,
+            primaryColor = primaryColor,
+            modifier = Modifier
+        )
 
-        layout(maxWidth, centerHeight) {
-            val centerX = (maxWidth - centerPlaceable.width) / 2
-            leftPlaceable.place(0, 0)
-            centerPlaceable.place(centerX, 0)
-            rightPlaceable.place(maxWidth - rightPlaceable.width, 0)
-        }
+        FloorButton(
+            enabled = nextFloor != null,
+            onClick = { nextFloor?.let { onFloorChange(it) } },
+            isPrevious = false,
+            primaryColor = primaryColor,
+            disabledColor = disabledColor,
+            modifier = Modifier.width(buttonWidth)
+        )
     }
 }
 
@@ -231,6 +205,7 @@ private fun FloorButton(
     Box(
         modifier = modifier
             .background(color = bgColor, shape = RoundedCornerShape(percent = 50))
+            .height(30.dp)
             .then(if (enabled) Modifier.clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
@@ -266,7 +241,7 @@ private fun FloorDisplay(
         Box(
             modifier = Modifier
                 .wrapContentWidth()
-                .height(32.dp)
+                .height(30.dp)
                 .background(color = primaryColor, shape = RoundedCornerShape(percent = 50))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -280,7 +255,7 @@ private fun FloorDisplay(
             ) {
                 Text(
                     text = display,
-                    fontSize = 18.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.background
                 )

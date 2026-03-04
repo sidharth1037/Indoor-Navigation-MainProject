@@ -8,7 +8,7 @@ import androidx.lifecycle.viewModelScope
 import `in`.project.enroute.feature.pdr.correction.CampusBuilding
 import `in`.project.enroute.feature.pdr.correction.CorrectionConfig
 import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
-import `in`.project.enroute.feature.pdr.correction.StairPair
+import `in`.project.enroute.feature.pdr.correction.StairwellZone
 import `in`.project.enroute.feature.pdr.data.model.PdrState
 import `in`.project.enroute.feature.pdr.data.model.StepDetectionConfig
 import `in`.project.enroute.feature.pdr.data.model.StrideConfig
@@ -56,6 +56,9 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(PdrUiState())
     val uiState: StateFlow<PdrUiState> = _uiState.asStateFlow()
+
+    /** Current ML model key from settings ("v6" or "v6_64"). */
+    private var currentMlModel: String = "v6"
 
     // ── Motion-gated step detection ──────────────────────────────────
     // The TFLite model needs ~1.9 s (96 samples @ 50 Hz) before its
@@ -105,6 +108,50 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        // Load height→K influence from settings
+        viewModelScope.launch {
+            settingsRepository.heightKInfluence.collect { v ->
+                if (v != null) {
+                    val updatedConfig = _uiState.value.strideConfig.copy(heightKInfluence = v)
+                    _uiState.update { it.copy(strideConfig = updatedConfig) }
+                    repository.updateStrideConfig(updatedConfig)
+                }
+            }
+        }
+
+        // Load turn detection window from settings
+        viewModelScope.launch {
+            settingsRepository.turnWindow.collect { v ->
+                if (v != null) {
+                    val updatedConfig = _uiState.value.strideConfig.copy(turnWindow = v)
+                    _uiState.update { it.copy(strideConfig = updatedConfig) }
+                    repository.updateStrideConfig(updatedConfig)
+                }
+            }
+        }
+
+        // Load turn threshold from settings
+        viewModelScope.launch {
+            settingsRepository.turnThreshold.collect { v ->
+                if (v != null) {
+                    val updatedConfig = _uiState.value.strideConfig.copy(turnThreshold = v)
+                    _uiState.update { it.copy(strideConfig = updatedConfig) }
+                    repository.updateStrideConfig(updatedConfig)
+                }
+            }
+        }
+
+        // Load turn sensitivity from settings
+        viewModelScope.launch {
+            settingsRepository.turnSensitivity.collect { v ->
+                if (v != null) {
+                    val updatedConfig = _uiState.value.strideConfig.copy(turnSensitivity = v)
+                    _uiState.update { it.copy(strideConfig = updatedConfig) }
+                    repository.updateStrideConfig(updatedConfig)
+                }
+            }
+        }
+
         // Load step detection parameters from settings
         fun collectStepParam(flow: kotlinx.coroutines.flow.Flow<Float?>, update: StepDetectionConfig.(Float) -> StepDetectionConfig) {
             viewModelScope.launch {
@@ -123,6 +170,31 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         collectStepParam(settingsRepository.rhythmToleranceLow)  { copy(rhythmToleranceLow = it) }
         collectStepParam(settingsRepository.rhythmToleranceHigh) { copy(rhythmToleranceHigh = it) }
         collectStepParam(settingsRepository.floorThreshold)    { copy(floorThreshold = it) }
+
+        // Load ML model preference
+        viewModelScope.launch {
+            settingsRepository.mlModel.collect { model ->
+                if (model != null) currentMlModel = model
+            }
+        }
+
+        // Load stair detection parameters and forward to repository
+        viewModelScope.launch {
+            settingsRepository.stairEntryThreshold.collect { v ->
+                if (v != null) repository.updateStairSettings(entryThreshold = v)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.stairLookback.collect { v ->
+                if (v != null) repository.updateStairSettings(lookback = v)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.stairReplayCount.collect { v ->
+                if (v != null) repository.updateStairSettings(replayCount = v)
+            }
+        }
+        // proximityRadius no longer used — detector is boundary-based
 
         // Set up step detector callbacks — gated by motion classification.
         // Before first model output: buffer steps.
@@ -288,10 +360,10 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Supplies pre-computed stair pairs for stairwell transition detection.
+     * Supplies pre-computed stairwell zones for boundary-based stair detection.
      */
-    fun loadStairPairs(pairs: List<StairPair>) {
-        repository.loadStairPairs(pairs)
+    fun loadStairwellZones(zones: List<StairwellZone>) {
+        repository.loadStairwellZones(zones)
     }
 
     /**
@@ -368,7 +440,7 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun startSensors() {
         headingDetector.start()
-        motionRepository.start()
+        motionRepository.start(currentMlModel)
         stepDetector.start()
     }
 

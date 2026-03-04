@@ -85,7 +85,17 @@ data class StrideConfig(
     val kValue: Float = 0.12f,
     // cValue: The base stride constant.
     val cValue: Float = 0.20f,
-    val cadenceAverageSize: Int = 5
+    val cadenceAverageSize: Int = 5,
+    // ── Height-dependent K ──────────────────────────────────────────────
+    /** How much height shifts K. effectiveK = K + influence * (heightCm - 170) / 100. */
+    val heightKInfluence: Float = 0.05f,
+    // ── Turn-based stride reduction ─────────────────────────────────────
+    /** Recent-heading window size for turn detection. */
+    val turnWindow: Int = 3,
+    /** Minimum cumulative heading change (degrees) to trigger reduction. */
+    val turnThreshold: Float = 60f,
+    /** Overall strength of turn reduction (0 = off, 1 = max). */
+    val turnSensitivity: Float = 0.5f
 )
 
 /**

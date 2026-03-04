@@ -14,6 +14,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -205,6 +206,62 @@ fun SettingsScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 8.dp)
         )
+
+        // Height influence on K
+        Text("Height → K influence: ${"%.3f".format(uiState.heightKInfluence)}", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.heightKInfluence, onValueChange = { viewModel.updateHeightKInfluence(it) }, valueRange = 0.00f..0.15f, steps = 14, modifier = Modifier.fillMaxWidth())
+        Text("How much height shifts K. Tall → higher K, short → lower K. 0 = no effect. Default 0.05.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        // Turn window
+        Text("Turn window: ${uiState.turnWindow} steps", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.turnWindow.toFloat(), onValueChange = { viewModel.updateTurnWindow(it.toInt()) }, valueRange = 2f..6f, steps = 3, modifier = Modifier.fillMaxWidth())
+        Text("How many recent steps to check for heading change. Default 3.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        // Turn threshold
+        Text("Turn threshold: ${"%.0f".format(uiState.turnThreshold)}°", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.turnThreshold, onValueChange = { viewModel.updateTurnThreshold(it) }, valueRange = 30f..120f, steps = 8, modifier = Modifier.fillMaxWidth())
+        Text("Min cumulative heading change to trigger stride reduction. Default 60°.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        // Turn sensitivity
+        Text("Turn sensitivity: ${"%.2f".format(uiState.turnSensitivity)}", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.turnSensitivity, onValueChange = { viewModel.updateTurnSensitivity(it) }, valueRange = 0.0f..1.0f, steps = 9, modifier = Modifier.fillMaxWidth())
+        Text("Overall strength of stride reduction during turns. 0 = off. Default 0.50.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        Spacer(Modifier.height(8.dp))
+
+        // ── Stair Detection subsection ─────────────────────────────────────
+        SubsectionHeader("Stair Detection")
+
+        // Model selector
+        Text("ML model", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        val models = listOf("v6" to "v6  (window 96)", "v6_64" to "v6_64  (window 64)")
+        models.forEach { (key, label) ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                RadioButton(selected = uiState.mlModel == key, onClick = { viewModel.updateMlModel(key) })
+                Text(label, fontSize = 14.sp, modifier = Modifier.padding(start = 4.dp))
+            }
+        }
+        Text("Smaller window = faster labels, bigger window = more context.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        // Entry threshold
+        Text("Entry threshold: ${uiState.stairEntryThreshold} labels", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairEntryThreshold.toFloat(), onValueChange = { viewModel.updateStairEntryThreshold(it.toInt()) }, valueRange = 1f..5f, steps = 3, modifier = Modifier.fillMaxWidth())
+        Text("Consecutive stair labels needed before triggering transition. Default 2.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        // Lookback
+        Text("Lookback: ${uiState.stairLookback} steps", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairLookback.toFloat(), onValueChange = { viewModel.updateStairLookback(it.toInt()) }, valueRange = 0f..8f, steps = 7, modifier = Modifier.fillMaxWidth())
+        Text("How many steps back from arrival to find the first new-floor step. Default 3.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        // Replay count
+        Text("Replay count: ${uiState.stairReplayCount} steps", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairReplayCount.toFloat(), onValueChange = { viewModel.updateStairReplayCount(it.toInt()) }, valueRange = 0f..8f, steps = 7, modifier = Modifier.fillMaxWidth())
+        Text("How many buffered steps to replay on the new floor. Default 3.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        // Proximity radius
+        Text("Proximity radius: ${"%.0f".format(uiState.stairProximityRadius)} px", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairProximityRadius, onValueChange = { viewModel.updateStairProximityRadius(it) }, valueRange = 50f..300f, steps = 24, modifier = Modifier.fillMaxWidth())
+        Text("Max distance to stairwell entrance to trigger transition. Default 150.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
 
         // ─────────────────────────────────────────────────────────────────────
         // 4. ADMIN

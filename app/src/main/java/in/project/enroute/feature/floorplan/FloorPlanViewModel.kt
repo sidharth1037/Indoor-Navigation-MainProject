@@ -20,6 +20,7 @@ import `in`.project.enroute.feature.pdr.correction.CampusBuilding
 import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
 import `in`.project.enroute.feature.pdr.correction.GeometryUtils
 import `in`.project.enroute.feature.pdr.correction.StairPair
+import `in`.project.enroute.feature.pdr.correction.StairwellZone
 import `in`.project.enroute.feature.floorplan.utils.FollowingAnimator
 import `in`.project.enroute.feature.floorplan.utils.FollowingConfig
 import `in`.project.enroute.feature.floorplan.utils.CenteringConfig
@@ -941,6 +942,121 @@ class FloorPlanViewModel(
                             )
                         )
                     }
+                }
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Builds [StairwellZone] objects from stairwell polygon data for every
+     * loaded floor, transformed to campus-wide coordinates.
+     *
+     * Each [StairwellZone] contains the polygon boundary, identified
+     * "top" and "bottom" edges, and floor resolution data.  Zones whose
+     * [floorsConnected] are both sub-integer values on the same base floor
+     * (e.g. 0.3 and 0.6 within floor_1) are tagged [isSameFloor]=true.
+     *
+     * Floor ID resolution uses the entrance data (stair entrances) to
+     * determine the destination floor IDs, since the stairwell line
+     * geometry only carries numeric floor values.
+     */
+    fun getStairwellZones(): List<StairwellZone> {
+        val state = _uiState.value
+        val result = mutableListOf<StairwellZone>()
+
+        // Build a set of unique polygon IDs already processed (avoid dupes
+        // when the same stairwell appears on multiple floor files).
+        val processedKeys = mutableSetOf<String>()
+
+        for ((_, buildingState) in state.buildingStates) {
+            val building = buildingState.building
+            val relX = building.relativePosition.x
+            val relY = building.relativePosition.y
+
+            for ((floorNumber, floorData) in buildingState.floors) {
+                val meta = floorData.metadata
+                val scale = meta.scale
+                val rotRad = Math.toRadians(meta.rotation.toDouble()).toFloat()
+                val cosA = cos(rotRad)
+                val sinA = sin(rotRad)
+
+                fun toCampus(x: Float, y: Float): Offset {
+                    val px = x * scale
+                    val py = y * scale
+                    return Offset(
+                        px * cosA - py * sinA + relX,
+                        px * sinA + py * cosA + relY
+                    )
+                }
+
+                for (stairwell in floorData.stairwells) {
+                    val key = "${building.buildingId}_${stairwell.polygonId}_${stairwell.floorsConnected}"
+                    if (key in processedKeys) continue
+
+                    // Extract top and bottom edges from lines with `position`
+                    val topLines = stairwell.lines.filter { it.position == "top" }
+                    val bottomLines = stairwell.lines.filter { it.position == "bottom" }
+
+                    // Need both edges to form a zone
+                    if (topLines.isEmpty() || bottomLines.isEmpty()) continue
+
+                    // Transform polygon boundary to campus coords
+                    val campusBoundary = stairwell.points.map { (x, y) ->
+                        toCampus(x, y)
+                    }
+
+                    // Use the first top/bottom line as the representative edge
+                    val topLine = topLines.first()
+                    val topEdge = Pair(
+                        toCampus(topLine.x1, topLine.y1),
+                        toCampus(topLine.x2, topLine.y2)
+                    )
+                    val bottomLine = bottomLines.first()
+                    val bottomEdge = Pair(
+                        toCampus(bottomLine.x1, bottomLine.y1),
+                        toCampus(bottomLine.x2, bottomLine.y2)
+                    )
+
+                    // Resolve floors connected
+                    val floors = stairwell.floorsConnected.sorted()
+                    if (floors.size < 2) continue
+
+                    val bottomFloorNum = floors.first()
+                    val topFloorNum = floors.last()
+
+                    // Determine if this is a same-floor stairwell (sub-levels).
+                    // Sub-levels have fractional-only values under the same
+                    // integer floor (e.g. 0.3 ↔ 0.6 both within floor_1).
+                    val isSameFloor = bottomFloorNum != kotlin.math.floor(bottomFloorNum) &&
+                            topFloorNum != kotlin.math.floor(topFloorNum) &&
+                            kotlin.math.floor(bottomFloorNum) == kotlin.math.floor(topFloorNum)
+
+                    // Resolve floor IDs — try to find the floor data by number
+                    val bottomFloorData = buildingState.floors[bottomFloorNum]
+                    val topFloorData = buildingState.floors[topFloorNum]
+                    val bottomFloorId = bottomFloorData?.floorId
+                        ?: "floor_${if (bottomFloorNum == bottomFloorNum.toInt().toFloat()) bottomFloorNum.toInt().toString() else bottomFloorNum.toString()}"
+                    val topFloorId = topFloorData?.floorId
+                        ?: "floor_${if (topFloorNum == topFloorNum.toInt().toFloat()) topFloorNum.toInt().toString() else topFloorNum.toString()}"
+
+                    result.add(
+                        StairwellZone(
+                            polygonId = stairwell.polygonId,
+                            boundary = campusBoundary,
+                            topEdge = topEdge,
+                            bottomEdge = bottomEdge,
+                            floorsConnected = stairwell.floorsConnected,
+                            floorId = floorData.floorId,
+                            isSameFloor = isSameFloor,
+                            bottomFloorId = bottomFloorId,
+                            topFloorId = topFloorId,
+                            bottomFloorNumber = bottomFloorNum,
+                            topFloorNumber = topFloorNum
+                        )
+                    )
+                    processedKeys.add(key)
                 }
             }
         }

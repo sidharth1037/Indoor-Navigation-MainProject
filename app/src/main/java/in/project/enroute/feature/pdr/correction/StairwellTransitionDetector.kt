@@ -2,91 +2,92 @@ package `in`.project.enroute.feature.pdr.correction
 
 import android.util.Log
 import androidx.compose.ui.geometry.Offset
-import kotlin.math.abs
 
 /**
- * Detects when a user is entering a stairwell using a **two-stage** approach
- * that decouples the spatial check from the ML confirmation to handle the
- * inherent timing gap between them.
+ * Boundary-based stairwell entry detector.
  *
- * ### Stage 1 — Candidate acquisition (every step)
- * The user must be:
- *  1. Within [proximityRadius] of a stair entrance on the current floor.
- *  2. Heading toward it within [fovHalfAngle] **using the heading from 1-2
- *     steps ago** (not the instantaneous heading), which better represents
- *     the approach direction.
+ * Uses [StairwellZone] polygon boundaries instead of entrance-proximity
+ * checks, which gives accurate start/end positioning even for wide stairwells.
  *
- * When both conditions are met the entrance is latched as a *candidate* and
- * stays valid for [candidateExpirySteps] additional steps, even if the user
- * moves out of proximity afterwards.
+ * ## Detection modes
  *
- * ### Stage 2 — ML confirmation
- * While a candidate is active, the sliding window of the last [windowSize]
- * ML predictions is checked.  A transition fires when at least
- * [requiredInWindow] predictions match "upstairs" (or "downstairs").
- * Low-confidence predictions are **skipped** (not counted against the
- * window), so they don't poison the signal.
+ * ### 1. Inside-polygon + ML
+ * When the ML model outputs [entryThreshold] or more consecutive stair
+ * labels ("upstairs"/"downstairs") **and** the user is inside a
+ * [StairwellZone] polygon, a transition fires immediately.  The user's
+ * current position is projected onto the entry edge (bottom for UP,
+ * top for DOWN) and the exit position is estimated by ray-casting the
+ * heading through to the opposite edge.
  *
- * This two-stage design solves the timing problem: the ML model needs ~2.5 s
- * to produce two "upstairs" labels, during which the user may have walked
- * past the entrance.  The candidate latch bridges that gap.
+ * ### 2. Boundary-crossing + deferred ML
+ * For stairwells with fewer steps, the PDR path may already cross the
+ * stairwell boundary before the ML model outputs climbing labels.  The
+ * detector records every boundary crossing.  When ML subsequently
+ * confirms climbing, the detector uses the stored crossing point as the
+ * entry position and fires a retroactive transition.
+ *
+ * ### Same-floor stairwells
+ * Stairwells whose [StairwellZone.isSameFloor] is true (e.g. 0.3↔0.6
+ * within the same floor plan) produce transitions with
+ * [StairTransitionEvent.isSameFloor] = true.  The caller should NOT
+ * switch floors or reload constraints for these.
  */
 class StairwellTransitionDetector(
-    /** Campus-coordinate radius to consider "near" a stair entrance. */
-    private val proximityRadius: Float = 100f,   // ~2 m
-    /** Half-angle of the field-of-view cone (radians). */
-    private val fovHalfAngle: Float = 1.047f,   // 60° → 120° total
-    /** Sliding window size for ML labels. */
-    private val windowSize: Int = 3,
-    /** How many labels inside the window must match to confirm. */
-    private val requiredInWindow: Int = 1,
-    /** Minimum confidence from the ML model to accept the label. */
+    /** Consecutive same-direction stair labels needed to trigger. */
+    private var entryThreshold: Int = 2,
+    /** Minimum ML confidence to accept a label. */
     private val minConfidence: Float = 0.45f,
-    /** Steps to keep a candidate alive after the user leaves proximity. */
-    private val candidateExpirySteps: Int = 8,
-    /** Number of recent headings to keep for the lagged FOV check. */
-    private val headingBufferSize: Int = 3,
     /**
-     * Number of consecutive same-direction stair labels required to
-     * trigger a sustained-ML transition (no spatial/FOV constraints).
+     * Maximum age (in label ticks) of a stored boundary crossing before
+     * it expires.  Prevents stale crossings from triggering transitions
+     * long after the user walked through.
      */
-    private val sustainedLabelThreshold: Int = 3,
-    /**
-     * Expanded proximity radius for sustained-ML detection.
-     * Larger than [proximityRadius] because the user may have walked
-     * past the entrance by the time 4 labels accumulate.
-     */
-    private val sustainedProximityRadius: Float = 200f   // ~4 m
+    private val maxCrossingAge: Int = 15
 ) {
 
     companion object {
         private const val TAG = "StairDetector"
     }
 
-    // ── ML label sliding window ─────────────────────────────────────────────
+    // ── Consecutive stair label tracking ────────────────────────────────
 
-    /** Ring buffer of recent accepted labels (low-confidence ones are skipped). */
-    private val labelWindow = mutableListOf<String>()
-
-    // ── Consecutive stair label tracking (for sustained-ML detection) ─────
-    /** The stair label currently being counted ("upstairs" or "downstairs"). */
     private var consecutiveStairLabel: String? = null
-    /** How many consecutive times that label has appeared. */
     private var consecutiveStairCount: Int = 0
+
+    // ── Boundary crossing memory ────────────────────────────────────────
+
+    /**
+     * Records a PDR step that crossed a stairwell boundary.
+     */
+    private data class CrossingRecord(
+        val zone: StairwellZone,
+        val crossingPoint: Offset,
+        val heading: Float,
+        val tickAge: Int
+    )
+
+    /** Stored boundary crossings, newest first. */
+    private val pendingCrossings = mutableListOf<CrossingRecord>()
+    /** Global tick counter incremented every ML label to age crossings. */
+    private var tickCounter: Int = 0
+
+    // ── Settings ────────────────────────────────────────────────────────
+
+    fun updateSettings(entryThreshold: Int? = null) {
+        if (entryThreshold != null) this.entryThreshold = entryThreshold
+    }
+
+    // ── Label feed ──────────────────────────────────────────────────────
 
     /**
      * Feed every ML classification result here.
      * Low-confidence predictions are silently dropped.
      */
     fun onMotionLabel(label: String, confidence: Float) {
-        if (confidence < minConfidence) return   // skip, don't pollute window
+        if (confidence < minConfidence) return
 
-        labelWindow.add(label)
-        while (labelWindow.size > windowSize) {
-            labelWindow.removeAt(0)
-        }
+        tickCounter++
 
-        // Track consecutive stair labels for sustained-ML detection
         if (label == "upstairs" || label == "downstairs") {
             if (label == consecutiveStairLabel) {
                 consecutiveStairCount++
@@ -95,361 +96,182 @@ class StairwellTransitionDetector(
                 consecutiveStairCount = 1
             }
         } else {
-            // Any non-stair label breaks the streak
             consecutiveStairLabel = null
             consecutiveStairCount = 0
         }
+
+        // Expire old crossings
+        pendingCrossings.removeAll { (tickCounter - it.tickAge) > maxCrossingAge }
     }
 
-    // ── Heading history ─────────────────────────────────────────────────────
+    // ── Boundary crossing feed ──────────────────────────────────────────
 
-    private val headingHistory = mutableListOf<Float>()
+    /**
+     * Called by PdrRepository on every normal step to record any boundary
+     * crossings.  Should be called with the previous and new positions
+     * (before and after the step).
+     *
+     * @param prevPos Previous position (campus coords).
+     * @param newPos  New position after the step.
+     * @param heading Current heading at this step.
+     * @param zones   All stairwell zones for the campus.
+     * @param currentFloorNumber The user's current numeric floor.
+     */
+    fun recordBoundaryCrossings(
+        prevPos: Offset,
+        newPos: Offset,
+        heading: Float,
+        zones: List<StairwellZone>,
+        currentFloorNumber: Float
+    ) {
+        for (zone in zones) {
+            if (currentFloorNumber !in zone.floorsConnected) continue
 
-    /** Returns the heading from approximately 1-2 steps ago. */
-    private fun laggedHeading(currentHeading: Float): Float {
-        headingHistory.add(currentHeading)
-        while (headingHistory.size > headingBufferSize) {
-            headingHistory.removeAt(0)
+            val crossing = StairwellGeometry.findBoundaryCrossing(prevPos, newPos, zone.boundary)
+            if (crossing != null) {
+                pendingCrossings.removeAll { it.zone.polygonId == zone.polygonId }
+                pendingCrossings.add(0, CrossingRecord(zone, crossing, heading, tickCounter))
+
+                Log.d(TAG, "boundary crossing: polygon=${zone.polygonId} " +
+                        "at (${crossing.x.toInt()},${crossing.y.toInt()}) " +
+                        "floors=${zone.floorsConnected}")
+            }
         }
-        // Use the oldest heading in the buffer (1-2 steps ago)
-        return headingHistory.first()
     }
 
-    // ── Candidate latch ─────────────────────────────────────────────────────
+    // ── Public API ──────────────────────────────────────────────────────
 
-    private var candidatePair: StairPair? = null
-    private var candidateGoingUp: Boolean = true
-    private var candidateStepsRemaining: Int = 0
-    /** Steps elapsed since the candidate was first latched (tracks detection lag). */
-    private var stepsSinceCandidateLatch: Int = 0
-
-    // ── Public API ──────────────────────────────────────────────────────────
-
-    /** Resets all state (counters, candidate, heading history). */
     fun reset() {
-        labelWindow.clear()
-        headingHistory.clear()
-        candidatePair = null
-        candidateStepsRemaining = 0
-        stepsSinceCandidateLatch = 0
         consecutiveStairLabel = null
         consecutiveStairCount = 0
+        pendingCrossings.clear()
     }
 
     /**
-     * Evaluates the two-stage check and returns a [StairTransitionEvent] if a
-     * stairwell entry is confirmed, or `null` otherwise.
+     * Checks ML streak and stairwell zone containment/crossing.
      *
-     * @param position           User's current position (campus-wide).
-     * @param heading            User's current heading (radians, 0 = north, CW+).
-     * @param stairPairs         Pre-computed stair pairs for all floors.
-     * @param currentFloorNumber The floor number the user is currently on.
+     * @param position           User's current position (campus coords).
+     * @param heading            User's current heading (radians).
+     * @param zones              All stairwell zones.
+     * @param currentFloorNumber Numeric floor the user is on.
      */
     fun checkTransition(
         position: Offset,
         heading: Float,
-        stairPairs: List<StairPair>,
+        zones: List<StairwellZone>,
         currentFloorNumber: Float
     ): StairTransitionEvent? {
-
-        val fovHeading = laggedHeading(heading)
-
-        // ── Stage 1: Acquire or refresh candidate ───────────────────────
-        val nearest = findNearestFacingStairPair(
-            position = position,
-            heading = fovHeading,
-            stairPairs = stairPairs,
-            currentFloorNumber = currentFloorNumber
-        )
-
-        if (nearest != null) {
-            val isNewCandidate = candidatePair == null
-            candidatePair = nearest.first
-            candidateGoingUp = nearest.second
-            candidateStepsRemaining = candidateExpirySteps
-            if (isNewCandidate) {
-                stepsSinceCandidateLatch = 0  // fresh acquisition
-            }
-            stepsSinceCandidateLatch++
-            Log.d(TAG, "Candidate acquired/refreshed: pair=${nearest.first}, goingUp=${nearest.second}, stepsLeft=$candidateExpirySteps, lagSteps=$stepsSinceCandidateLatch")
-        } else if (candidateStepsRemaining > 0) {
-            candidateStepsRemaining--
-            stepsSinceCandidateLatch++
-            Log.d(TAG, "Candidate ticking: stepsLeft=$candidateStepsRemaining, lagSteps=$stepsSinceCandidateLatch")
-        } else {
-            // No candidate and expiry reached
-            if (candidatePair != null) {
-                Log.d(TAG, "Candidate expired")
-                candidatePair = null
-                stepsSinceCandidateLatch = 0
-            }
-        }
-
-        // ── Stage 2: ML confirmation against the active candidate ───────
-        val pair = candidatePair ?: return null
-
-        val upCount = labelWindow.count { it == "upstairs" }
-        val downCount = labelWindow.count { it == "downstairs" }
-        val goingUp = candidateGoingUp
-        val confirmed = if (goingUp) upCount >= requiredInWindow else downCount >= requiredInWindow
-
-        Log.d(TAG, "ML window=$labelWindow  upCount=$upCount downCount=$downCount goingUp=$goingUp confirmed=$confirmed")
-
-        if (!confirmed) return null
-
-        // ── Build the transition event ──────────────────────────────────
-        val direction = if (goingUp) StairDirection.UP else StairDirection.DOWN
-
-        val startPos: Offset
-        val endPos: Offset
-        val originFloor: String
-        val destFloor: String
-
-        if (direction == StairDirection.UP) {
-            startPos = pair.bottomPosition
-            endPos = pair.topPosition
-            originFloor = pair.bottomFloorId
-            destFloor = pair.topFloorId
-        } else {
-            startPos = pair.topPosition
-            endPos = pair.bottomPosition
-            originFloor = pair.topFloorId
-            destFloor = pair.bottomFloorId
-        }
-
-        Log.d(TAG, "TRANSITION TRIGGERED: $direction from $originFloor → $destFloor")
-
-        val preClimbed = stepsSinceCandidateLatch
-
-        return StairTransitionEvent(
-            stairPair = pair,
-            direction = direction,
-            startPosition = startPos,
-            endPosition = endPos,
-            originFloorId = originFloor,
-            destinationFloorId = destFloor,
-            preClimbedSteps = preClimbed
-        )
-    }
-    // ── Stage 3: Sustained ML detection (independent fallback) ─────────
-
-    /**
-     * Independent stairwell detection based purely on sustained ML output.
-     *
-     * If the model has output the same stair label ("upstairs" / "downstairs")
-     * for [sustainedLabelThreshold] or more consecutive classifications, find
-     * the nearest stairwell the user can take in that direction — using
-     * **proximity only** (no FOV / heading constraint).
-     *
-     * This covers cases where the spatial candidate was never latched (e.g.
-     * user entered the stairwell from an unexpected angle) but the ML model
-     * is very confident.
-     *
-     * @return A [StairTransitionEvent] if a sustained transition is confirmed,
-     *         or `null` otherwise.
-     */
-    fun checkSustainedMLTransition(
-        position: Offset,
-        stairPairs: List<StairPair>,
-        currentFloorNumber: Float
-    ): StairTransitionEvent? {
-        if (consecutiveStairCount < sustainedLabelThreshold) return null
-
-        Log.d(TAG, "sustainedML: ${consecutiveStairCount}× \"$consecutiveStairLabel\" " +
-                "at (${position.x.toInt()},${position.y.toInt()}) floor=$currentFloorNumber, " +
-                "${stairPairs.size} stair pairs available")
+        if (consecutiveStairCount < entryThreshold) return null
 
         val goingUp = consecutiveStairLabel == "upstairs"
 
-        // Find the nearest stairwell by proximity only (no FOV check)
-        val pair = findNearestPairByProximity(
-            position, stairPairs, currentFloorNumber, goingUp
-        ) ?: return null
+        Log.d(TAG, "ML threshold met: ${consecutiveStairCount}× \"$consecutiveStairLabel\" " +
+                "at (${position.x.toInt()},${position.y.toInt()}) floor=$currentFloorNumber")
 
+        // ── Mode 1: Currently inside a zone polygon ─────────────────
+        val insideZone = findContainingZone(position, zones, currentFloorNumber, goingUp)
+        if (insideZone != null) {
+            Log.d(TAG, "inside polygon ${insideZone.polygonId}")
+            return buildTransition(insideZone, position, heading, goingUp)
+        }
+
+        // ── Mode 2: Deferred — check stored boundary crossings ──────
+        val crossingRecord = findMatchingCrossing(currentFloorNumber, goingUp)
+        if (crossingRecord != null) {
+            Log.d(TAG, "deferred crossing: polygon=${crossingRecord.zone.polygonId} " +
+                    "age=${tickCounter - crossingRecord.tickAge}")
+            return buildTransition(
+                crossingRecord.zone,
+                crossingRecord.crossingPoint,
+                crossingRecord.heading,
+                goingUp
+            )
+        }
+
+        Log.d(TAG, "no zone match for position or stored crossings")
+        return null
+    }
+
+    // ── Internals ───────────────────────────────────────────────────────
+
+    private fun findContainingZone(
+        position: Offset,
+        zones: List<StairwellZone>,
+        currentFloorNumber: Float,
+        goingUp: Boolean
+    ): StairwellZone? {
+        for (zone in zones) {
+            if (currentFloorNumber !in zone.floorsConnected) continue
+            if (goingUp && zone.bottomFloorNumber != currentFloorNumber) continue
+            if (!goingUp && zone.topFloorNumber != currentFloorNumber) continue
+
+            if (StairwellGeometry.isInsidePolygon(position, zone.boundary)) {
+                return zone
+            }
+        }
+        return null
+    }
+
+    private fun findMatchingCrossing(
+        currentFloorNumber: Float,
+        goingUp: Boolean
+    ): CrossingRecord? {
+        for (record in pendingCrossings) {
+            val zone = record.zone
+            if (currentFloorNumber !in zone.floorsConnected) continue
+            if (goingUp && zone.bottomFloorNumber != currentFloorNumber) continue
+            if (!goingUp && zone.topFloorNumber != currentFloorNumber) continue
+            return record
+        }
+        return null
+    }
+
+    private fun buildTransition(
+        zone: StairwellZone,
+        position: Offset,
+        heading: Float,
+        goingUp: Boolean
+    ): StairTransitionEvent {
         val direction = if (goingUp) StairDirection.UP else StairDirection.DOWN
 
-        val startPos: Offset
-        val endPos: Offset
+        val entryEdge: Pair<Offset, Offset>
+        val exitEdge: Pair<Offset, Offset>
         val originFloor: String
         val destFloor: String
 
         if (direction == StairDirection.UP) {
-            startPos = pair.bottomPosition
-            endPos = pair.topPosition
-            originFloor = pair.bottomFloorId
-            destFloor = pair.topFloorId
+            entryEdge = zone.bottomEdge
+            exitEdge = zone.topEdge
+            originFloor = zone.bottomFloorId
+            destFloor = zone.topFloorId
         } else {
-            startPos = pair.topPosition
-            endPos = pair.bottomPosition
-            originFloor = pair.topFloorId
-            destFloor = pair.bottomFloorId
+            entryEdge = zone.topEdge
+            exitEdge = zone.bottomEdge
+            originFloor = zone.topFloorId
+            destFloor = zone.bottomFloorId
         }
 
-        Log.d(TAG, "SUSTAINED-ML TRANSITION: $direction from $originFloor → $destFloor " +
-                "(${consecutiveStairCount} consecutive \"$consecutiveStairLabel\" labels)")
+        val startPos = StairwellGeometry.projectOntoEdge(
+            position, entryEdge.first, entryEdge.second
+        )
+        val endPos = StairwellGeometry.estimateExitPoint(
+            startPos, heading, exitEdge.first, exitEdge.second
+        )
+
+        Log.d(TAG, "TRANSITION: $direction from $originFloor → $destFloor " +
+                "start=(${startPos.x.toInt()},${startPos.y.toInt()}) " +
+                "end=(${endPos.x.toInt()},${endPos.y.toInt()}) " +
+                "sameFloor=${zone.isSameFloor}")
 
         return StairTransitionEvent(
-            stairPair = pair,
+            zone = zone,
             direction = direction,
             startPosition = startPos,
             endPosition = endPos,
             originFloorId = originFloor,
             destinationFloorId = destFloor,
+            isSameFloor = zone.isSameFloor,
             preClimbedSteps = consecutiveStairCount
         )
-    }
-
-    /**
-     * Finds the nearest stair pair by proximity only — no heading / FOV
-     * constraint.  Used by the sustained-ML fallback path.
-     *
-     * First tries to find a pair whose start entrance is on the current floor.
-     * If nothing is found, falls back to checking **both** entrances of every
-     * pair regardless of floor — the stairwell entrance the user is closest
-     * to might be stored on the other floor's data due to how stair pairs
-     * are built.
-     */
-    private fun findNearestPairByProximity(
-        position: Offset,
-        stairPairs: List<StairPair>,
-        currentFloorNumber: Float,
-        goingUp: Boolean
-    ): StairPair? {
-        var bestPair: StairPair? = null
-        var bestDist = Float.MAX_VALUE
-
-        // Pass 1: Strict floor match on the expected start entrance
-        for (pair in stairPairs) {
-            val startPos: Offset
-            val startFloorNumber: Float
-
-            if (goingUp) {
-                startPos = pair.bottomPosition
-                startFloorNumber = pair.bottomFloorNumber
-            } else {
-                startPos = pair.topPosition
-                startFloorNumber = pair.topFloorNumber
-            }
-
-            if (startFloorNumber != currentFloorNumber) continue
-
-            val dist = GeometryUtils.distance(position, startPos)
-            if (dist > sustainedProximityRadius) continue
-
-            if (dist < bestDist) {
-                bestDist = dist
-                bestPair = pair
-            }
-        }
-
-        if (bestPair != null) {
-            Log.d(TAG, "sustainedML-proximity: found pair on current floor (dist=${"%.1f".format(bestDist)})")
-            return bestPair
-        }
-
-        // Pass 2: Cross-floor fallback — check proximity to EITHER entrance
-        // of every pair that connects to the current floor.  The stairwell
-        // geometry may be stored on the adjacent floor's data.
-        for (pair in stairPairs) {
-            // The pair must connect the current floor in the correct direction
-            val connects = if (goingUp) {
-                pair.bottomFloorNumber == currentFloorNumber ||
-                        pair.topFloorNumber > currentFloorNumber
-            } else {
-                pair.topFloorNumber == currentFloorNumber ||
-                        pair.bottomFloorNumber < currentFloorNumber
-            }
-            if (!connects) continue
-
-            // Check distance to both entrances
-            val distBottom = GeometryUtils.distance(position, pair.bottomPosition)
-            val distTop = GeometryUtils.distance(position, pair.topPosition)
-            val minDist = minOf(distBottom, distTop)
-
-            if (minDist > sustainedProximityRadius) continue
-
-            if (minDist < bestDist) {
-                bestDist = minDist
-                bestPair = pair
-            }
-        }
-
-        if (bestPair != null) {
-            Log.d(TAG, "sustainedML-proximity: cross-floor fallback found pair (dist=${"%.1f".format(bestDist)})")
-        } else {
-            Log.d(TAG, "sustainedML-proximity: no pair found within ${sustainedProximityRadius} units")
-        }
-
-        return bestPair
-    }
-    // ── Internals ───────────────────────────────────────────────────────────
-
-    /**
-     * Finds the nearest stair pair whose start entrance is within
-     * [proximityRadius] and within [fovHalfAngle] of the user's (lagged)
-     * heading.
-     *
-     * Returns a Pair of (StairPair, goingUp) or `null`.
-     * Tries **up** first; falls back to **down** if no up-candidate found.
-     */
-    private fun findNearestFacingStairPair(
-        position: Offset,
-        heading: Float,
-        stairPairs: List<StairPair>,
-        currentFloorNumber: Float
-    ): Pair<StairPair, Boolean>? {
-        // Try up first, then down
-        findBestPair(position, heading, stairPairs, currentFloorNumber, goingUp = true)
-            ?.let { return Pair(it, true) }
-        findBestPair(position, heading, stairPairs, currentFloorNumber, goingUp = false)
-            ?.let { return Pair(it, false) }
-        return null
-    }
-
-    private fun findBestPair(
-        position: Offset,
-        heading: Float,
-        stairPairs: List<StairPair>,
-        currentFloorNumber: Float,
-        goingUp: Boolean
-    ): StairPair? {
-        var bestPair: StairPair? = null
-        var bestDist = Float.MAX_VALUE
-
-        for (pair in stairPairs) {
-            val startPos: Offset
-            val startFloorNumber: Float
-
-            if (goingUp) {
-                startPos = pair.bottomPosition
-                startFloorNumber = pair.bottomFloorNumber
-            } else {
-                startPos = pair.topPosition
-                startFloorNumber = pair.topFloorNumber
-            }
-
-            // Must be on the user's current floor
-            if (startFloorNumber != currentFloorNumber) continue
-
-            // Proximity check
-            val dist = GeometryUtils.distance(position, startPos)
-            if (dist > proximityRadius) continue
-
-            // Heading / FOV check — is the user facing toward the entrance?
-            if (dist > 1f) { // skip angle check if essentially on top of it
-                val dirToEntrance = GeometryUtils.directionAngle(position, startPos)
-                val angleDiff = abs(GeometryUtils.angleDifference(heading, dirToEntrance))
-                if (angleDiff > fovHalfAngle) {
-                    continue
-                }
-            }
-
-            if (dist < bestDist) {
-                bestDist = dist
-                bestPair = pair
-            }
-        }
-
-        return bestPair
     }
 }

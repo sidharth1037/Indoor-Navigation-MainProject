@@ -96,9 +96,9 @@ fun HomeScreen(
                 pdrViewModel.loadBuildingData(campusBuildings)
             }
 
-            // Supply stair pairs and all floor constraint data
-            val stairPairs = floorPlanViewModel.getStairPairs()
-            pdrViewModel.loadStairPairs(stairPairs)
+            // Supply stairwell zones and all floor constraint data
+            val stairwellZones = floorPlanViewModel.getStairwellZones()
+            pdrViewModel.loadStairwellZones(stairwellZones)
 
             val allFloorData = floorPlanViewModel.getAllFloorConstraintData()
             pdrViewModel.loadAllFloorConstraintData(allFloorData)
@@ -365,7 +365,7 @@ private fun HomeScreenContent(
                     onCanvasStateChange = onCanvasStateChange,
                     displayConfig = uiState.displayConfig,
                     onRoomTap = onRoomTap,
-                    onBackgroundTap = onBackgroundTap,
+                    onBackgroundTap = {},
                     isSelectingOrigin = pdrUiState.isSelectingOrigin,
                     onOriginTap = onOriginSelected,
                     modifier = Modifier.fillMaxSize()
@@ -431,7 +431,7 @@ private fun HomeScreenContent(
                         modifier = Modifier
                             .fillMaxWidth()
                             .align(Alignment.TopCenter)
-                            .padding(top = 8.dp, end = 8.dp, start = 8.dp)
+                            .padding(top = 6.dp, end = 8.dp, start = 8.dp)
                     ) {
                         AnimatedVisibility(
                             visible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,

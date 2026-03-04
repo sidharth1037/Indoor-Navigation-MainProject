@@ -6,6 +6,8 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -26,6 +28,17 @@ class SettingsRepository(private val context: Context) {
         val RHYTHM_TOL_LOW    = floatPreferencesKey("rhythm_tol_low")
         val RHYTHM_TOL_HIGH   = floatPreferencesKey("rhythm_tol_high")
         val FLOOR_THRESHOLD   = floatPreferencesKey("floor_threshold")
+        // Stair detection / model
+        val ML_MODEL          = stringPreferencesKey("ml_model")
+        val STAIR_ENTRY_THRESHOLD  = intPreferencesKey("stair_entry_threshold")
+        val STAIR_LOOKBACK         = intPreferencesKey("stair_lookback")
+        val STAIR_REPLAY_COUNT     = intPreferencesKey("stair_replay_count")
+        val STAIR_PROXIMITY_RADIUS = floatPreferencesKey("stair_proximity_radius")
+        // Stride tuning — height & turn
+        val HEIGHT_K_INFLUENCE = floatPreferencesKey("height_k_influence")
+        val TURN_WINDOW        = intPreferencesKey("turn_window")
+        val TURN_THRESHOLD     = floatPreferencesKey("turn_threshold")
+        val TURN_SENSITIVITY   = floatPreferencesKey("turn_sensitivity")
     }
     
     /**
@@ -117,5 +130,45 @@ class SettingsRepository(private val context: Context) {
     /** Floor threshold: signal must dip below this between steps (m/s²). Null = default 0.8f. */
     val floorThreshold: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.FLOOR_THRESHOLD] }
     suspend fun saveFloorThreshold(v: Float) = context.dataStore.edit { it[PreferencesKeys.FLOOR_THRESHOLD] = v }
+
+    // ── ML model & stair detection ───────────────────────────────────────
+
+    /** ML model key: "v6" (96-window) or "v6_64" (64-window). Null = default "v6". */
+    val mlModel: Flow<String?> = context.dataStore.data.map { it[PreferencesKeys.ML_MODEL] }
+    suspend fun saveMlModel(v: String) = context.dataStore.edit { it[PreferencesKeys.ML_MODEL] = v }
+
+    /** Consecutive stair labels needed to enter a stairwell. Null = default 2. */
+    val stairEntryThreshold: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_ENTRY_THRESHOLD] }
+    suspend fun saveStairEntryThreshold(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_ENTRY_THRESHOLD] = v }
+
+    /** How many steps back from arrival to find the first compensation step. Null = default 3. */
+    val stairLookback: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_LOOKBACK] }
+    suspend fun saveStairLookback(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_LOOKBACK] = v }
+
+    /** How many buffered steps to replay on the new floor. Null = default 3. */
+    val stairReplayCount: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_REPLAY_COUNT] }
+    suspend fun saveStairReplayCount(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_REPLAY_COUNT] = v }
+
+    /** Proximity radius (campus units) for stair detection. Null = default 150. */
+    val stairProximityRadius: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_PROXIMITY_RADIUS] }
+    suspend fun saveStairProximityRadius(v: Float) = context.dataStore.edit { it[PreferencesKeys.STAIR_PROXIMITY_RADIUS] = v }
+
+    // ── Stride tuning ─ height & turn ─────────────────────────────────────
+
+    /** How much height influences K. Null = default 0.05. */
+    val heightKInfluence: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.HEIGHT_K_INFLUENCE] }
+    suspend fun saveHeightKInfluence(v: Float) = context.dataStore.edit { it[PreferencesKeys.HEIGHT_K_INFLUENCE] = v }
+
+    /** Heading window size for turn detection. Null = default 3. */
+    val turnWindow: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.TURN_WINDOW] }
+    suspend fun saveTurnWindow(v: Int) = context.dataStore.edit { it[PreferencesKeys.TURN_WINDOW] = v }
+
+    /** Min cumulative heading change (degrees) to trigger turn reduction. Null = default 60. */
+    val turnThreshold: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.TURN_THRESHOLD] }
+    suspend fun saveTurnThreshold(v: Float) = context.dataStore.edit { it[PreferencesKeys.TURN_THRESHOLD] = v }
+
+    /** Overall strength of turn-based stride reduction. Null = default 0.5. */
+    val turnSensitivity: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.TURN_SENSITIVITY] }
+    suspend fun saveTurnSensitivity(v: Float) = context.dataStore.edit { it[PreferencesKeys.TURN_SENSITIVITY] = v }
 
 }

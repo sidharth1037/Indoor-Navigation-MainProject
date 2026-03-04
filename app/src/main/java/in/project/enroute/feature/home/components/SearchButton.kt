@@ -62,7 +62,7 @@ fun SearchButton(
     
     val targetHeight = when {
         isSearching -> 48.dp
-        isSliderVisible -> 85.dp
+        isSliderVisible -> 77.dp
         else -> 48.dp
     }
     

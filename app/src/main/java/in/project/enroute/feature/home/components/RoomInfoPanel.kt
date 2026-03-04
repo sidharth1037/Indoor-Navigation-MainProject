@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.NorthEast
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -109,7 +109,7 @@ private fun RoomInfoPanelContent(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 24.dp, end = 8.dp, top = 16.dp, bottom = 16.dp)
+                .padding(start = 24.dp, end = 16.dp, top = 16.dp, bottom = 16.dp)
         ) {
             // Room label with dismiss button
             Row(
@@ -129,18 +129,17 @@ private fun RoomInfoPanelContent(
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 22.sp,
+                    fontSize = 20.sp,
                     modifier = Modifier.weight(1f)
                 )
 
                 // Dismiss button with down arrow
                 Icon(
-                    imageVector = Icons.Rounded.KeyboardArrowDown,
+                    imageVector = Icons.Rounded.Close,
                     contentDescription = "Dismiss",
                     tint = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier
-                        .width(50.dp)
-                        .height(46.dp)
+                        .size(36.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,

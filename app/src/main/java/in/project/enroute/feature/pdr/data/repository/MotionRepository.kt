@@ -38,15 +38,24 @@ class MotionRepository(private val appContext: Context) {
     /**
      * Lazily initializes the classifier and resets buffers.
      * Safe to call multiple times — will no-op if already running.
+     *
+     * @param modelKey  Preference key such as "v6" or "v6_64".
      */
-    fun start() {
+    fun start(modelKey: String = "v6") {
         if (classifier != null) return
-        classifier = MotionClassifier(appContext)
+        val (modelFile, metaFile) = modelFilesFor(modelKey)
+        classifier = MotionClassifier(appContext, modelFile, metaFile)
         sensorBuffer.clear()
         lastLabel = null
         lastConfidence = 0f
         _motionEvent.value = null
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    }
+
+    /** Maps a short key to the asset paths. */
+    private fun modelFilesFor(key: String): Pair<String, String> = when (key) {
+        "v6_64" -> "model/model_v6_64.tflite" to "model/model_meta_v6_64.json"
+        else    -> "model/model_v6.tflite"     to "model/model_meta_v6.json"
     }
 
     /**

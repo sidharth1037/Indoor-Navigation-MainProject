@@ -8,12 +8,10 @@ import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
 import `in`.project.enroute.feature.pdr.correction.BuildingDetector
 import `in`.project.enroute.feature.pdr.correction.CampusBuilding
 import `in`.project.enroute.feature.pdr.correction.StepCorrectionEngine
-import `in`.project.enroute.feature.pdr.correction.ArrivalReason
 import `in`.project.enroute.feature.pdr.correction.StairClimbingState
-import `in`.project.enroute.feature.pdr.correction.StairPair
-import `in`.project.enroute.feature.pdr.correction.StairTransitionEvent
 import `in`.project.enroute.feature.pdr.correction.StairwellTransitionAnimator
 import `in`.project.enroute.feature.pdr.correction.StairwellTransitionDetector
+import `in`.project.enroute.feature.pdr.correction.StairwellZone
 import `in`.project.enroute.feature.pdr.data.model.CadenceState
 import `in`.project.enroute.feature.pdr.data.model.PathPoint
 import `in`.project.enroute.feature.pdr.data.model.PdrState
@@ -57,10 +55,31 @@ class PdrRepository {
     // ── Stairwell transition ────────────────────────────────────────────
     private val stairDetector = StairwellTransitionDetector()
     private val stairAnimator = StairwellTransitionAnimator()
-    private var stairPairs: List<StairPair> = emptyList()
+    private var stairwellZones: List<StairwellZone> = emptyList()
     private var allFloorConstraintData: Map<String, FloorConstraintData> = emptyMap()
     private var lastMotionLabel: String? = null
     private var currentFloorNumber: Float = 1f
+    /** Configurable: how many steps back from arrival to find the first compensation step. */
+    private var stairLookback: Int = 3
+    /** Configurable: how many buffered steps to replay on the new floor. */
+    private var stairReplayCount: Int = 3
+
+    /**
+     * Ring buffer of steps recorded during CLIMBING.
+     * Each entry stores the interval + heading so they can be replayed
+     * with real data instead of fake values on arrival.
+     */
+    private data class StairStepRecord(val stepIntervalMs: Long, val heading: Float)
+    private val stairStepBuffer = mutableListOf<StairStepRecord>()
+
+    /**
+     * Ring buffer of recent headings for turn-based stride reduction.
+     * Each entry stores heading (radians) + step interval so the turn
+     * rate (degrees/second) can be computed alongside the cumulative
+     * heading change.
+     */
+    private data class HeadingRecord(val heading: Float, val stepIntervalMs: Long)
+    private val recentHeadings = mutableListOf<HeadingRecord>()
 
     /**
      * The overall PDR tracking state (path, origin, cadence, etc.).
@@ -165,11 +184,11 @@ class PdrRepository {
     }
 
     /**
-     * Supplies pre-computed stair pairs for the entire campus.
+     * Supplies pre-computed stairwell zones for the entire campus.
      * Called once from HomeScreen when building data loads.
      */
-    fun loadStairPairs(pairs: List<StairPair>) {
-        stairPairs = pairs
+    fun loadStairwellZones(zones: List<StairwellZone>) {
+        stairwellZones = zones
     }
 
     /**
@@ -178,6 +197,21 @@ class PdrRepository {
      */
     fun loadAllFloorConstraintData(data: Map<String, FloorConstraintData>) {
         allFloorConstraintData = data
+    }
+
+    /**
+     * Hot-updates stair detection/animation parameters from Settings.
+     */
+    fun updateStairSettings(
+        entryThreshold: Int? = null,
+        lookback: Int? = null,
+        replayCount: Int? = null
+    ) {
+        if (entryThreshold != null) {
+            stairDetector.updateSettings(entryThreshold = entryThreshold)
+        }
+        if (lookback != null)    stairLookback    = lookback
+        if (replayCount != null) stairReplayCount = replayCount
     }
 
     /**
@@ -201,6 +235,7 @@ class PdrRepository {
         currentY = origin.y
         stepCount = 0
         recentCadences.clear()
+        recentHeadings.clear()
 
         // Initialise correction engine if floor data is already loaded.
         correctionEngine?.setOrigin(origin, _heading.value)
@@ -261,11 +296,7 @@ class PdrRepository {
 
         // ── Handle ARRIVED left over from a previous step ───────────────
         if (stairAnimator.state == StairClimbingState.ARRIVED) {
-            val wasWalkingArrival = stairAnimator.arrivalReason == ArrivalReason.WALKING
-            val compensationSteps = if (wasWalkingArrival) {
-                stairAnimator.preClimbedStepsAtDetection.coerceIn(1, 4)
-            } else 0
-            finaliseStairTransition(compensationSteps)
+            finaliseStairTransition()
             currentState = _pdrState.value
         }
 
@@ -277,17 +308,13 @@ class PdrRepository {
 
         // ── Handle CLIMBING → advance animation ─────────────────────────
         if (stairAnimator.state == StairClimbingState.CLIMBING) {
-            processStairStep(heading, currentState)
+            processStairStep(stepIntervalMs, heading, currentState)
 
             // If the step just triggered arrival (walking / 100%),
             // finalise immediately and replay this step as a normal PDR
             // footstep on the new floor so the turn produces a footprint.
             if (stairAnimator.state == StairClimbingState.ARRIVED) {
-                val wasWalkingArrival = stairAnimator.arrivalReason == ArrivalReason.WALKING
-                val compensationSteps = if (wasWalkingArrival) {
-                    stairAnimator.preClimbedStepsAtDetection.coerceIn(1, 4)
-                } else 0
-                finaliseStairTransition(compensationSteps)
+                finaliseStairTransition()
                 currentState = _pdrState.value
                 return processNormalStep(stepIntervalMs, heading, currentState)
             }
@@ -329,6 +356,9 @@ class PdrRepository {
         heading: Float,
         currentState: PdrState
     ): Offset {
+        // Capture position before this step for boundary-crossing detection
+        val prevPosition = Offset(currentX, currentY)
+
         // Calculate cadence (steps per second)
         val cadence = if (stepIntervalMs > 0) 1000f / stepIntervalMs else 0f
 
@@ -345,13 +375,17 @@ class PdrRepository {
 
         // Calculate dynamic stride length based on cadence and height
         val rawStrideCm = calculateStrideLength(cadence, averageCadence)
+
+        // Apply turn-based stride reduction (updates heading ring buffer)
+        val turnFactor = calculateTurnFactor(heading, stepIntervalMs)
+        val adjustedStrideCm = rawStrideCm * turnFactor
         stepCount++
 
         // ── Route through correction engine if active ───────────────────
         val engine = correctionEngine
         if (engine != null && engine.isActive) {
             // Apply stride calibration from previous snap corrections
-            val calibratedCm = rawStrideCm * engine.strideCalibrationFactor
+            val calibratedCm = adjustedStrideCm * engine.strideCalibrationFactor
             val strideUnits = calibratedCm * pixelsPerCm
 
             val result = engine.processStep(heading, strideUnits)
@@ -386,13 +420,13 @@ class PdrRepository {
             )
 
             // ── Check for stairwell entry ───────────────────────────────
-            checkAndStartStairTransition(result.correctedCurrentPosition, heading)
+            checkAndStartStairTransition(prevPosition, result.correctedCurrentPosition, heading)
 
             return result.correctedCurrentPosition
         }
 
         // ── Fallback: no correction engine (original behaviour) ─────────
-        val strideLengthCm = rawStrideCm
+        val strideLengthCm = adjustedStrideCm
         val strideInPixels = strideLengthCm * pixelsPerCm
 
         val newX = currentX + strideInPixels * sin(heading)
@@ -431,7 +465,7 @@ class PdrRepository {
         )
 
         // ── Check for stairwell entry ───────────────────────────────────
-        checkAndStartStairTransition(newPosition, heading)
+        checkAndStartStairTransition(prevPosition, newPosition, heading)
 
         return newPosition
     }
@@ -440,8 +474,14 @@ class PdrRepository {
      * Processes a step while the user is on stairs (CLIMBING state).
      * The dot slides along the stairwell; no footstep is emitted.
      * The floor plan stays on the origin floor during the animation.
+     *
+     * The step's interval + heading are buffered so they can be replayed
+     * as real PDR steps on the new floor at arrival time.
      */
-    private fun processStairStep(heading: Float, currentState: PdrState) {
+    private fun processStairStep(stepIntervalMs: Long, heading: Float, currentState: PdrState) {
+        // Buffer every climbing step for potential compensation replay
+        stairStepBuffer.add(StairStepRecord(stepIntervalMs, heading))
+
         val pos = stairAnimator.advanceStep(heading, lastMotionLabel)
 
         // Sync internal trackers
@@ -482,64 +522,53 @@ class PdrRepository {
     }
 
     /**
-     * Checks proximity/heading/ML conditions and triggers a stairwell
-     * transition if met.  Two independent detection paths:
+     * Boundary-based stairwell check.  Two detection modes:
+     *  1. User is inside a stairwell polygon AND ML threshold met → immediate.
+     *  2. User previously crossed a stairwell boundary (stored crossing) AND
+     *     ML later confirms climbing → retroactive transition.
      *
-     * 1. **Spatial + ML** (two-stage): candidate latch near entrance + ML
-     *    confirmation within the sliding window.
-     * 2. **Sustained ML** (fallback): 3+ consecutive same-direction stair
-     *    labels → nearest stairwell by proximity only (no FOV).
-     *
-     * Both paths produce the same [StairTransitionEvent]; the first one
-     * to fire wins.
+     * Boundary crossings are recorded on every step via
+     * [StairwellTransitionDetector.recordBoundaryCrossings].
      */
-    private fun checkAndStartStairTransition(position: Offset, heading: Float) {
-        if (stairPairs.isEmpty()) return
+    private fun checkAndStartStairTransition(
+        prevPosition: Offset,
+        position: Offset,
+        heading: Float
+    ) {
+        if (stairwellZones.isEmpty()) return
         if (stairAnimator.state != StairClimbingState.IDLE) return
 
-        // Path 1: Spatial candidate + ML window confirmation
-        val isSustainedPath: Boolean
-        val event: StairTransitionEvent
-
-        val path1 = stairDetector.checkTransition(
-            position = position,
+        // Record any boundary crossings for deferred detection
+        stairDetector.recordBoundaryCrossings(
+            prevPos = prevPosition,
+            newPos = position,
             heading = heading,
-            stairPairs = stairPairs,
+            zones = stairwellZones,
             currentFloorNumber = currentFloorNumber
         )
-        if (path1 != null) {
-            event = path1
-            isSustainedPath = false
-        } else {
-            // Path 2: Sustained ML fallback (independent of spatial candidate)
-            val path2 = stairDetector.checkSustainedMLTransition(
-                position = position,
-                stairPairs = stairPairs,
-                currentFloorNumber = currentFloorNumber
-            ) ?: return
-            event = path2
-            isSustainedPath = true
-        }
+
+        val event = stairDetector.checkTransition(
+            position = position,
+            heading = heading,
+            zones = stairwellZones,
+            currentFloorNumber = currentFloorNumber
+        ) ?: return
 
         // Transition confirmed — start the animation
+        stairStepBuffer.clear()
         stairAnimator.startTransition(event, heading)
-        stairDetector.reset() // prevent re-triggering
+        stairDetector.reset()
 
         // Flush the correction engine buffer before entering stairs
         correctionEngine?.flush()
 
-        // Snap the user position to the stairwell entrance.  This is
-        // especially important for sustained-ML triggers where the user
-        // may be some distance from the entrance by the time 3+ labels
-        // accumulate.
-        if (isSustainedPath) {
-            currentX = event.startPosition.x
-            currentY = event.startPosition.y
-        }
+        // Snap position to the projected entry point
+        currentX = event.startPosition.x
+        currentY = event.startPosition.y
 
         val currentState = _pdrState.value
         _pdrState.value = currentState.copy(
-            currentPosition = if (isSustainedPath) event.startPosition else currentState.currentPosition,
+            currentPosition = event.startPosition,
             isOnStairs = true,
             stairTransitionProgress = 0f,
             stairDestinationFloor = event.destinationFloorId
@@ -551,46 +580,57 @@ class PdrRepository {
      * floor's constraint data, resets the correction engine, and resumes
      * normal PDR from the stairwell endpoint.
      *
-     * @param compensationSteps Number of extra steps to replay on the new
-     *        floor to account for ML detection lag.  Only non-zero when
-     *        arrival was triggered by "walking" label (the user already
-     *        walked past the top of the stairwell).  When arrival is
-     *        triggered by a heading turn, no compensation is needed
-     *        because the user is exactly at the landing.
+     * ## Step-buffer compensation
+     * During CLIMBING every step's (intervalMs, heading) is recorded in
+     * [stairStepBuffer].  On arrival the most recent steps are replayed
+     * through [processNormalStep] so that the user dot "catches up" to
+     * where the user actually is on the new floor.
      *
-     * Uses StairTransitionEvent.endPosition directly as the arrival
-     * position.  This is the campus-coordinate endpoint of the StairPair,
-     * which matches the stairwell shaft location on the destination floor.
+     * Two tunable settings control the replay:
+     *  - **[stairLookback]**: how many positions back from the end of the
+     *    buffer to start compensation (finds the first walking step).
+     *  - **[stairReplayCount]**: how many steps from that point to replay.
+     *
+     * Example: buffer=[1,2,3,4,5,6,7,8], lookback=3, replay=3
+     *   → start at index 8−3=5, replay steps 6,7,8 with real heading/interval.
      */
-    private fun finaliseStairTransition(compensationSteps: Int = 0) {
+    private fun finaliseStairTransition() {
         val event = stairAnimator.activeEvent ?: run {
             stairAnimator.finalize()
             return
         }
 
         val destinationFloorId = event.destinationFloorId
-        // Use the StairPair endpoint — already in campus coordinates and
-        // known to be at the correct stairwell location.
         val arrivalPosition = event.endPosition
+        val isSameFloor = event.isSameFloor
 
-        // Update floor number
-        currentFloorNumber = destinationFloorId
-            .removePrefix("floor_").toFloatOrNull() ?: currentFloorNumber
+        // ── Same-floor stairwell (sub-levels like 0.3↔0.6) ─────────
+        // No floor number change, no constraint reload, no floor switch.
+        // Just resume normal PDR from the arrival position.
+        if (!isSameFloor) {
+            // Update floor number
+            currentFloorNumber = destinationFloorId
+                .removePrefix("floor_").toFloatOrNull() ?: currentFloorNumber
 
-        // Load destination floor constraints if available
-        val destConstraints = allFloorConstraintData[destinationFloorId]
-        if (destConstraints != null) {
-            constraintProvider.loadFloor(
-                destConstraints.floorPlanData,
-                destConstraints.scale,
-                destConstraints.rotationDegrees,
-                destConstraints.offsetX,
-                destConstraints.offsetY
-            )
-            correctionEngine = StepCorrectionEngine(
-                config = correctionConfig,
-                constraintProvider = constraintProvider
-            )
+            // Load destination floor constraints if available
+            val destConstraints = allFloorConstraintData[destinationFloorId]
+            if (destConstraints != null) {
+                constraintProvider.loadFloor(
+                    destConstraints.floorPlanData,
+                    destConstraints.scale,
+                    destConstraints.rotationDegrees,
+                    destConstraints.offsetX,
+                    destConstraints.offsetY
+                )
+                correctionEngine = StepCorrectionEngine(
+                    config = correctionConfig,
+                    constraintProvider = constraintProvider
+                )
+                correctionEngine?.setOrigin(arrivalPosition, _heading.value)
+            }
+        } else {
+            // Same-floor: just re-anchor the correction engine at the
+            // arrival position without reloading constraints.
             correctionEngine?.setOrigin(arrivalPosition, _heading.value)
         }
 
@@ -610,34 +650,48 @@ class PdrRepository {
             stairDestinationFloor = null,
             stairBottomPosition = null,
             stairTopPosition = null,
-            currentFloor = destinationFloorId
+            currentFloor = if (isSameFloor) currentState.currentFloor else destinationFloorId
         )
 
         // Sync building detector so it doesn't detect a floor "change" on
         // the next step and re-load the old floor's constraints.
-        buildingDetector.setInitial(
-            buildingDetector.currentBuildingId,
-            destinationFloorId
-        )
+        if (!isSameFloor) {
+            buildingDetector.setInitial(
+                buildingDetector.currentBuildingId,
+                destinationFloorId
+            )
+        }
 
         stairAnimator.finalize()
-        // Re-arm the detector so the user can enter another stairwell on
-        // the new floor.  Clear stale ML labels to prevent instant triggers.
         stairDetector.reset()
 
-        // ── Walking-arrival compensation ────────────────────────────────
-        // When the ML model said "walking" to trigger arrival, the user
-        // has already taken a few steps past the top of the stairwell.
-        // Replay those steps as normal PDR so the position isn't stuck
-        // at the stairwell entrance.
-        if (compensationSteps > 0) {
-            val heading = _heading.value
-            val defaultIntervalMs = 500L  // assume ~2 steps/sec
-            for (i in 0 until compensationSteps) {
-                processNormalStep(defaultIntervalMs, heading, _pdrState.value)
+        // ── Step-buffer compensation ────────────────────────────────────
+        // Clear turn heading buffer so the first compensation steps on the
+        // new floor aren't penalised for the heading difference from
+        // pre-stairwell walking.
+        recentHeadings.clear()
+
+        // Replay the tail of the climbing step buffer using real heading
+        // and interval data, so the user dot catches up to where the user
+        // actually is on the new floor.
+        if (stairStepBuffer.isNotEmpty() && stairReplayCount > 0) {
+            val bufSize = stairStepBuffer.size
+            // The start index is (bufSize - lookback), clamped to [0, bufSize)
+            val startIdx = (bufSize - stairLookback).coerceIn(0, bufSize)
+            // The number of steps we can actually replay from startIdx
+            val count = stairReplayCount.coerceAtMost(bufSize - startIdx)
+
+            if (count > 0) {
+                val stepsToReplay = stairStepBuffer.subList(startIdx, startIdx + count)
+                for (record in stepsToReplay) {
+                    processNormalStep(record.stepIntervalMs, record.heading, _pdrState.value)
+                }
+                Log.d("PdrRepo", "Compensation: replayed $count steps " +
+                        "(buf=$bufSize, lookback=$stairLookback, " +
+                        "startIdx=$startIdx, replayCount=$stairReplayCount)")
             }
-            Log.d("PdrRepo", "Walking-arrival compensation: replayed $compensationSteps steps")
         }
+        stairStepBuffer.clear()
     }
 
     /**
@@ -704,6 +758,8 @@ class PdrRepository {
         // Re-arm the stair detector so the user can attempt the stairwell
         // again if they change their mind.
         stairDetector.reset()
+        stairStepBuffer.clear()
+        recentHeadings.clear()
     }
 
     /**
@@ -723,6 +779,7 @@ class PdrRepository {
         currentY = 0f
         stepCount = 0
         recentCadences.clear()
+        recentHeadings.clear()
 
         // Reset correction engine (discard buffer without flushing)
         correctionEngine?.reset()
@@ -733,6 +790,7 @@ class PdrRepository {
         // Reset stairwell transition
         stairDetector.reset()
         stairAnimator.reset()
+        stairStepBuffer.clear()
         lastMotionLabel = null
         currentFloorNumber = 1f
 
@@ -779,6 +837,67 @@ class PdrRepository {
     }
 
     /**
+     * Computes a stride-reduction factor (0.3–1.0) based on how sharply
+     * and how quickly the user is turning.
+     *
+     * Uses the [recentHeadings] ring buffer (sized by [StrideConfig.turnWindow]).
+     * If the cumulative heading change over the window exceeds the
+     * [StrideConfig.turnThreshold], a reduction is applied proportional
+     * to both the angle excess and the turn speed (faster turns ⇒ more
+     * reduction).  [StrideConfig.turnSensitivity] scales the overall
+     * effect.
+     *
+     * @param heading   Current heading in radians.
+     * @param stepIntervalMs  Time since last step.
+     * @return Factor in [0.3, 1.0] to multiply against the raw stride.
+     */
+    private fun calculateTurnFactor(heading: Float, stepIntervalMs: Long): Float {
+        // Record the current step
+        recentHeadings.add(HeadingRecord(heading, stepIntervalMs))
+        while (recentHeadings.size > strideConfig.turnWindow) {
+            recentHeadings.removeAt(0)
+        }
+
+        // Need at least 2 headings to detect a turn
+        if (recentHeadings.size < 2) return 1f
+
+        // Cumulative heading change across the window (in degrees).
+        // Each pair wraps to the shortest arc (±180°) so it works across
+        // the 0/2π boundary.
+        var totalAngleDeg = 0f
+        var totalTimeMs = 0L
+        for (i in 1 until recentHeadings.size) {
+            val prev = recentHeadings[i - 1].heading
+            val curr = recentHeadings[i].heading
+            var delta = curr - prev               // radians
+            // Wrap to [-π, π]
+            while (delta > Math.PI)  delta -= (2 * Math.PI).toFloat()
+            while (delta < -Math.PI) delta += (2 * Math.PI).toFloat()
+            totalAngleDeg += Math.toDegrees(kotlin.math.abs(delta).toDouble()).toFloat()
+            totalTimeMs += recentHeadings[i].stepIntervalMs
+        }
+
+        val threshold = strideConfig.turnThreshold
+        if (totalAngleDeg < threshold) return 1f
+
+        // ── Angle excess: 0 at threshold, 1 at 180° ─────────────────
+        val angleExcess = ((totalAngleDeg - threshold) / (180f - threshold))
+            .coerceIn(0f, 1f)
+
+        // ── Speed factor: shorter step intervals ⇒ faster turn ──────
+        val windowSize = recentHeadings.size - 1   // number of intervals
+        val avgStepTimeSec = (totalTimeMs.toFloat() / windowSize / 1000f)
+            .coerceAtLeast(0.15f)             // floor to avoid divide-by-zero
+        // At 0.5 s/step (normal walk) speedFactor ≈ 1.0;
+        // at 0.25 s/step speedFactor ≈ 2.0 (very fast turn).
+        val speedFactor = (0.5f / avgStepTimeSec).coerceIn(0.5f, 2.0f)
+
+        // ── Combined reduction ──────────────────────────────────────
+        val reduction = strideConfig.turnSensitivity * angleExcess * speedFactor
+        return (1f - reduction).coerceIn(0.3f, 1f)
+    }
+
+    /**
      * Calculates stride length using a normalized linear gait model.
      * Formula: Stride = Height * (k * Cadence + c)
      * * This version is tuned to prevent "short-stepping" on the map.
@@ -791,23 +910,18 @@ class PdrRepository {
         // but enough instant cadence to feel responsive.
         val smoothedCadence = (instantCadence * 0.35f) + (averageCadence * 0.65f)
 
-        // 2. DYNAMIC GAIT SCALING:
-        // If cadence is very low (< 1 step/sec), the user is likely hesitant.
-        // If cadence is high (> 2.2 steps/sec), they are running.
-        val k = strideConfig.kValue
+        // 2. HEIGHT-DEPENDENT K:
+        // Taller users need a higher K (longer stride per cadence unit),
+        // shorter users need a lower K.  The influence parameter controls
+        // how strongly height deviations from 170 cm affect K.
+        val baseK = strideConfig.kValue
+        val effectiveK = baseK + strideConfig.heightKInfluence * (heightCm - 170f) / 100f
         val c = strideConfig.cValue
 
         // General Equation: Stride = H * (k * f + c) where f is frequency (cadence)
-        var stride = heightInMeters * (k * smoothedCadence + c)
+        val stride = heightInMeters * (effectiveK * smoothedCadence + c)
 
-        // 3. CALIBRATION OFFSET:
-        // If the user is shorter (like 165cm), the proportional stride often
-        // underestimates real-world movement due to hip flexibility.
-        if (heightCm < 170f) {
-            stride *= 1.05f // 5% boost for shorter users to compensate for sensor lag
-        }
-
-        // 4. BIOLOGICAL CLAMPING:
+        // 3. BIOLOGICAL CLAMPING:
         // Minimum: 0.4m (40cm) - Anything less is a shuffle, not a step.
         // Maximum: 0.85 * Height - Standard limit for human leg extension.
         val minStride = 40f

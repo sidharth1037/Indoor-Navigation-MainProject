@@ -20,13 +20,23 @@ data class SettingsUiState(
     val showEntrances: Boolean = false,
     val strideK: Float = StrideConfig().kValue,
     val strideC: Float = StrideConfig().cValue,
+    val heightKInfluence: Float = 0.05f,
+    val turnWindow: Int = 3,
+    val turnThreshold: Float = 60f,
+    val turnSensitivity: Float = 0.5f,
     // Step detection — filtered z domain
     val stepThreshold: Float = 2.0f,
     val highPassAlpha: Float = 0.9f,
     val minProminence: Float = 1.5f,
     val rhythmToleranceLow: Float = 0.4f,
     val rhythmToleranceHigh: Float = 1.8f,
-    val floorThreshold: Float = 0.8f
+    val floorThreshold: Float = 0.8f,
+    // ML model & stair detection
+    val mlModel: String = "v6",
+    val stairEntryThreshold: Int = 2,
+    val stairLookback: Int = 3,
+    val stairReplayCount: Int = 3,
+    val stairProximityRadius: Float = 150f
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -81,6 +91,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.rhythmToleranceLow.collect  { if (it != null) _uiState.update { s -> s.copy(rhythmToleranceLow = it) } } }
         viewModelScope.launch { repository.rhythmToleranceHigh.collect { if (it != null) _uiState.update { s -> s.copy(rhythmToleranceHigh = it) } } }
         viewModelScope.launch { repository.floorThreshold.collect    { if (it != null) _uiState.update { s -> s.copy(floorThreshold = it) } } }
+
+        // Load ML model & stair detection settings
+        viewModelScope.launch { repository.mlModel.collect             { if (it != null) _uiState.update { s -> s.copy(mlModel = it) } } }
+        viewModelScope.launch { repository.stairEntryThreshold.collect { if (it != null) _uiState.update { s -> s.copy(stairEntryThreshold = it) } } }
+        viewModelScope.launch { repository.stairLookback.collect       { if (it != null) _uiState.update { s -> s.copy(stairLookback = it) } } }
+        viewModelScope.launch { repository.stairReplayCount.collect    { if (it != null) _uiState.update { s -> s.copy(stairReplayCount = it) } } }
+        viewModelScope.launch { repository.stairProximityRadius.collect { if (it != null) _uiState.update { s -> s.copy(stairProximityRadius = it) } } }
+
+        // Load stride tuning — height & turn
+        viewModelScope.launch { repository.heightKInfluence.collect  { if (it != null) _uiState.update { s -> s.copy(heightKInfluence = it) } } }
+        viewModelScope.launch { repository.turnWindow.collect        { if (it != null) _uiState.update { s -> s.copy(turnWindow = it) } } }
+        viewModelScope.launch { repository.turnThreshold.collect     { if (it != null) _uiState.update { s -> s.copy(turnThreshold = it) } } }
+        viewModelScope.launch { repository.turnSensitivity.collect   { if (it != null) _uiState.update { s -> s.copy(turnSensitivity = it) } } }
     }
 
     fun toggleEditHeight() {
@@ -173,4 +196,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun updateRhythmToleranceLow(v: Float)  { _uiState.update { it.copy(rhythmToleranceLow = v) };  viewModelScope.launch { repository.saveRhythmToleranceLow(v) } }
     fun updateRhythmToleranceHigh(v: Float) { _uiState.update { it.copy(rhythmToleranceHigh = v) }; viewModelScope.launch { repository.saveRhythmToleranceHigh(v) } }
     fun updateFloorThreshold(v: Float)      { _uiState.update { it.copy(floorThreshold = v) };      viewModelScope.launch { repository.saveFloorThreshold(v) } }
+
+    fun updateMlModel(v: String)             { _uiState.update { it.copy(mlModel = v) };             viewModelScope.launch { repository.saveMlModel(v) } }
+    fun updateStairEntryThreshold(v: Int)    { _uiState.update { it.copy(stairEntryThreshold = v) };  viewModelScope.launch { repository.saveStairEntryThreshold(v) } }
+    fun updateStairLookback(v: Int)           { _uiState.update { it.copy(stairLookback = v) };       viewModelScope.launch { repository.saveStairLookback(v) } }
+    fun updateStairReplayCount(v: Int)        { _uiState.update { it.copy(stairReplayCount = v) };    viewModelScope.launch { repository.saveStairReplayCount(v) } }
+    fun updateStairProximityRadius(v: Float) { _uiState.update { it.copy(stairProximityRadius = v) }; viewModelScope.launch { repository.saveStairProximityRadius(v) } }
+
+    fun updateHeightKInfluence(v: Float)  { _uiState.update { it.copy(heightKInfluence = v) };  viewModelScope.launch { repository.saveHeightKInfluence(v) } }
+    fun updateTurnWindow(v: Int)          { _uiState.update { it.copy(turnWindow = v) };        viewModelScope.launch { repository.saveTurnWindow(v) } }
+    fun updateTurnThreshold(v: Float)     { _uiState.update { it.copy(turnThreshold = v) };     viewModelScope.launch { repository.saveTurnThreshold(v) } }
+    fun updateTurnSensitivity(v: Float)   { _uiState.update { it.copy(turnSensitivity = v) };   viewModelScope.launch { repository.saveTurnSensitivity(v) } }
 }
