@@ -6,14 +6,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
@@ -70,66 +68,19 @@ fun PdrPathOverlay(
         val centerY = size.height / 2
 
         translate(left = centerX, top = centerY) {
-            val footstepSize = 30f //* canvasState.scale
-            val halfSize = footstepSize / 2f
-            
-            // Only draw the last 10 steps (excluding only current position).
-            // path[0] is the origin, path.last() is current position (shown as cone).
-            val lastStepsCount = 10
-            val historyPath = if (path.size > 1) path.dropLast(1) else emptyList()
-            val displayPath = if (historyPath.size > lastStepsCount) {
-                historyPath.takeLast(lastStepsCount)
-            } else {
-                historyPath
-            }
-            
             // Dim everything when viewing a different floor
             val floorAlphaMultiplier = if (isOnCurrentFloor) 1f else 0.25f
 
-            // Draw footstep icons at each path point with variable opacity
-            // Suppressed while on stairs — only the blue dot is shown.
+            // Draw footstep icons — suppressed while on stairs (only the blue dot moves).
             if (!isOnStairs) {
-            displayPath.forEachIndexed { index, pathPoint ->
-                val isRightFoot = (path.size - 1 - displayPath.size + index) % 2 == 0
-                val point = pathPoint.position
-                // Convert heading from radians to degrees
-                // heading: 0 = North (up), positive = clockwise
-                val headingDegrees = Math.toDegrees(pathPoint.heading.toDouble()).toFloat()
-                
-                // Calculate opacity: 70% (0.7f) for nearest to 10% (0.1f) for farthest
-                // index 0 = farthest (oldest), index n-1 = nearest (newest)
-                val alpha = (if (displayPath.size > 1) {
-                    0.1f + (index.toFloat() / (displayPath.size - 1)) * 0.7f
-                } else {
-                    0.8f
-                }) * floorAlphaMultiplier
-                
-                // Small lateral offset to separate left and right feet
-                val lateralOffset = 5f // Distance between left and right foot
-                
-                withTransform({
-                    // 1. Move to the step location
-                    translate(left = point.x, top = point.y)
-                    // 2. Rotate to face heading direction
-                    rotate(degrees = headingDegrees, pivot = Offset.Zero)
-                    // 3. Apply lateral offset BEFORE mirroring
-                    // Right foot: offset to the right (+x in rotated space)
-                    // Left foot: offset to the left (-x in rotated space, but becomes +x after mirroring)
-                    val xOffset = if (isRightFoot) lateralOffset else -lateralOffset
-                    translate(left = xOffset, top = 0f)
-                    // 4. Mirror for left foot (scale around center, i.e., Offset.Zero after translate)
-                    if (!isRightFoot) {
-                        scale(scaleX = -1f, scaleY = 1f, pivot = Offset.Zero)
-                    }
-                    // 5. Offset to center the footstep image
-                    translate(left = -halfSize, top = -halfSize)
-                }) {
-                    with(footstepPainter) {
-                        draw(Size(footstepSize, footstepSize), alpha = alpha)
-                    }
-                }
+                val historyPath = if (path.size > 1) path.dropLast(1) else emptyList()
+                val displayPath = filterFootstepsForDisplay(historyPath)
+                drawFootsteps(
+                    displayPath = displayPath,
+                    footstepPainter = footstepPainter,
+                    floorAlpha = floorAlphaMultiplier
+                )
             }
-            } // end if (!isOnStairs)
             
             // Original red dot drawing (commented out)
             /*

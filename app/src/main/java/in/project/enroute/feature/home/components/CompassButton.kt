@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.Image
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import `in`.project.enroute.R
 
@@ -49,17 +50,18 @@ fun CompassButton(
     canvasRotationDegrees: Float,
     isSliderVisible: Boolean,
     isSearching: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    sliderHeightDp: Dp = 77.dp,
+    onClick: () -> Unit
 ) {
     val backgroundColor = MaterialTheme.colorScheme.primaryContainer
-    val buttonSize = 52.dp // 28dp radius = 56dp diameter
+    val buttonSize = 51.dp // 28dp radius = 56dp diameter
     val iconSize = 32.dp
 
     // Animate top padding based on slider visibility (not affected by search)
     val topPadding by animateDpAsState(
         targetValue = when {
-            isSliderVisible -> 92.dp  // Below slider
+            isSliderVisible -> sliderHeightDp + 8.dp  // Below slider + gap
             else -> 56.dp  // Below search button when no slider
         },
         animationSpec = tween(durationMillis = 300),

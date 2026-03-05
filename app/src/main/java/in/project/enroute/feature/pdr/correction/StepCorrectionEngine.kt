@@ -33,7 +33,7 @@ class StepCorrectionEngine(
     // ── State ───────────────────────────────────────────────────────────────
 
     /** Steps waiting to be committed. */
-    private val rawBuffer = mutableListOf<RawStep>()
+    private val rawBuffer = ArrayDeque<RawStep>()
 
     /** Finalised, corrected path (includes the origin as first element). */
     private val _committedPath = mutableListOf<PathPoint>()
@@ -53,7 +53,7 @@ class StepCorrectionEngine(
     private var lastCommittedPosition: Offset? = null
 
     /** Small sliding window of recently committed raw-steps for turn-detection context. */
-    private val recentCommitted = mutableListOf<RawStep>()
+    private val recentCommitted = ArrayDeque<RawStep>()
 
     /** Heading correction accumulated from wall slides. */
     private var accumulatedHeadingCorrection: Float = 0f
@@ -191,10 +191,10 @@ class StepCorrectionEngine(
         // Keep a small trailing window for turn-detection context
         recentCommitted.add(oldest)
         while (recentCommitted.size > config.bufferSize * 2) {
-            recentCommitted.removeAt(0)
+            recentCommitted.removeFirst()
         }
 
-        rawBuffer.removeAt(0)
+        rawBuffer.removeFirst()
 
         // ── 5. Rebase remaining buffer from the new anchor ──────────────────
         rebaseBuffer(wallResult.constrainedPosition)
@@ -215,7 +215,7 @@ class StepCorrectionEngine(
     fun flush(): List<PathPoint> {
         val flushed = mutableListOf<PathPoint>()
         while (rawBuffer.isNotEmpty()) {
-            val step = rawBuffer.removeAt(0)
+            val step = rawBuffer.removeFirst()
             val prev = lastCommittedPosition ?: step.position
             val walls = constraintProvider.getWallsNear(step.position, config.wallSearchRadius)
             val result = wallConstraint.constrain(prev, step.position, walls)

@@ -37,37 +37,24 @@ data class CadenceState(
 /**
  * Configuration parameters for step detection.
  *
- * Combines four anti-false-positive techniques:
+ * Uses two techniques:
  *   A) High-pass filter strips gravity DC, leaving only dynamic acceleration
- *   B) Peak prominence ensures a real valley precedes each counted peak
- *   C) Cadence rhythm gate rejects peaks outside the user's walking rhythm
- *   D) Floor threshold requires signal to return to rest between steps
+ *   B) Peak detection — rising→falling transition above threshold + debounce
  *
- * All thresholds are in the **filtered** z domain (roughly ±0–4 m/s²).
+ * False-positive filtering is handled by the ML motion model in PdrViewModel.
  *
- * @param threshold        Filtered |z| peak must exceed this (m/s²)
- * @param debounceMs       Hard minimum time between steps (ms)
- * @param windowSize       Sliding window depth for peak detection
- * @param highPassAlpha    High-pass filter coefficient (0–1). Higher = more
- *                         responsive but less gravity rejection.
- * @param minProminence    Valley-to-peak height required (m/s²). Ensures
- *                         the step has a proper preceding trough.
- * @param rhythmToleranceLow   Lower bound: next step must arrive after
- *                             avgInterval × this factor.
- * @param rhythmToleranceHigh  Upper bound: next step must arrive before
- *                             avgInterval × this factor.
- * @param floorThreshold   Filtered |z| must drop below this between steps (m/s²).
- *                         Ensures each step completes a full oscillation cycle.
+ * @param threshold         Filtered |z| peak must exceed this (m/s²)
+ * @param debounceMs        Hard minimum time between steps (ms)
+ * @param highPassAlpha     High-pass filter coefficient (0–1). Higher = more
+ *                          responsive but less gravity rejection.
+ * @param compensationSteps How many buffered peaks to replay when the ML model
+ *                          first confirms activity (compensates for model lag).
  */
 data class StepDetectionConfig(
     val threshold: Float = 2.0f,
     val debounceMs: Long = 300L,
-    val windowSize: Int = 6,
     val highPassAlpha: Float = 0.9f,
-    val minProminence: Float = 1.5f,
-    val rhythmToleranceLow: Float = 0.4f,
-    val rhythmToleranceHigh: Float = 1.8f,
-    val floorThreshold: Float = 0.8f
+    val compensationSteps: Int = 4
 )
 
 /**

@@ -19,15 +19,13 @@ class SettingsRepository(private val context: Context) {
     private object PreferencesKeys {
         val HEIGHT = floatPreferencesKey("user_height")
         val SHOW_ENTRANCES = booleanPreferencesKey("show_entrances")
+        val SHOW_MOTION_LABEL = booleanPreferencesKey("show_motion_label")
         val STRIDE_K = floatPreferencesKey("stride_k_value")
         val STRIDE_C = floatPreferencesKey("stride_c_value")
         // v2 keys: filtered z domain (0.5–5.0 m/s²), not compatible with old unfiltered values
         val STEP_THRESHOLD    = floatPreferencesKey("step_threshold_v2")
         val HIGH_PASS_ALPHA   = floatPreferencesKey("high_pass_alpha")
-        val MIN_PROMINENCE    = floatPreferencesKey("min_prominence")
-        val RHYTHM_TOL_LOW    = floatPreferencesKey("rhythm_tol_low")
-        val RHYTHM_TOL_HIGH   = floatPreferencesKey("rhythm_tol_high")
-        val FLOOR_THRESHOLD   = floatPreferencesKey("floor_threshold")
+        val COMPENSATION_STEPS = intPreferencesKey("compensation_steps")
         // Stair detection / model
         val ML_MODEL          = stringPreferencesKey("ml_model")
         val STAIR_ENTRY_THRESHOLD  = intPreferencesKey("stair_entry_threshold")
@@ -75,6 +73,12 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /** Whether the motion label badge is shown while PDR tracking. Defaults to true. */
+    val showMotionLabel: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[PreferencesKeys.SHOW_MOTION_LABEL] ?: true
+    }
+    suspend fun saveShowMotionLabel(v: Boolean) = context.dataStore.edit { it[PreferencesKeys.SHOW_MOTION_LABEL] = v }
+
     // ── Stride constants ──────────────────────────────────────────────────────
 
     /**
@@ -115,21 +119,9 @@ class SettingsRepository(private val context: Context) {
     val highPassAlpha: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.HIGH_PASS_ALPHA] }
     suspend fun saveHighPassAlpha(v: Float) = context.dataStore.edit { it[PreferencesKeys.HIGH_PASS_ALPHA] = v }
 
-    /** Minimum valley-to-peak height (m/s²). Null = default 1.5f. */
-    val minProminence: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.MIN_PROMINENCE] }
-    suspend fun saveMinProminence(v: Float) = context.dataStore.edit { it[PreferencesKeys.MIN_PROMINENCE] = v }
-
-    /** Rhythm gate lower tolerance multiplier. Null = default 0.4f. */
-    val rhythmToleranceLow: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.RHYTHM_TOL_LOW] }
-    suspend fun saveRhythmToleranceLow(v: Float) = context.dataStore.edit { it[PreferencesKeys.RHYTHM_TOL_LOW] = v }
-
-    /** Rhythm gate upper tolerance multiplier. Null = default 1.8f. */
-    val rhythmToleranceHigh: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.RHYTHM_TOL_HIGH] }
-    suspend fun saveRhythmToleranceHigh(v: Float) = context.dataStore.edit { it[PreferencesKeys.RHYTHM_TOL_HIGH] = v }
-
-    /** Floor threshold: signal must dip below this between steps (m/s²). Null = default 0.8f. */
-    val floorThreshold: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.FLOOR_THRESHOLD] }
-    suspend fun saveFloorThreshold(v: Float) = context.dataStore.edit { it[PreferencesKeys.FLOOR_THRESHOLD] = v }
+    /** How many buffered peaks to replay when ML confirms activity. Null = default 4. */
+    val compensationSteps: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.COMPENSATION_STEPS] }
+    suspend fun saveCompensationSteps(v: Int) = context.dataStore.edit { it[PreferencesKeys.COMPENSATION_STEPS] = v }
 
     // ── ML model & stair detection ───────────────────────────────────────
 

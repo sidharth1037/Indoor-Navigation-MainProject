@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import `in`.project.enroute.feature.floorplan.utils.FollowingAnimator
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -56,22 +57,30 @@ import `in`.project.enroute.feature.pdr.ui.components.MotionLabel
 
 import `in`.project.enroute.feature.home.components.RoomInfoPanel
 import `in`.project.enroute.feature.home.components.StopTrackingButton
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween as dpTween
+import androidx.compose.runtime.rememberUpdatedState
+import kotlin.math.cos
+import kotlin.math.sin
 import `in`.project.enroute.feature.navigation.NavigationViewModel
 import `in`.project.enroute.feature.navigation.NavigationUiState
 import `in`.project.enroute.feature.navigation.ui.NavigationPathOverlay
+import `in`.project.enroute.feature.settings.SettingsViewModel
 
 @Composable
 fun HomeScreen(
     campusId: String,
     floorPlanViewModel: FloorPlanViewModel = viewModel(),
     pdrViewModel: PdrViewModel = viewModel(),
-    navigationViewModel: NavigationViewModel = viewModel()
+    navigationViewModel: NavigationViewModel = viewModel(),
+    settingsViewModel: SettingsViewModel = viewModel()
 ) {
     val uiState by floorPlanViewModel.uiState.collectAsState()
     val pdrUiState by pdrViewModel.uiState.collectAsState()
     val navUiState by navigationViewModel.uiState.collectAsState()
+    val settingsUiState by settingsViewModel.uiState.collectAsState()
     // Heading collected separately for PDR — not used for compass (compass uses canvas rotation)
     val heading by pdrViewModel.heading.collectAsState()
     val view = LocalView.current
@@ -274,7 +283,8 @@ fun HomeScreen(
                     navigationViewModel.requestDirections(room, currentPosition, floor)
                 }
             },
-            onSwitchToFloorById = { floorId -> floorPlanViewModel.switchToFloorById(floorId) }
+            onSwitchToFloorById = { floorId -> floorPlanViewModel.switchToFloorById(floorId) },
+            showMotionLabel = settingsUiState.showMotionLabel
         )
     }
 }
@@ -300,7 +310,8 @@ private fun HomeScreenContent(
     onDismissHeightRequired: () -> Unit,
     onSaveHeight: (Float) -> Unit,
     onDirectionsClick: (Room) -> Unit,
-    onSwitchToFloorById: (String) -> Unit = {}
+    onSwitchToFloorById: (String) -> Unit = {},
+    showMotionLabel: Boolean = true
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var isMorphingToSearch by remember { mutableStateOf(false) }
@@ -312,6 +323,43 @@ private fun HomeScreenContent(
     // When non-null, the Directions button was pressed before origin was set.
     // Once origin is set, auto-request directions to this room.
     var pendingDirectionsRoom by remember { mutableStateOf<Room?>(null) }
+
+    val density = LocalDensity.current
+    var sliderHeightDp by remember { mutableStateOf(77.dp) }
+
+    // North-reset animation: animates canvas rotation so north points up
+    var northResetId by remember { mutableStateOf(0) }
+    val northResetFrom = remember { mutableStateOf(0f) }
+    val northResetTo = remember { mutableStateOf(0f) }
+    val updatedOnCanvasStateChange = rememberUpdatedState(onCanvasStateChange)
+    val updatedCanvasState = rememberUpdatedState(uiState.canvasState)
+    LaunchedEffect(northResetId) {
+        if (northResetId == 0) return@LaunchedEffect
+        // Capture initial state once — do not read per-frame to avoid drift
+        val startCanvasState = updatedCanvasState.value
+        val r1 = northResetFrom.value
+        val screenCx = uiState.screenWidth / 2f
+        val screenCy = uiState.screenHeight / 2f
+        val anim = Animatable(r1)
+        anim.animateTo(
+            targetValue = northResetTo.value,
+            animationSpec = dpTween(durationMillis = 450, easing = FastOutSlowInEasing)
+        ) {
+            // Compute offset adjustment so rotation pivots around screen center
+            val deltaRad = Math.toRadians((value - r1).toDouble()).toFloat()
+            val cosD = cos(deltaRad)
+            val sinD = sin(deltaRad)
+            val vx = screenCx - startCanvasState.offsetX
+            val vy = screenCy - startCanvasState.offsetY
+            updatedOnCanvasStateChange.value(
+                startCanvasState.copy(
+                    rotation = value,
+                    offsetX = screenCx - (vx * cosD - vy * sinD),
+                    offsetY = screenCy - (vx * sinD + vy * cosD)
+                )
+            )
+        }
+    }
 
     // Animate bottom button offset when room info panel is visible
     val panelVisible = uiState.pinnedRoom != null
@@ -430,7 +478,7 @@ private fun HomeScreenContent(
                     // Shared animated top padding for left-side elements (mirrors CompassButton logic)
                     val isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch
                     val motionLabelTopPadding by animateDpAsState(
-                        targetValue = if (isSliderVisible) 88.dp else 52.dp,
+                        targetValue = if (isSliderVisible) sliderHeightDp + 11.dp else 52.dp,
                         animationSpec = dpTween(durationMillis = 300),
                         label = "MotionLabelTopPadding"
                     )
@@ -455,6 +503,9 @@ private fun HomeScreenContent(
                                 currentFloor = uiState.sliderCurrentFloor,
                                 onFloorChange = onFloorChange,
                                 isVisible = true,
+                                onHeightMeasured = { px ->
+                                    sliderHeightDp = with(density) { px.toDp() }
+                                }
                             )
                         }
 
@@ -462,6 +513,7 @@ private fun HomeScreenContent(
                             isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
                             isSearching = isMorphingToSearch,
                             containerWidth = maxWidth - 16.dp,
+                            sliderHeightDp = sliderHeightDp,
                             modifier = Modifier.align(Alignment.TopEnd),
                             onClick = { isMorphingToSearch = true },
                             onAnimationFinished = { showSearch = true }
@@ -470,14 +522,23 @@ private fun HomeScreenContent(
                         CompassButton(
                             campusNorthDegrees = uiState.campusMetadata.north,
                             canvasRotationDegrees = effectiveCanvasState.rotation,
-                            onClick = { /* Could reset canvas rotation */ },
+                            onClick = {
+                                val from = effectiveCanvasState.rotation
+                                val rawTarget = -uiState.campusMetadata.north
+                                // Rotate via the shortest arc
+                                val diff = ((rawTarget - from + 180f) % 360f + 360f) % 360f - 180f
+                                northResetFrom.value = from
+                                northResetTo.value = from + diff
+                                northResetId++
+                            },
                             isSliderVisible = isSliderVisible,
                             isSearching = isMorphingToSearch,
+                            sliderHeightDp = sliderHeightDp,
                             modifier = Modifier.align(Alignment.TopEnd)
                         )
 
                         // Motion classification label — left edge, tracks slider visibility
-                        if (pdrUiState.pdrState.isTracking && pdrUiState.motionLabel != null) {
+                        if (pdrUiState.pdrState.isTracking && pdrUiState.motionLabel != null && showMotionLabel) {
                             MotionLabel(
                                 label = pdrUiState.motionLabel,
                                 confidence = pdrUiState.motionConfidence,

@@ -16,6 +16,9 @@ import `in`.project.enroute.feature.pdr.data.repository.PdrRepository
 import `in`.project.enroute.feature.pdr.sensor.HeadingDetector
 import `in`.project.enroute.feature.pdr.sensor.StepDetector
 import `in`.project.enroute.feature.settings.data.SettingsRepository
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.Channel.Factory.UNLIMITED
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,13 +62,25 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     /** Current ML model key from settings ("v6" or "v6_64"). */
     private var currentMlModel: String = "v6"
 
-    // ── Motion-gated step detection ──────────────────────────────────
-    // The TFLite model needs ~1.9 s (96 samples @ 50 Hz) before its
-    // first classification.  Steps detected before that are buffered and
-    // replayed once the first non-idle label arrives.
+    // ── ML-gated peak buffer ─────────────────────────────────────────
+    // All peaks from StepDetector are stored in [peakBuffer] with their
+    // heading.  When the ML model produces ≥2 consecutive non-idle labels
+    // (mlActive becomes true), up to [compensationSteps] peaks are
+    // replayed to compensate for model startup lag, then subsequent peaks
+    // flow through directly.  If ML goes idle, the buffer is cleared.
     private data class BufferedStep(val intervalMs: Long, val heading: Float)
-    private val stepBuffer = mutableListOf<BufferedStep>()
-    private var hasReceivedMotionClassification = false
+    private val peakBuffer = ArrayDeque<BufferedStep>()
+    /** True once the ML model has confirmed activity (≥2 consecutive non-idle). */
+    private var mlActive = false
+    /** How many consecutive non-idle labels we've seen. */
+    private var consecutiveNonIdleCount = 0
+    /** How many compensation peaks to replay from the buffer. */
+    private var compensationSteps: Int = 4
+
+    // ── Async step processing ────────────────────────────────────────
+    // Sensor callback sends steps here; consumed on Dispatchers.Default
+    // so the sensor thread never blocks on heavy processStep() work.
+    private val stepChannel = Channel<BufferedStep>(UNLIMITED)
 
     /**
      * Current heading exposed as a separate flow so compass-only changes
@@ -165,10 +180,17 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         }
         collectStepParam(settingsRepository.stepThreshold)     { copy(threshold = it) }
         collectStepParam(settingsRepository.highPassAlpha)     { copy(highPassAlpha = it) }
-        collectStepParam(settingsRepository.minProminence)     { copy(minProminence = it) }
-        collectStepParam(settingsRepository.rhythmToleranceLow)  { copy(rhythmToleranceLow = it) }
-        collectStepParam(settingsRepository.rhythmToleranceHigh) { copy(rhythmToleranceHigh = it) }
-        collectStepParam(settingsRepository.floorThreshold)    { copy(floorThreshold = it) }
+
+        // Load compensation steps setting
+        viewModelScope.launch {
+            settingsRepository.compensationSteps.collect { v ->
+                if (v != null) {
+                    compensationSteps = v
+                    val updated = _uiState.value.stepDetectionConfig.copy(compensationSteps = v)
+                    _uiState.update { it.copy(stepDetectionConfig = updated) }
+                }
+            }
+        }
 
         // Load ML model preference
         viewModelScope.launch {
@@ -199,23 +221,34 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Set up step detector callbacks — gated by motion classification.
-        // Before first model output: buffer steps.
-        // After first output: only register if model says non-idle.
+        // Set up step detector callback.
+        // ALL peaks are buffered regardless of ML state.  The ML observer
+        // decides when to flush or discard the buffer.
+        // If ML is already active, peaks pass through directly.
         stepDetector.onStepDetected = { stepIntervalMs ->
             if (_uiState.value.pdrState.isTracking) {
-                if (!hasReceivedMotionClassification) {
-                    // Model hasn't produced output yet — buffer the step
-                    stepBuffer.add(BufferedStep(stepIntervalMs, headingDetector.heading.value))
-                } else if (_uiState.value.motionLabel != LABEL_IDLE) {
-                    // Active motion (walking / upstairs / downstairs) — register
-                    repository.processStep(stepIntervalMs, headingDetector.heading.value)
+                val step = BufferedStep(stepIntervalMs, headingDetector.heading.value)
+                if (mlActive) {
+                    // ML already confirmed activity — dispatch directly
+                    stepChannel.trySend(step)
+                } else {
+                    // ML not yet active — buffer the peak
+                    peakBuffer.addLast(step)
+                    // Cap buffer size to avoid unbounded growth
+                    while (peakBuffer.size > MAX_PEAK_BUFFER) peakBuffer.removeFirst()
                 }
-                // else: idle — discard step
             }
         }
         stepDetector.onAccelerometerData = { x, y, z ->
             motionRepository.onAccelerometerSample(x, y, z)
+        }
+
+        // Consume step channel on a background thread so heavy
+        // processStep() work never blocks the sensor callback.
+        viewModelScope.launch(Dispatchers.Default) {
+            for (step in stepChannel) {
+                repository.processStep(step.intervalMs, step.heading)
+            }
         }
 
         // Forward heading from sensor → repository (for step calculations)
@@ -232,7 +265,11 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Observe motion classification results & flush step buffer on first output
+        // Observe motion classification results.
+        // Tracks consecutive non-idle labels.  Once ≥2 consecutive non-idle
+        // labels arrive, mlActive flips on and buffered peaks are replayed
+        // (up to compensationSteps).  If idle arrives, mlActive is turned
+        // off and the peak buffer is cleared.
         viewModelScope.launch {
             motionRepository.motionEvent.collect { event ->
                 _uiState.update {
@@ -245,14 +282,19 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
                 if (event != null) {
                     repository.onMotionLabel(event.classificationName, event.confidence)
 
-                    // First classification after tracking started
-                    if (!hasReceivedMotionClassification) {
-                        hasReceivedMotionClassification = true
-                        if (event.classificationName != LABEL_IDLE) {
-                            flushStepBuffer()
-                        } else {
-                            stepBuffer.clear()
+                    if (event.classificationName != LABEL_IDLE) {
+                        consecutiveNonIdleCount++
+
+                        // Activation threshold: 2 consecutive non-idle labels
+                        if (!mlActive && consecutiveNonIdleCount >= 2) {
+                            mlActive = true
+                            replayCompensationPeaks()
                         }
+                    } else {
+                        // Idle — deactivate and discard buffered peaks
+                        consecutiveNonIdleCount = 0
+                        mlActive = false
+                        peakBuffer.clear()
                     }
                 }
             }
@@ -406,20 +448,28 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         headingDetector.setTrackingMode(enabled)
     }
 
-    // ── Motion-gate helpers ─────────────────────────────────────────
+    // ── ML-gate helpers ────────────────────────────────────────────
 
-    /** Replays all buffered early steps through the repository. */
-    private fun flushStepBuffer() {
-        for (step in stepBuffer) {
-            repository.processStep(step.intervalMs, step.heading)
+    /**
+     * Replays the most recent peaks from [peakBuffer] (up to
+     * [compensationSteps]) through [stepChannel], then clears the buffer.
+     * Called when the ML model first confirms activity.
+     */
+    private fun replayCompensationPeaks() {
+        val count = compensationSteps.coerceAtMost(peakBuffer.size)
+        // Take the tail (most recent peaks)
+        val start = peakBuffer.size - count
+        for (i in start until peakBuffer.size) {
+            stepChannel.trySend(peakBuffer.elementAt(i))
         }
-        stepBuffer.clear()
+        peakBuffer.clear()
     }
 
-    /** Resets buffer and flag for a new tracking session. */
+    /** Resets ML gate state for a new tracking session. */
     private fun resetMotionGate() {
-        stepBuffer.clear()
-        hasReceivedMotionClassification = false
+        peakBuffer.clear()
+        mlActive = false
+        consecutiveNonIdleCount = 0
     }
 
     /**
@@ -444,6 +494,7 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        stepChannel.close()
         headingDetector.stop()
         stepDetector.stop()
         motionRepository.stop()
@@ -452,5 +503,7 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         /** Label emitted by TFLite model when the user is stationary. */
         private const val LABEL_IDLE = "idle"
+        /** Max peaks to keep in the buffer while waiting for ML confirmation. */
+        private const val MAX_PEAK_BUFFER = 20
     }
 }

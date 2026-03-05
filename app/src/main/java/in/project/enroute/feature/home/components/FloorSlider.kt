@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -42,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -52,7 +54,8 @@ fun FloorSlider(
     currentFloor: Float,
     onFloorChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
-    isVisible: Boolean = true
+    isVisible: Boolean = true,
+    onHeightMeasured: (Int) -> Unit = {}
 ) {
     AnimatedVisibility(
         visible = isVisible && availableFloors.isNotEmpty(),
@@ -64,7 +67,8 @@ fun FloorSlider(
             buildingName = buildingName,
             availableFloors = availableFloors,
             currentFloor = currentFloor,
-            onFloorChange = onFloorChange
+            onFloorChange = onFloorChange,
+            onHeightMeasured = onHeightMeasured
         )
     }
 }
@@ -74,7 +78,8 @@ private fun FloorSliderContent(
     buildingName: String,
     availableFloors: List<Float>,
     currentFloor: Float,
-    onFloorChange: (Float) -> Unit
+    onFloorChange: (Float) -> Unit,
+    onHeightMeasured: (Int) -> Unit = {}
 ) {
     var lastValidBuildingName by remember { mutableStateOf(buildingName) }
     if (buildingName.isNotEmpty()) {
@@ -95,12 +100,12 @@ private fun FloorSliderContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(77.dp)
+            .onSizeChanged { onHeightMeasured(it.height) }
             .background(
                 color = MaterialTheme.colorScheme.primaryContainer,
                 shape = RoundedCornerShape(28.dp)
             )
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -128,7 +133,9 @@ private fun FloorSliderContent(
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -158,7 +165,7 @@ private fun FloorControls(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(32.dp),
+            .height(30.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {

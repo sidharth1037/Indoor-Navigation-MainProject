@@ -23,7 +23,7 @@ import kotlin.math.sqrt
 class MotionRepository(private val appContext: Context) {
 
     private var classifier: MotionClassifier? = null
-    private val sensorBuffer = mutableListOf<FloatArray>()
+    private val sensorBuffer = ArrayDeque<FloatArray>()
 
     // Dedicated scope with SupervisorJob so a single failed inference doesn't cancel everything
     private var scope: CoroutineScope? = null
@@ -98,7 +98,7 @@ class MotionRepository(private val appContext: Context) {
 
             // Slide the window forward by stepSize
             val removeCount = cls.meta.stepSize.coerceAtMost(sensorBuffer.size)
-            repeat(removeCount) { sensorBuffer.removeAt(0) }
+            repeat(removeCount) { sensorBuffer.removeFirst() }
         }
     }
 }

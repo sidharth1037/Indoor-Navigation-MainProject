@@ -39,7 +39,13 @@ data class StairwellZone(
     val topFloorId: String,
     val bottomFloorNumber: Float,
     val topFloorNumber: Float
-)
+) {
+    // Pre-computed AABB for fast rejection (computed once at construction)
+    val boundsMinX: Float = boundary.minOfOrNull { it.x } ?: 0f
+    val boundsMinY: Float = boundary.minOfOrNull { it.y } ?: 0f
+    val boundsMaxX: Float = boundary.maxOfOrNull { it.x } ?: 0f
+    val boundsMaxY: Float = boundary.maxOfOrNull { it.y } ?: 0f
+}
 
 // ── Transition event (fired by the detector) ────────────────────────────────
 

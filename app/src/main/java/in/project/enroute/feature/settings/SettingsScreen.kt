@@ -114,6 +114,27 @@ fun SettingsScreen(
             )
         }
 
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "Show motion label", fontSize = 16.sp)
+                Text(
+                    text = "Display ML classification badge while tracking",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = uiState.showMotionLabel,
+                onCheckedChange = { viewModel.toggleShowMotionLabel() },
+                modifier = Modifier.padding(start = 16.dp)
+            )
+        }
+
         Spacer(Modifier.height(12.dp))
 
         var cacheCleared by remember { mutableStateOf(false) }
@@ -141,34 +162,20 @@ fun SettingsScreen(
         // ── Step Detection subsection ─────────────────────────────────────
         SubsectionHeader("Step Detection")
 
-        // A: Threshold
+        // Peak threshold
         Text("Peak threshold: ${"%.2f".format(uiState.stepThreshold)} m/s²", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         Slider(value = uiState.stepThreshold, onValueChange = { viewModel.updateStepThreshold(it) }, valueRange = 0.5f..5.0f, steps = 17, modifier = Modifier.fillMaxWidth())
         Text("Min filtered |z| peak to count as a step. Default 2.00.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
 
-        // A: High-pass alpha
+        // High-pass alpha
         Text("High-pass α: ${"%.2f".format(uiState.highPassAlpha)}", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         Slider(value = uiState.highPassAlpha, onValueChange = { viewModel.updateHighPassAlpha(it) }, valueRange = 0.70f..0.98f, steps = 27, modifier = Modifier.fillMaxWidth())
         Text("Gravity filter strength. Higher = more responsive, less gravity rejection. Default 0.90.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
 
-        // B: Min prominence
-        Text("Min prominence: ${"%.2f".format(uiState.minProminence)} m/s²", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
-        Slider(value = uiState.minProminence, onValueChange = { viewModel.updateMinProminence(it) }, valueRange = 0.5f..4.0f, steps = 13, modifier = Modifier.fillMaxWidth())
-        Text("Peak must rise this much above the preceding valley. Rejects single spikes. Default 1.50.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
-
-        // D: Floor threshold
-        Text("Floor threshold: ${"%.2f".format(uiState.floorThreshold)} m/s²", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
-        Slider(value = uiState.floorThreshold, onValueChange = { viewModel.updateFloorThreshold(it) }, valueRange = 0.2f..2.0f, steps = 17, modifier = Modifier.fillMaxWidth())
-        Text("Signal must dip below this between steps (full oscillation required). Default 0.80.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
-
-        // C: Rhythm tolerance
-        Text("Rhythm gate — earliest: ${"%.2f".format(uiState.rhythmToleranceLow)}×avg", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
-        Slider(value = uiState.rhythmToleranceLow, onValueChange = { viewModel.updateRhythmToleranceLow(it) }, valueRange = 0.2f..0.7f, steps = 9, modifier = Modifier.fillMaxWidth())
-        Text("Steps arriving earlier than avgInterval × this are rejected. Default 0.40.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
-
-        Text("Rhythm gate — latest: ${"%.2f".format(uiState.rhythmToleranceHigh)}×avg", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
-        Slider(value = uiState.rhythmToleranceHigh, onValueChange = { viewModel.updateRhythmToleranceHigh(it) }, valueRange = 1.2f..2.5f, steps = 12, modifier = Modifier.fillMaxWidth())
-        Text("Steps arriving later than avgInterval × this are rejected. Default 1.80.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+        // Compensation steps
+        Text("Compensation steps: ${uiState.compensationSteps}", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.compensationSteps.toFloat(), onValueChange = { viewModel.updateCompensationSteps(it.toInt()) }, valueRange = 0f..8f, steps = 7, modifier = Modifier.fillMaxWidth())
+        Text("Peaks replayed when ML first confirms activity (model startup lag). Default 4.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
 
         Spacer(Modifier.height(8.dp))
 

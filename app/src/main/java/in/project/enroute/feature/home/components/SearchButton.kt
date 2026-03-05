@@ -49,6 +49,7 @@ fun SearchButton(
     containerWidth: Dp,
     modifier: Modifier = Modifier,
     isSearching: Boolean = false,
+    sliderHeightDp: Dp = 77.dp,
     onAnimationFinished: () -> Unit = {},
     onClick: () -> Unit = {}
 ) {
@@ -62,7 +63,7 @@ fun SearchButton(
     
     val targetHeight = when {
         isSearching -> 48.dp
-        isSliderVisible -> 77.dp
+        isSliderVisible -> sliderHeightDp
         else -> 48.dp
     }
     

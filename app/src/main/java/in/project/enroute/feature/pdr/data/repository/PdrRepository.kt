@@ -9,6 +9,8 @@ import `in`.project.enroute.feature.pdr.correction.BuildingDetector
 import `in`.project.enroute.feature.pdr.correction.CampusBuilding
 import `in`.project.enroute.feature.pdr.correction.StepCorrectionEngine
 import `in`.project.enroute.feature.pdr.correction.StairClimbingState
+import `in`.project.enroute.feature.pdr.correction.StairDirection
+import `in`.project.enroute.feature.pdr.correction.StairwellGeometry
 import `in`.project.enroute.feature.pdr.correction.StairwellTransitionAnimator
 import `in`.project.enroute.feature.pdr.correction.StairwellTransitionDetector
 import `in`.project.enroute.feature.pdr.correction.StairwellZone
@@ -34,7 +36,7 @@ import kotlin.math.sin
 class PdrRepository {
 
     private var strideConfig = StrideConfig()
-    private val recentCadences = mutableListOf<Float>()
+    private val recentCadences = ArrayDeque<Float>()
 
     // Conversion factor: pixels per centimeter (can be calibrated)
     private val pixelsPerCm = 0.5f
@@ -63,6 +65,8 @@ class PdrRepository {
     private var stairLookback: Int = 3
     /** Configurable: how many buffered steps to replay on the new floor. */
     private var stairReplayCount: Int = 3
+    /** How many steps back from arrival to pick the heading for exit-point estimation. */
+    private var stairArrivalLookback: Int = 3
 
     /**
      * Ring buffer of steps recorded during CLIMBING.
@@ -79,7 +83,7 @@ class PdrRepository {
      * heading change.
      */
     private data class HeadingRecord(val heading: Float, val stepIntervalMs: Long)
-    private val recentHeadings = mutableListOf<HeadingRecord>()
+    private val recentHeadings = ArrayDeque<HeadingRecord>()
 
     /**
      * The overall PDR tracking state (path, origin, cadence, etc.).
@@ -369,7 +373,7 @@ class PdrRepository {
         // Update cadence average
         recentCadences.add(cadence)
         while (recentCadences.size > strideConfig.cadenceAverageSize) {
-            recentCadences.removeAt(0)
+            recentCadences.removeFirst()
         }
         val averageCadence = if (recentCadences.isNotEmpty()) {
             recentCadences.average().toFloat()
@@ -526,15 +530,15 @@ class PdrRepository {
     }
 
     /**
-     * Boundary-based stairwell check.  Three detection modes:
+     * Stairwell entry check.  Two detection modes:
      *  1. User is inside a stairwell polygon AND ML threshold met → immediate.
-     *  2. User previously crossed a stairwell boundary (stored crossing) AND
-     *     ML later confirms climbing → retroactive transition.
-     *  3. User is within proximity radius of a stairwell entry edge AND
+     *  2. User is within proximity radius of a stairwell entry edge AND
      *     ML threshold met → edge-proximity transition.
+     *  3. Stored boundary crossing matches the ML direction → crossing-based
+     *     transition (fallback with historical snap point).
      *
-     * Boundary crossings are recorded on every step via
-     * [StairwellTransitionDetector.recordBoundaryCrossings].
+     * Boundary crossings are recorded every step (cheap segment checks).
+     * Full geometry only runs when the ML threshold is met.
      */
     private fun checkAndStartStairTransition(
         prevPosition: Offset,
@@ -544,7 +548,7 @@ class PdrRepository {
         if (stairwellZones.isEmpty()) return
         if (stairAnimator.state != StairClimbingState.IDLE) return
 
-        // Record any boundary crossings for deferred detection
+        // Record boundary crossings every step (cheap: ~4 segment checks)
         stairDetector.recordBoundaryCrossings(
             prevPos = prevPosition,
             newPos = position,
@@ -597,6 +601,12 @@ class PdrRepository {
      *    buffer to start compensation (finds the first walking step).
      *  - **[stairReplayCount]**: how many steps from that point to replay.
      *
+     * ## Arrival heading lookback
+     * Because arrival detection has a lag (the user may have already turned
+     * at the landing), the exit position is recalculated using the heading
+     * from [stairArrivalLookback] steps before the end of the buffer.
+     * This gives a heading that was still aligned with the stair axis.
+     *
      * Example: buffer=[1,2,3,4,5,6,7,8], lookback=3, replay=3
      *   → start at index 8−3=5, replay steps 6,7,8 with real heading/interval.
      */
@@ -607,8 +617,29 @@ class PdrRepository {
         }
 
         val destinationFloorId = event.destinationFloorId
-        val arrivalPosition = event.endPosition
         val isSameFloor = event.isSameFloor
+
+        // ── Recalculate exit position using a past heading ──────────
+        // Arrival detection lags reality — the user may have already
+        // turned at the landing.  Use a heading from N steps back in
+        // the climbing buffer so the exit point reflects the stair axis.
+        val arrivalPosition = if (stairStepBuffer.size >= stairArrivalLookback) {
+            val pastHeading = stairStepBuffer[stairStepBuffer.size - stairArrivalLookback].heading
+            val exitEdge = if (event.direction == StairDirection.UP) {
+                event.zone.topEdge
+            } else {
+                event.zone.bottomEdge
+            }
+            val recalculated = StairwellGeometry.estimateExitPoint(
+                event.startPosition, pastHeading, exitEdge.first, exitEdge.second
+            )
+            Log.d("PdrRepo", "Recalculated exit: past heading at -$stairArrivalLookback = " +
+                    "${"%,.0f".format(Math.toDegrees(pastHeading.toDouble()))}°  " +
+                    "pos=(${recalculated.x.toInt()},${recalculated.y.toInt()})")
+            recalculated
+        } else {
+            event.endPosition
+        }
 
         // ── Same-floor stairwell (sub-levels like 0.3↔0.6) ─────────
         // No floor number change, no constraint reload, no floor switch.
@@ -861,7 +892,7 @@ class PdrRepository {
         // Record the current step
         recentHeadings.add(HeadingRecord(heading, stepIntervalMs))
         while (recentHeadings.size > strideConfig.turnWindow) {
-            recentHeadings.removeAt(0)
+            recentHeadings.removeFirst()
         }
 
         // Need at least 2 headings to detect a turn
