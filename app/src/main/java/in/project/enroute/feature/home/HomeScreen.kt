@@ -623,6 +623,7 @@ private fun HomeScreenContent(
                 // Shows origin dialog if origin not set, otherwise enables following mode
                 AimButton(
                     isVisible = !pdrUiState.isSelectingOrigin && !uiState.isFollowingMode && !aimPressed,
+                    isPdrActive = pdrUiState.pdrState.origin != null,
                     onClick = {
                         if (pdrUiState.pdrState.origin == null) {
                             pendingTrackAfterOrigin = true
