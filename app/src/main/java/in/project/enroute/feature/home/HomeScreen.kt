@@ -50,6 +50,7 @@ import `in`.project.enroute.feature.pdr.PdrViewModel
 import `in`.project.enroute.feature.pdr.PdrUiState
 import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionDialog
 import `in`.project.enroute.feature.pdr.ui.components.OriginSelectionOverlay
+import `in`.project.enroute.feature.pdr.ui.components.OriginLocationErrorSnackbar
 
 import `in`.project.enroute.feature.pdr.ui.components.PdrPathOverlay
 import `in`.project.enroute.feature.pdr.ui.components.HeightRequiredDialog
@@ -92,6 +93,9 @@ fun HomeScreen(
     val heading by pdrViewModel.heading.collectAsState()
     val hasFreshHeadingSinceStart by pdrViewModel.hasFreshHeadingSinceStart.collectAsState()
     val view = LocalView.current
+    
+    // State for origin location error snack bar
+    var originErrorType by remember { mutableStateOf<FloorPlanViewModel.OriginErrorType?>(null) }
 
     // Load all buildings on first composition
     LaunchedEffect(Unit) {
@@ -272,12 +276,22 @@ fun HomeScreen(
                 navigationViewModel.clearPath()
             },
             onOriginSelected = { origin ->
-                // Pass current floor and building to PDR origin
-                // Origin tap is already in campus-wide coordinates
-                // Use findFloorAtPoint so origin works even when zoomed out (no dominant building)
-                val currentFloor = floorPlanViewModel.findFloorAtPoint(origin)
-                val constraintData = floorPlanViewModel.getFloorConstraintData(origin)
-                pdrViewModel.setOrigin(origin, currentFloor, constraintData)
+                // Validate origin location before setting
+                android.util.Log.d("HomeScreen", "Origin tapped at: (${origin.x}, ${origin.y})")
+                val validation = floorPlanViewModel.validateOriginLocation(origin)
+                android.util.Log.d("HomeScreen", "Validation result: isValid=${validation.isValid}, errorType=${validation.errorType}")
+                if (validation.isValid) {
+                    // Pass current floor and building to PDR origin
+                    // Origin tap is already in campus-wide coordinates
+                    // Use findFloorAtPoint so origin works even when zoomed out (no dominant building)
+                    val currentFloor = floorPlanViewModel.findFloorAtPoint(origin)
+                    val constraintData = floorPlanViewModel.getFloorConstraintData(origin)
+                    pdrViewModel.setOrigin(origin, currentFloor, constraintData)
+                } else {
+                    // Show error snackbar with specific message
+                    android.util.Log.d("HomeScreen", "Setting error type: ${validation.errorType}")
+                    originErrorType = validation.errorType
+                }
             },
             onCancelOriginSelection = { pdrViewModel.cancelOriginSelection() },
             onDismissHeightRequired = { pdrViewModel.dismissHeightRequired() },
@@ -296,7 +310,9 @@ fun HomeScreen(
             onSwitchToFloorById = { floorId -> floorPlanViewModel.switchToFloorById(floorId) },
             showMotionLabel = settingsUiState.showMotionLabel,
             onFindCorridorPoints = { room -> floorPlanViewModel.findCorridorPointsForRoom(room) },
-            onCenterOnCampus = { x, y, scale -> floorPlanViewModel.centerOnCampusCoordinate(x, y, scale) }
+            onCenterOnCampus = { x, y, scale -> floorPlanViewModel.centerOnCampusCoordinate(x, y, scale) },
+            originErrorType = originErrorType,
+            onDismissOriginError = { originErrorType = null }
         )
     }
 }
@@ -327,7 +343,9 @@ private fun HomeScreenContent(
     onSwitchToFloorById: (String) -> Unit = {},
     showMotionLabel: Boolean = true,
     onFindCorridorPoints: (Room) -> List<CorridorPoint> = { emptyList() },
-    onCenterOnCampus: (x: Float, y: Float, scale: Float) -> Unit = { _, _, _ -> }
+    onCenterOnCampus: (x: Float, y: Float, scale: Float) -> Unit = { _, _, _ -> },
+    originErrorType: FloorPlanViewModel.OriginErrorType? = null,
+    onDismissOriginError: () -> Unit = {}
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var isMorphingToSearch by remember { mutableStateOf(false) }
@@ -488,18 +506,44 @@ private fun HomeScreenContent(
                     )
                 }
 
-                // Origin selection overlay with instructions (when in selection mode)
+                // Floor slider positioned at top, visible during origin selection
+                // Takes full width during origin selection to allow floor switching
                 if (pdrUiState.isSelectingOrigin) {
+                    // Calculate animated top padding for cancel overlay based on slider visibility
+                    val isSliderVisible = uiState.showFloorSlider
+                    val cancelTopPadding by animateDpAsState(
+                        targetValue = if (isSliderVisible) sliderHeightDp + 14.dp else 8.dp,
+                        animationSpec = dpTween(durationMillis = 300),
+                        label = "CancelOverlayTopPadding"
+                    )
+                    
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter)
+                            .padding(top = 6.dp, start = 8.dp, end = 8.dp)
+                    ) {
+                        FloorSlider(
+                            buildingName = uiState.sliderBuildingName,
+                            availableFloors = uiState.sliderFloorNumbers,
+                            currentFloor = uiState.sliderCurrentFloor,
+                            onFloorChange = onFloorChange,
+                            isVisible = true,
+                            onHeightMeasured = { px ->
+                                sliderHeightDp = with(density) { px.toDp() }
+                            }
+                        )
+                    }
+                    
+                    // Origin selection overlay - animated position based on slider visibility
                     OriginSelectionOverlay(
                         onCancel = onCancelOriginSelection,
+                        topPadding = cancelTopPadding,
                         modifier = Modifier.align(Alignment.TopCenter)
                     )
-                }
-
-                // Floor slider and search button positioned at top, layered over canvas
-                // Hidden during origin selection mode
-                if (!pdrUiState.isSelectingOrigin) {
-                    // Shared animated top padding for left-side elements (mirrors CompassButton logic)
+                } else {
+                    // Floor slider and search button positioned at top, layered over canvas
+                    // Hidden during origin selection mode
                     val isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch
                     val motionLabelTopPadding by animateDpAsState(
                         targetValue = if (isSliderVisible) sliderHeightDp + 11.dp else 52.dp,
@@ -651,6 +695,23 @@ private fun HomeScreenContent(
                     HeightRequiredDialog(
                         onDismiss = onDismissHeightRequired,
                         onSave = onSaveHeight
+                    )
+                }
+                
+                // Origin location error snackbar at bottom
+                originErrorType?.let { errorType ->
+                    val message = when (errorType) {
+                        FloorPlanViewModel.OriginErrorType.OUTSIDE_CAMPUS ->
+                            "Location is outside campus area."
+                        FloorPlanViewModel.OriginErrorType.INSIDE_BUILDING_ZOOMED_OUT ->
+                            "Cannot set location inside building while zoomed out. Zoom in first."
+                        FloorPlanViewModel.OriginErrorType.WRONG_FLOOR ->
+                            "You can only set location inside the currently viewing floor or outside building."
+                    }
+                    OriginLocationErrorSnackbar(
+                        message = message,
+                        onDismiss = onDismissOriginError,
+                        modifier = Modifier.align(Alignment.BottomCenter)
                     )
                 }
                 

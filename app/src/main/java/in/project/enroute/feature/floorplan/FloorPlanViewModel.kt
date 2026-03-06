@@ -753,6 +753,107 @@ class FloorPlanViewModel(
     }
 
     /**
+     * Validates if a point can be used for origin selection.
+     * User can set origin:
+     * 1. Inside the currently viewed floor's boundary, OR
+     * 2. Outside all buildings (using first floor boundaries for check)
+     *
+     * @param point Campus-wide coordinates
+     * @return Validation result with success/failure and error type
+     */
+    enum class OriginErrorType {
+        OUTSIDE_CAMPUS,
+        INSIDE_BUILDING_ZOOMED_OUT,
+        WRONG_FLOOR
+    }
+    
+    data class OriginValidationResult(
+        val isValid: Boolean,
+        val errorType: OriginErrorType? = null
+    )
+
+    fun validateOriginLocation(point: Offset): OriginValidationResult {
+        val state = _uiState.value
+        
+        // Check if point is inside campus bounds
+        val bounds = state.campusBounds
+        if (bounds.isEmpty || 
+            point.x !in bounds.left..bounds.right ||
+            point.y !in bounds.top..bounds.bottom) {
+            return OriginValidationResult(
+                isValid = false,
+                errorType = OriginErrorType.OUTSIDE_CAMPUS
+            )
+        }
+
+        // Get current floor from dominant building (or null if zoomed out)
+        val currentFloorId = state.currentFloorId
+        
+        // Check all buildings to see if point is inside any building
+        val buildingFloorMap = mutableMapOf<String, String>() // buildingId -> floorId where point is inside
+        
+        for ((buildingId, buildingState) in state.buildingStates) {
+            val building = buildingState.building
+            val relX = building.relativePosition.x
+            val relY = building.relativePosition.y
+            
+            // Check all floors in this building (use first floor boundary for "outside building" check)
+            for ((floorNum, floorData) in buildingState.floors) {
+                val meta = floorData.metadata
+                val scale = meta.scale
+                val rotRad = Math.toRadians(meta.rotation.toDouble()).toFloat()
+                val cosA = cos(rotRad)
+                val sinA = sin(rotRad)
+                
+                for (polygon in floorData.boundaryPolygons) {
+                    if (polygon.points.isEmpty()) continue
+                    val transformed = polygon.points.sortedBy { it.id }.map { p ->
+                        val px = p.x * scale
+                        val py = p.y * scale
+                        Pair(px * cosA - py * sinA + relX, px * sinA + py * cosA + relY)
+                    }
+                    if (isPointInPolygon(point.x, point.y, transformed)) {
+                        // Point is inside this floor
+                        buildingFloorMap[buildingId] = floorData.floorId
+                        break // Found in this floor, no need to check other polygons
+                    }
+                }
+                
+                // If found in this floor, no need to check other floors
+                if (buildingFloorMap.containsKey(buildingId)) break
+            }
+        }
+        
+        // Case 1: Point is not inside any building — valid (outdoor area)
+        if (buildingFloorMap.isEmpty()) {
+            return OriginValidationResult(isValid = true)
+        }
+        
+        // Case 2: Point is inside a building — check if it's the currently viewed floor
+        val pointFloorId = buildingFloorMap.values.firstOrNull()
+        
+        if (currentFloorId == null) {
+            // Zoomed out — no current floor showing
+            // Point is inside a building but we don't know which floor is being viewed
+            return OriginValidationResult(
+                isValid = false,
+                errorType = OriginErrorType.INSIDE_BUILDING_ZOOMED_OUT
+            )
+        }
+        
+        if (pointFloorId == currentFloorId) {
+            // Point is inside the currently viewed floor — valid
+            return OriginValidationResult(isValid = true)
+        } else {
+            // Point is inside a different floor than the one being viewed
+            return OriginValidationResult(
+                isValid = false,
+                errorType = OriginErrorType.WRONG_FLOOR
+            )
+        }
+    }
+
+    /**
      * Returns floor constraint data for a specific floor ID across all buildings.
      * Useful when the user switches floors after PDR origin has been set.
      */

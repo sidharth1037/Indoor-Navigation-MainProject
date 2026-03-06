@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -16,10 +17,16 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.material.icons.rounded.Close
+import android.util.Log
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material.icons.Icons
 
 /**
  * Dialog for selecting origin point for PDR tracking.
@@ -114,31 +121,35 @@ fun OriginSelectionDialog(
 /**
  * Overlay shown when user is in point selection mode.
  * Instructs user to tap on the canvas to set origin.
+ * 
+ * Positioned below floor slider during origin selection, moves to top when slider hidden.
  */
 @Composable
 fun OriginSelectionOverlay(
     onCancel: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    topPadding: Dp = 8.dp
 ) {
     Surface(
         modifier = modifier
-            .padding(16.dp),
-        shape = RoundedCornerShape(28.dp),
+            .padding(start = 16.dp, end = 16.dp, top = topPadding),
+        shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.primaryContainer,
-        tonalElevation = 0.dp
+        tonalElevation = 2.dp
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "Tap on map to set origin",
+                text = "Tap on map to set location",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                 modifier = Modifier.weight(1f)
             )
             
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             
             Button(
                 onClick = onCancel,
@@ -146,9 +157,68 @@ fun OriginSelectionOverlay(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.background
                 ),
-                shape = RoundedCornerShape(24.dp)
+                shape = RoundedCornerShape(20.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
             ) {
-                Text("Cancel")
+                Text("Cancel", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
+
+/**
+ * Non-intrusive error snackbar shown at bottom when user taps an invalid location.
+ * Auto-dismisses after 3 seconds.
+ */
+@Composable
+fun OriginLocationErrorSnackbar(
+    message: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Log.d("OriginLocationErrorSnackbar", "Rendering snackbar: $message")
+    
+    // Auto-dismiss after 3 seconds
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(3000)
+        onDismiss()
+    }
+    
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.errorContainer,
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.weight(1f)
+            )
+            
+            Spacer(modifier = Modifier.width(12.dp))
+            
+            androidx.compose.material3.IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.size(24.dp)
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = "Dismiss",
+                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
     }

@@ -117,14 +117,8 @@ fun FloorPlanCanvas(
                                 screenWidth = size.width.toFloat(),
                                 screenHeight = size.height.toFloat()
                             )
-                            // Only accept taps inside the campus bounds
-                            val bounds = currentCampusBounds.value
-                            if (!bounds.isEmpty &&
-                                worldPoint.x in bounds.left..bounds.right &&
-                                worldPoint.y in bounds.top..bounds.bottom
-                            ) {
-                                currentOnOriginTap.value?.invoke(worldPoint)
-                            }
+                            // Always invoke callback - let validation handle bounds check and provide feedback
+                            currentOnOriginTap.value?.invoke(worldPoint)
                         }
                         return@detectTapGestures
                     }
