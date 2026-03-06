@@ -465,6 +465,21 @@ private fun HomeScreenContent(
                     onBackgroundTap = {},
                     isSelectingOrigin = pdrUiState.isSelectingOrigin,
                     onOriginTap = onOriginSelected,
+                    corridorPoints = locationCorridorPoints,
+                    onMarkerTap = { markerIndex ->
+                        selectedEntranceIndex = markerIndex
+                        // Animate camera to the selected entrance
+                        val point = locationCorridorPoints[markerIndex]
+                        onCenterOnCampus(
+                            point.campusPosition.x,
+                            point.campusPosition.y,
+                            CorridorPointFinder.calculateFitBounds(
+                                listOf(point),
+                                uiState.screenWidth,
+                                uiState.screenHeight
+                            ).second
+                        )
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -502,6 +517,17 @@ private fun HomeScreenContent(
                                 pdrUiState.pdrState.currentFloor == uiState.currentFloorId,
                         isOnStairs = pdrUiState.pdrState.isOnStairs,
                         currentPosition = pdrUiState.pdrState.currentPosition,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                // Entrance marker overlay — shows numbered markers at corridor points
+                // Rendered here (before UI buttons) so markers appear behind buttons
+                if (locationCorridorPoints.isNotEmpty()) {
+                    EntranceMarkerOverlay(
+                        corridorPoints = locationCorridorPoints,
+                        selectedIndex = selectedEntranceIndex,
+                        canvasState = effectiveCanvasState,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -713,16 +739,6 @@ private fun HomeScreenContent(
                         message = message,
                         onDismiss = onDismissOriginError,
                         modifier = Modifier.align(Alignment.BottomCenter)
-                    )
-                }
-                
-                // Entrance marker overlay — shows numbered markers at corridor points
-                if (locationCorridorPoints.isNotEmpty()) {
-                    EntranceMarkerOverlay(
-                        corridorPoints = locationCorridorPoints,
-                        selectedIndex = selectedEntranceIndex,
-                        canvasState = effectiveCanvasState,
-                        modifier = Modifier.fillMaxSize()
                     )
                 }
 

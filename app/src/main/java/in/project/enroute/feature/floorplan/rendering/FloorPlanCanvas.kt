@@ -33,6 +33,8 @@ import androidx.compose.ui.geometry.Offset
 import `in`.project.enroute.feature.floorplan.utils.screenToWorldCoordinates
 import `in`.project.enroute.feature.floorplan.state.BuildingState
 import `in`.project.enroute.feature.floorplan.CampusBounds
+import `in`.project.enroute.feature.home.locationselection.CorridorPoint
+import `in`.project.enroute.feature.home.locationselection.EntranceMarkerConfig
 
 /**
  * Display configuration for the floor plan rendering.
@@ -85,7 +87,9 @@ fun FloorPlanCanvas(
     onRoomTap: (Room) -> Unit = {},
     onBackgroundTap: () -> Unit = {},
     isSelectingOrigin: Boolean = false,
-    onOriginTap: ((Offset) -> Unit)? = null
+    onOriginTap: ((Offset) -> Unit)? = null,
+    corridorPoints: List<CorridorPoint> = emptyList(),
+    onMarkerTap: ((Int) -> Unit)? = null
 ) {
     if (buildingStates.isEmpty()) return
 
@@ -96,6 +100,8 @@ fun FloorPlanCanvas(
     val currentCampusBounds = rememberUpdatedState(campusBounds)
     val currentIsSelectingOrigin = rememberUpdatedState(isSelectingOrigin)
     val currentOnOriginTap = rememberUpdatedState(onOriginTap)
+    val currentCorridorPoints = rememberUpdatedState(corridorPoints)
+    val currentOnMarkerTap = rememberUpdatedState(onMarkerTap)
     val canvasSize = remember { mutableStateOf(IntSize.Zero) }
 
     Canvas(
@@ -126,6 +132,46 @@ fun FloorPlanCanvas(
                     val cs = currentCanvasState.value
                     val size = canvasSize.value
                     if (size.width == 0 || size.height == 0) return@detectTapGestures
+
+                    // Check for marker taps first (if corridor points exist)
+                    val markersToCheck = currentCorridorPoints.value
+                    if (markersToCheck.isNotEmpty() && currentOnMarkerTap.value != null) {
+                        
+                        // Transform tap to world coordinates
+                        val worldPoint = screenToWorldCoordinates(
+                            screenX = tapOffset.x,
+                            screenY = tapOffset.y,
+                            canvasState = cs,
+                            screenWidth = size.width.toFloat(),
+                            screenHeight = size.height.toFloat()
+                        )
+                        
+                        // Check for marker hits (hitbox in world units)
+                        val hitboxRadius = EntranceMarkerConfig.MARKER_RADIUS + 10f
+                        var closestIndex: Int? = null
+                        var closestDistance = Float.MAX_VALUE
+                        
+                        for ((idx, point) in markersToCheck.withIndex()) {
+                            val dx = worldPoint.x - point.campusPosition.x
+                            val dy = worldPoint.y - point.campusPosition.y
+                            val distance = hypot(dx, dy)
+                            
+                            if (distance <= hitboxRadius && distance < closestDistance) {
+                                closestDistance = distance
+                                closestIndex = idx
+                            }
+                        }
+                        
+                        // If marker was tapped, handle it and return
+                        if (closestIndex != null) {
+                            currentOnMarkerTap.value?.invoke(closestIndex)
+                            return@detectTapGestures
+                        }
+                        
+                        // Location selection is active but no marker was hit
+                        // Don't check room labels during location selection - just return
+                        return@detectTapGestures
+                    }
 
                     // Labels are hidden below this zoom – no hit detection needed
                     if (cs.scale < 0.4f) {
