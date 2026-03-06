@@ -68,6 +68,13 @@ import `in`.project.enroute.feature.navigation.NavigationViewModel
 import `in`.project.enroute.feature.navigation.NavigationUiState
 import `in`.project.enroute.feature.navigation.ui.NavigationPathOverlay
 import `in`.project.enroute.feature.settings.SettingsViewModel
+import `in`.project.enroute.feature.home.locationselection.CorridorPoint
+import `in`.project.enroute.feature.home.locationselection.CorridorPointFinder
+import `in`.project.enroute.feature.home.locationselection.EntranceConfirmationPanel
+import `in`.project.enroute.feature.home.locationselection.EntranceMarkerOverlay
+import android.widget.Toast
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 
 @Composable
 fun HomeScreen(
@@ -83,6 +90,7 @@ fun HomeScreen(
     val settingsUiState by settingsViewModel.uiState.collectAsState()
     // Heading collected separately for PDR — not used for compass (compass uses canvas rotation)
     val heading by pdrViewModel.heading.collectAsState()
+    val hasFreshHeadingSinceStart by pdrViewModel.hasFreshHeadingSinceStart.collectAsState()
     val view = LocalView.current
 
     // Load all buildings on first composition
@@ -211,6 +219,7 @@ fun HomeScreen(
             pdrUiState = pdrUiState,
             navUiState = navUiState,
             heading = heading,
+            hasFreshHeadingSinceStart = hasFreshHeadingSinceStart,
             effectiveCanvasState = effectiveCanvasState,
             maxWidth = maxWidth,
             onCanvasStateChange = {
@@ -253,6 +262,7 @@ fun HomeScreen(
                 pdrViewModel.setHeadingTrackingMode(true)
                 floorPlanViewModel.enableFollowingMode(position, heading)
             },
+            onAwaitFreshHeading = { pdrViewModel.awaitHeadingAfterSensorsStart() },
             onSetOriginClick = { pdrViewModel.startOriginSelection() },
             onClearPdrClick = {
                 // Commit current following position before clearing PDR
@@ -284,7 +294,9 @@ fun HomeScreen(
                 }
             },
             onSwitchToFloorById = { floorId -> floorPlanViewModel.switchToFloorById(floorId) },
-            showMotionLabel = settingsUiState.showMotionLabel
+            showMotionLabel = settingsUiState.showMotionLabel,
+            onFindCorridorPoints = { room -> floorPlanViewModel.findCorridorPointsForRoom(room) },
+            onCenterOnCampus = { x, y, scale -> floorPlanViewModel.centerOnCampusCoordinate(x, y, scale) }
         )
     }
 }
@@ -295,6 +307,7 @@ private fun HomeScreenContent(
     pdrUiState: PdrUiState,
     navUiState: NavigationUiState,
     heading: Float,
+    hasFreshHeadingSinceStart: Boolean,
     effectiveCanvasState: CanvasState,
     maxWidth: Dp,
     onCanvasStateChange: (CanvasState) -> Unit,
@@ -303,6 +316,7 @@ private fun HomeScreenContent(
     onRoomTap: (Room) -> Unit,
     onBackgroundTap: () -> Unit,
     onEnableTracking: (position: androidx.compose.ui.geometry.Offset, headingRadians: Float) -> Unit,
+    onAwaitFreshHeading: suspend () -> Float?,
     onSetOriginClick: () -> Unit,
     onClearPdrClick: () -> Unit,
     onOriginSelected: (androidx.compose.ui.geometry.Offset) -> Unit,
@@ -311,7 +325,9 @@ private fun HomeScreenContent(
     onSaveHeight: (Float) -> Unit,
     onDirectionsClick: (Room) -> Unit,
     onSwitchToFloorById: (String) -> Unit = {},
-    showMotionLabel: Boolean = true
+    showMotionLabel: Boolean = true,
+    onFindCorridorPoints: (Room) -> List<CorridorPoint> = { emptyList() },
+    onCenterOnCampus: (x: Float, y: Float, scale: Float) -> Unit = { _, _, _ -> }
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var isMorphingToSearch by remember { mutableStateOf(false) }
@@ -324,25 +340,31 @@ private fun HomeScreenContent(
     // Once origin is set, auto-request directions to this room.
     var pendingDirectionsRoom by remember { mutableStateOf<Room?>(null) }
 
+    // Location selection flow: set origin by selecting a room entrance
+    var showLocationSearch by remember { mutableStateOf(false) }
+    var locationCorridorPoints by remember { mutableStateOf<List<CorridorPoint>>(emptyList()) }
+    var selectedEntranceIndex by remember { mutableStateOf<Int?>(null) }
+    var locationSelectionError by remember { mutableStateOf<String?>(null) }
+
     val density = LocalDensity.current
     var sliderHeightDp by remember { mutableStateOf(77.dp) }
 
     // North-reset animation: animates canvas rotation so north points up
-    var northResetId by remember { mutableStateOf(0) }
-    val northResetFrom = remember { mutableStateOf(0f) }
-    val northResetTo = remember { mutableStateOf(0f) }
+    var northResetId by remember { mutableIntStateOf(0) }
+    val northResetFrom = remember { mutableFloatStateOf(0f) }
+    val northResetTo = remember { mutableFloatStateOf(0f) }
     val updatedOnCanvasStateChange = rememberUpdatedState(onCanvasStateChange)
     val updatedCanvasState = rememberUpdatedState(uiState.canvasState)
     LaunchedEffect(northResetId) {
         if (northResetId == 0) return@LaunchedEffect
         // Capture initial state once — do not read per-frame to avoid drift
         val startCanvasState = updatedCanvasState.value
-        val r1 = northResetFrom.value
+        val r1 = northResetFrom.floatValue
         val screenCx = uiState.screenWidth / 2f
         val screenCy = uiState.screenHeight / 2f
         val anim = Animatable(r1)
         anim.animateTo(
-            targetValue = northResetTo.value,
+            targetValue = northResetTo.floatValue,
             animationSpec = dpTween(durationMillis = 450, easing = FastOutSlowInEasing)
         ) {
             // Compute offset adjustment so rotation pivots around screen center
@@ -385,7 +407,8 @@ private fun HomeScreenContent(
                 pdrUiState.pdrState.currentFloor?.let { floor ->
                     onSwitchToFloorById(floor)
                 }
-                onEnableTracking(origin, heading)
+                val freshHeading = onAwaitFreshHeading() ?: heading
+                onEnableTracking(origin, freshHeading)
             }
             pendingDirectionsRoom?.let { room ->
                 pendingDirectionsRoom = null
@@ -455,6 +478,7 @@ private fun HomeScreenContent(
                     PdrPathOverlay(
                         path = pdrUiState.pdrState.path,
                         currentHeading = heading,
+                        showDirectionCone = hasFreshHeadingSinceStart,
                         canvasState = effectiveCanvasState,
                         isOnCurrentFloor = pdrUiState.pdrState.currentFloor == null ||
                                 pdrUiState.pdrState.currentFloor == uiState.currentFloorId,
@@ -527,8 +551,8 @@ private fun HomeScreenContent(
                                 val rawTarget = -uiState.campusMetadata.north
                                 // Rotate via the shortest arc
                                 val diff = ((rawTarget - from + 180f) % 360f + 360f) % 360f - 180f
-                                northResetFrom.value = from
-                                northResetTo.value = from + diff
+                                northResetFrom.floatValue = from
+                                northResetTo.floatValue = from + diff
                                 northResetId++
                             },
                             isSliderVisible = isSliderVisible,
@@ -616,8 +640,8 @@ private fun HomeScreenContent(
                             onSetOriginClick()
                         },
                         onSelectLocation = {
-                            // TODO: Implement location selection
                             showOriginDialog = false
+                            showLocationSearch = true
                         }
                     )
                 }
@@ -630,6 +654,87 @@ private fun HomeScreenContent(
                     )
                 }
                 
+                // Entrance marker overlay — shows numbered markers at corridor points
+                if (locationCorridorPoints.isNotEmpty()) {
+                    EntranceMarkerOverlay(
+                        corridorPoints = locationCorridorPoints,
+                        selectedIndex = selectedEntranceIndex,
+                        canvasState = effectiveCanvasState,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                // Entrance confirmation panel — slides up when corridor points are found
+                if (locationCorridorPoints.isNotEmpty()) {
+                    val selectedRoom = locationCorridorPoints.firstOrNull()?.entrance
+                    val roomLabel = selectedRoom?.name
+                        ?: selectedRoom?.roomNo?.let { "Room $it" }
+                        ?: "Selected Location"
+
+                    EntranceConfirmationPanel(
+                        corridorPoints = locationCorridorPoints,
+                        selectedIndex = if (locationCorridorPoints.size == 1) 0 else selectedEntranceIndex,
+                        roomLabel = roomLabel,
+                        onSelectEntrance = { idx ->
+                            selectedEntranceIndex = idx
+                            // Animate camera to the selected entrance
+                            val point = locationCorridorPoints[idx]
+                            onCenterOnCampus(
+                                point.campusPosition.x,
+                                point.campusPosition.y,
+                                CorridorPointFinder.calculateFitBounds(
+                                    listOf(point),
+                                    uiState.screenWidth,
+                                    uiState.screenHeight
+                                ).second
+                            )
+                        },
+                        onConfirm = {
+                            val idx = if (locationCorridorPoints.size == 1) 0
+                                      else selectedEntranceIndex ?: return@EntranceConfirmationPanel
+                            val point = locationCorridorPoints[idx]
+                            onOriginSelected(point.campusPosition)
+                            locationCorridorPoints = emptyList()
+                            selectedEntranceIndex = null
+                        },
+                        onDismiss = {
+                            locationCorridorPoints = emptyList()
+                            selectedEntranceIndex = null
+                        },
+                        onSearchAnother = {
+                            locationCorridorPoints = emptyList()
+                            selectedEntranceIndex = null
+                            showLocationSearch = true
+                        },
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                    )
+                }
+
+                // Animate camera to show corridor points after they are found
+                LaunchedEffect(locationCorridorPoints) {
+                    if (locationCorridorPoints.isNotEmpty()) {
+                        // Small delay to let floor switch take effect
+                        kotlinx.coroutines.delay(250)
+                        val (center, zoom) = CorridorPointFinder.calculateFitBounds(
+                            points = locationCorridorPoints,
+                            screenWidth = uiState.screenWidth,
+                            screenHeight = uiState.screenHeight
+                        )
+                        onCenterOnCampus(center.x, center.y, zoom)
+                    }
+                }
+
+                // Show error toast when no entrances found for selected room
+                if (locationSelectionError != null) {
+                    val ctx = LocalContext.current
+                    LaunchedEffect(locationSelectionError) {
+                        locationSelectionError?.let {
+                            Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show()
+                            locationSelectionError = null
+                        }
+                    }
+                }
+
                 // Animated transition for SearchScreen
                 AnimatedVisibility(
                     visible = showSearch,
@@ -644,6 +749,36 @@ private fun HomeScreenContent(
                         },
                         onCenterView = onCenterView,
                         onRoomTap = onRoomTap
+                    )
+                }
+
+                // Location selection search screen
+                AnimatedVisibility(
+                    visible = showLocationSearch,
+                    enter = fadeIn(tween(300)),
+                    exit = fadeOut(tween(500))
+                ) {
+                    SearchScreen(
+                        buildingStates = uiState.buildingStates,
+                        onBack = {
+                            showLocationSearch = false
+                            isMorphingToSearch = false
+                        },
+                        onCenterView = { _, _, _, _ -> },
+                        onRoomTap = { room ->
+                            val corridorPoints = onFindCorridorPoints(room)
+                            if (corridorPoints.isEmpty()) {
+                                locationCorridorPoints = emptyList()
+                                locationSelectionError = "No entrance found for ${room.name ?: room.number ?: "this room"}"
+                            } else {
+                                locationCorridorPoints = corridorPoints
+                                selectedEntranceIndex = if (corridorPoints.size == 1) 0 else null
+                                // Auto-switch to the entrance's floor
+                                onSwitchToFloorById(corridorPoints.first().floorId)
+                                showLocationSearch = false
+                                isMorphingToSearch = false
+                            }
+                        }
                     )
                 }
             }

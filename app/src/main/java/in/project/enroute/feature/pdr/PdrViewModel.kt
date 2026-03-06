@@ -19,11 +19,13 @@ import `in`.project.enroute.feature.settings.data.SettingsRepository
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.Channel.Factory.UNLIMITED
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * UI state for PDR feature.
@@ -81,12 +83,16 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     // Sensor callback sends steps here; consumed on Dispatchers.Default
     // so the sensor thread never blocks on heavy processStep() work.
     private val stepChannel = Channel<BufferedStep>(UNLIMITED)
+    private val _lastHeadingSampleAtMs = MutableStateFlow(0L)
+    private val _sensorsStartedAtMs = MutableStateFlow(0L)
+    private val _hasFreshHeadingSinceStart = MutableStateFlow(false)
 
     /**
      * Current heading exposed as a separate flow so compass-only changes
      * don't cause full HomeScreen recomposition.
      */
     val heading: StateFlow<Float> = repository.heading
+    val hasFreshHeadingSinceStart: StateFlow<Boolean> = _hasFreshHeadingSinceStart.asStateFlow()
 
     init {
         // Load height from settings and update stride config
@@ -255,6 +261,12 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             headingDetector.heading.collect { heading ->
                 repository.updateHeading(heading)
+                val now = System.currentTimeMillis()
+                _lastHeadingSampleAtMs.value = now
+                val startedAt = _sensorsStartedAtMs.value
+                if (startedAt > 0L && now >= startedAt) {
+                    _hasFreshHeadingSinceStart.value = true
+                }
             }
         }
 
@@ -448,6 +460,21 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         headingDetector.setTrackingMode(enabled)
     }
 
+    /**
+     * Waits for a heading sample that arrives AFTER the latest sensor start.
+     * Returns null on timeout so callers can fall back to the current heading.
+     */
+    suspend fun awaitHeadingAfterSensorsStart(timeoutMs: Long = 1200L): Float? {
+        val startedAt = _sensorsStartedAtMs.value
+        if (startedAt == 0L) return heading.value
+
+        val sampleTime = withTimeoutOrNull(timeoutMs) {
+            _lastHeadingSampleAtMs.first { it >= startedAt }
+        } ?: return null
+
+        return if (sampleTime >= startedAt) heading.value else null
+    }
+
     // ── ML-gate helpers ────────────────────────────────────────────
 
     /**
@@ -477,6 +504,8 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
      * Called internally when origin is set and tracking begins.
      */
     private fun startSensors() {
+        _hasFreshHeadingSinceStart.value = false
+        _sensorsStartedAtMs.value = System.currentTimeMillis()
         headingDetector.start()
         motionRepository.start(currentMlModel)
         stepDetector.start()
@@ -487,6 +516,8 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
      * Called internally when tracking is cleared.
      */
     private fun stopSensors() {
+        _sensorsStartedAtMs.value = 0L
+        _hasFreshHeadingSinceStart.value = false
         headingDetector.stop()
         stepDetector.stop()
         motionRepository.stop()

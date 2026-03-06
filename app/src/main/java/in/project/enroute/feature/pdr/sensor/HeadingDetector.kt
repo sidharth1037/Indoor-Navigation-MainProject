@@ -26,6 +26,7 @@ class HeadingDetector(private val sensorManager: SensorManager) : SensorEventLis
 
     private var isRunning = false
     private var isTrackingMode = false
+    private var hasEmittedSinceStart = false
 
     // Reusable arrays to avoid allocation in onSensorChanged
     private val rotationMatrix = FloatArray(9)
@@ -58,6 +59,7 @@ class HeadingDetector(private val sensorManager: SensorManager) : SensorEventLis
     private fun startInternal(trackingMode: Boolean) {
         if (isRunning) return
         isTrackingMode = trackingMode
+        hasEmittedSinceStart = false
 
         val rate = if (trackingMode) SensorManager.SENSOR_DELAY_GAME
                    else SensorManager.SENSOR_DELAY_UI
@@ -92,8 +94,10 @@ class HeadingDetector(private val sensorManager: SensorManager) : SensorEventLis
         val newHeading = orientationAngles[0]
         val deadBand = if (isTrackingMode) DEAD_BAND_TRACKING else DEAD_BAND_COMPASS
 
-        if (abs(newHeading - _heading.value) >= deadBand) {
+        // Always emit the first sample after (re)start so callers can use a fresh heading.
+        if (!hasEmittedSinceStart || abs(newHeading - _heading.value) >= deadBand) {
             _heading.value = newHeading
+            hasEmittedSinceStart = true
         }
     }
 

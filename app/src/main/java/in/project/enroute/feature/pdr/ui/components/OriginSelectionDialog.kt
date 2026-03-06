@@ -76,17 +76,16 @@ fun OriginSelectionDialog(
                 
                 Spacer(modifier = Modifier.height(12.dp))
                 
-                // Select Location Button (TODO)
+                // Select Location Button
                 OutlinedButton(
                     onClick = onSelectLocation,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(24.dp),
-                    enabled = false, // TODO: Enable when location selection is implemented
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 ) {
-                    Text("Select Location (Coming Soon)")
+                    Text("Select Location")
                 }
                 
                 Spacer(modifier = Modifier.height(16.dp))

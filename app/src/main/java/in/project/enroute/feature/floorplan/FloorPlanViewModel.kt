@@ -33,6 +33,8 @@ import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.sin
 import `in`.project.enroute.feature.settings.data.SettingsRepository
+import `in`.project.enroute.feature.home.locationselection.CorridorPoint
+import `in`.project.enroute.feature.home.locationselection.CorridorPointFinder
 
 /**
  * Bounds of the campus background canvas in world coordinates.
@@ -1219,5 +1221,92 @@ class FloorPlanViewModel(
             right = maxX + padding,
             bottom = maxY + padding
         )
+    }
+
+    /**
+     * Finds corridor points (walkable spots in front of entrances) for a room.
+     * Searches all buildings and floors for the room, matches entrances, and computes
+     * perpendicular-to-wall corridor points in campus-wide coordinates.
+     *
+     * @return List of [CorridorPoint] in campus-wide coordinates. Empty if no entrances found.
+     */
+    fun findCorridorPointsForRoom(room: Room): List<CorridorPoint> {
+        val state = _uiState.value
+        val result = mutableListOf<CorridorPoint>()
+
+        for ((_, buildingState) in state.buildingStates) {
+            val building = buildingState.building
+
+            // Filter by building: skip if room has a buildingId that doesn't match
+            if (room.buildingId != null && room.buildingId != building.buildingId) continue
+
+            for ((_, floorData) in buildingState.floors) {
+                // Filter by floor: skip if room has a floorId that doesn't match
+                if (room.floorId != null && room.floorId != floorData.floorId) continue
+
+                // Only check floors that contain this room
+                val hasRoom = floorData.rooms.any { r ->
+                    r.id == room.id && r.x == room.x && r.y == room.y
+                }
+                if (!hasRoom) continue
+
+                val meta = floorData.metadata
+                val scale = meta.scale
+                val rotDeg = meta.rotation
+                val offX = building.relativePosition.x
+                val offY = building.relativePosition.y
+
+                val transform: (Float, Float) -> Pair<Float, Float> = { x, y ->
+                    val sx = x * scale
+                    val sy = y * scale
+                    val rad = Math.toRadians(rotDeg.toDouble())
+                    val cosA = cos(rad).toFloat()
+                    val sinA = sin(rad).toFloat()
+                    Pair(sx * cosA - sy * sinA + offX, sx * sinA + sy * cosA + offY)
+                }
+
+                val points = CorridorPointFinder.findCorridorPoints(
+                    room = room,
+                    entrances = floorData.entrances,
+                    walls = floorData.walls,
+                    rawToCampus = transform,
+                    floorId = floorData.floorId,
+                    buildingId = building.buildingId
+                )
+                result.addAll(points)
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Animates the canvas to center on a campus-wide coordinate with a target zoom level.
+     * Unlike [centerOnCoordinate], this takes campus-wide (world) coordinates directly,
+     * with no floor plan transform needed.
+     */
+    fun centerOnCampusCoordinate(
+        campusX: Float,
+        campusY: Float,
+        scale: Float,
+        config: CenteringConfig = CenteringConfig()
+    ) {
+        viewModelScope.launch {
+            val currentState = _uiState.value
+            val targetState = FollowingAnimator.calculateCenterState(
+                worldPosition = Offset(campusX, campusY),
+                currentRotation = currentState.canvasState.rotation,
+                scale = scale,
+                screenWidth = currentState.screenWidth,
+                screenHeight = currentState.screenHeight
+            )
+            FollowingAnimator.animateToState(
+                currentState = currentState.canvasState,
+                targetState = targetState,
+                durationMs = config.durationMs,
+                frameDelayMs = config.frameDelayMs,
+                onStateUpdate = { updateCanvasState(it, isFromGesture = false) }
+            )
+        }
     }
 }

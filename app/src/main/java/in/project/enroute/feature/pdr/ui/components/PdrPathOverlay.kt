@@ -37,6 +37,7 @@ import kotlin.math.sqrt
 fun PdrPathOverlay(
     path: List<PathPoint>,
     currentHeading: Float,
+    showDirectionCone: Boolean,
     canvasState: CanvasState,
     modifier: Modifier = Modifier,
     isOnCurrentFloor: Boolean = true,
@@ -93,14 +94,23 @@ fun PdrPathOverlay(
             }
             */
 
-            // Draw direction cone at the live position (animated during stairs)
-            val conePosition = currentPosition ?: path.last().position
-            drawDirectionCone(
-                position = conePosition,
-                heading = currentHeading,
+            // Draw current location dot immediately.
+            val markerPosition = currentPosition ?: path.last().position
+            drawLocationDot(
+                position = markerPosition,
                 scale = canvasState.scale,
                 alpha = floorAlphaMultiplier
             )
+
+            // Draw heading cone only after a fresh heading sample arrives.
+            if (showDirectionCone) {
+                drawHeadingCone(
+                    position = markerPosition,
+                    heading = currentHeading,
+                    scale = canvasState.scale,
+                    alpha = floorAlphaMultiplier
+                )
+            }
         }
     }
 }
@@ -110,7 +120,7 @@ fun PdrPathOverlay(
  * with radial gradient fade for heading, a solid blue dot with white border
  * and subtle shadow. Sizes grow slightly as the user zooms in (sqrt scaling).
  */
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDirectionCone(
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawHeadingCone(
     position: Offset,
     heading: Float,
     scale: Float,
@@ -118,9 +128,6 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDirectionCone(
 ) {
     // sqrt(scale) gives gentle growth on zoom: not constant, not fully proportional
     val s = 1f / sqrt(scale)
-    val dotRadius = 12f * s
-    val borderWidth = 3.5f * s
-    val shadowSpread = 4f * s
     val coneLength = 100f * s
     val coneHalfAngleDeg = 34f  // ~68° total spread
 
@@ -176,6 +183,19 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDirectionCone(
             center = position
         )
     }
+
+}
+
+/** Draws only the blue location dot with white border + subtle shadow. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawLocationDot(
+    position: Offset,
+    scale: Float,
+    alpha: Float = 1f
+) {
+    val s = 1f / sqrt(scale)
+    val dotRadius = 12f * s
+    val borderWidth = 3.5f * s
+    val shadowSpread = 4f * s
 
     // --- Shadow behind dot (radial gradient for soft glow) ---
     val shadowRadius = dotRadius + borderWidth + shadowSpread * 3f
