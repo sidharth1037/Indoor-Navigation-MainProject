@@ -45,6 +45,7 @@ data class NavigationUiState(
     val multiFloorPath: MultiFloorPath = MultiFloorPath.EMPTY,
     val displayPath: MultiFloorPath = MultiFloorPath.EMPTY,
     val isCalculating: Boolean = false,
+    val isNavigationStarted: Boolean = false,
     val targetRoom: Room? = null,
     val targetEntrance: Entrance? = null,
     val error: String? = null
@@ -251,6 +252,7 @@ class NavigationViewModel : ViewModel() {
         _uiState.update {
             it.copy(
                 isCalculating = true,
+                isNavigationStarted = false,
                 error = null,
                 targetRoom = room,
                 targetEntrance = campusEntrance.original,
@@ -260,15 +262,10 @@ class NavigationViewModel : ViewModel() {
 
         pathfindingJob = viewModelScope.launch {
             val result = withContext(Dispatchers.Default) {
-                multiFloorPathfinder.findMultiFloorPath(
+                computeRouteWithDescendingReverse(
                     start = userPosition,
                     startFloorId = currentFloor,
-                    goalEntrance = campusEntrance,
-                    allEntrances = campusEntrances.toList(),
-                    stairConnections = stairwellConnections,
-                    wallsByFloor = campusWallsByFloor.toMap(),
-                    boundaryByFloor = campusBoundaryByFloor.toMap(),
-                    repoByFloor = repositoryByFloor
+                    goalEntrance = campusEntrance
                 )
             }
 
@@ -279,12 +276,22 @@ class NavigationViewModel : ViewModel() {
                     val subdivided = subdividePath(result)
                     it.copy(
                         isCalculating = false,
+                        isNavigationStarted = false,
                         multiFloorPath = subdivided,
                         displayPath = subdivided
                     )
                 }
             }
         }
+    }
+
+    /**
+     * Marks the current route as started (user pressed Start).
+     */
+    fun startNavigation() {
+        val state = _uiState.value
+        if (!state.hasPath) return
+        _uiState.update { it.copy(isNavigationStarted = true) }
     }
 
     /**
@@ -470,15 +477,10 @@ class NavigationViewModel : ViewModel() {
 
         rerouteJob = viewModelScope.launch {
             val result = withContext(Dispatchers.Default) {
-                multiFloorPathfinder.findMultiFloorPath(
+                computeRouteWithDescendingReverse(
                     start = userPosition,
                     startFloorId = currentFloor,
-                    goalEntrance = goalEntrance,
-                    allEntrances = campusEntrances.toList(),
-                    stairConnections = stairwellConnections,
-                    wallsByFloor = campusWallsByFloor.toMap(),
-                    boundaryByFloor = campusBoundaryByFloor.toMap(),
-                    repoByFloor = repositoryByFloor
+                    goalEntrance = goalEntrance
                 )
             }
 
@@ -500,6 +502,88 @@ class NavigationViewModel : ViewModel() {
     // ──────────────────────────────────────────────
     // Internal helpers
     // ──────────────────────────────────────────────
+
+    /**
+     * Computes a route from user -> destination, but when user is above destination
+     * we run pathfinding in reverse (destination -> user) and flip the result.
+     * This keeps descending behavior symmetric with ascending.
+     */
+    private fun computeRouteWithDescendingReverse(
+        start: Offset,
+        startFloorId: String,
+        goalEntrance: CampusEntrance
+    ): MultiFloorPath {
+        val startFloorNumber = floorNumberOf(startFloorId)
+        val goalFloorNumber = floorNumberOf(goalEntrance.floorId)
+
+        // Normal direction for same-floor or upward travel.
+        if (startFloorNumber <= goalFloorNumber) {
+            return multiFloorPathfinder.findMultiFloorPath(
+                start = start,
+                startFloorId = startFloorId,
+                goalEntrance = goalEntrance,
+                allEntrances = campusEntrances.toList(),
+                stairConnections = stairwellConnections,
+                wallsByFloor = campusWallsByFloor.toMap(),
+                boundaryByFloor = campusBoundaryByFloor.toMap(),
+                repoByFloor = repositoryByFloor
+            )
+        }
+
+        // Descending: compute destination -> user, then reverse segments/points.
+        val syntheticUserGoal = CampusEntrance(
+            original = Entrance(
+                id = -1,
+                x = start.x,
+                y = start.y,
+                name = "user_position",
+                floor = startFloorNumber,
+                floorId = startFloorId
+            ),
+            campusX = start.x,
+            campusY = start.y,
+            // Building id is not used for geometry; keep destination building for compatibility.
+            buildingId = goalEntrance.buildingId,
+            floorId = startFloorId
+        )
+
+        Log.d(
+            TAG,
+            "Descending route: computing reverse ${goalEntrance.floorId} -> $startFloorId"
+        )
+
+        val reverse = multiFloorPathfinder.findMultiFloorPath(
+            start = goalEntrance.campusOffset,
+            startFloorId = goalEntrance.floorId,
+            goalEntrance = syntheticUserGoal,
+            allEntrances = campusEntrances.toList(),
+            stairConnections = stairwellConnections,
+            wallsByFloor = campusWallsByFloor.toMap(),
+            boundaryByFloor = campusBoundaryByFloor.toMap(),
+            repoByFloor = repositoryByFloor
+        )
+
+        return reverseRoute(reverse)
+    }
+
+    /** Reverse floor order and per-segment waypoints to restore user -> destination direction. */
+    private fun reverseRoute(path: MultiFloorPath): MultiFloorPath {
+        if (path.isEmpty) return MultiFloorPath.EMPTY
+
+        val reversedSegments = path.segments
+            .asReversed()
+            .map { seg -> seg.copy(points = seg.points.asReversed()) }
+
+        val distinctFloors = reversedSegments.map { it.floorId }.distinct().size
+        return MultiFloorPath(
+            segments = reversedSegments,
+            totalFloors = distinctFloors,
+            isMultiFloor = distinctFloors > 1
+        )
+    }
+
+    private fun floorNumberOf(floorId: String): Float =
+        floorId.removePrefix("floor_").toFloatOrNull() ?: 1f
 
     /**
      * Finds the campus-wide entrance that matches [room] by room number or name.

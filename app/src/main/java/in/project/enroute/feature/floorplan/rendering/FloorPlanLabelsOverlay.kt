@@ -32,6 +32,8 @@ fun FloorPlanLabelsOverlay(
     modifier: Modifier = Modifier,
     displayConfig: FloorPlanDisplayConfig = FloorPlanDisplayConfig(),
     pinnedRoom: Room? = null,
+    showPinnedRoomMarker: Boolean = true,
+    isPinAtEntrance: Boolean = false,
     pinDrawable: VectorDrawable? = null,
     pinTintColor: Int = android.graphics.Color.BLACK
 ) {
@@ -100,7 +102,7 @@ fun FloorPlanLabelsOverlay(
             }
 
             // Pin on the pinned room
-            if (pinnedRoom != null && pinDrawable != null) {
+            if (showPinnedRoomMarker && pinnedRoom != null && pinDrawable != null) {
                 val ownerBuilding = if (pinnedRoom.buildingId != null) {
                     buildingStates[pinnedRoom.buildingId]
                 } else {
@@ -111,20 +113,24 @@ fun FloorPlanLabelsOverlay(
                     }
                 }
                 if (ownerBuilding != null) {
-                    val topFloor = ownerBuilding.floorsToRender.lastOrNull()
-                    if (topFloor != null) {
+                    val roomFloorData = pinnedRoom.floorId?.let { floorId ->
+                        ownerBuilding.floors.values.firstOrNull { it.floorId == floorId }
+                    } ?: ownerBuilding.floorsToRender.lastOrNull()
+
+                    if (roomFloorData != null) {
                         val relX = ownerBuilding.building.relativePosition.x
                         val relY = ownerBuilding.building.relativePosition.y
                         translate(left = relX, top = relY) {
                             drawPin(
                                 pinX = pinnedRoom.x,
                                 pinY = pinnedRoom.y,
-                                scale = topFloor.metadata.scale,
-                                rotationDegrees = topFloor.metadata.rotation,
+                                scale = roomFloorData.metadata.scale,
+                                rotationDegrees = roomFloorData.metadata.rotation,
                                 canvasScale = canvasState.scale,
                                 canvasRotation = canvasState.rotation,
                                 pinDrawable = pinDrawable,
-                                tintColor = pinTintColor
+                                tintColor = pinTintColor,
+                                applyVerticalOffset = !isPinAtEntrance
                             )
                         }
                     }

@@ -1,6 +1,10 @@
 package `in`.project.enroute.feature.home.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -13,16 +17,21 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.NorthEast
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.Alignment
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -53,15 +62,27 @@ fun RoomInfoPanel(
     modifier: Modifier = Modifier,
     room: Room?,
     isCalculatingPath: Boolean = false,
+    hasPath: Boolean = false,
+    isNavigationStarted: Boolean = false,
+    showShowOnMapButton: Boolean = false,
     onDismiss: () -> Unit = {},
-    onDirectionsClick: (Room) -> Unit = {}
+    onDirectionsClick: (Room) -> Unit = {},
+    onShowOnMapClick: (Room) -> Unit = {},
+    onStartClick: () -> Unit = {},
+    onExitClick: () -> Unit = {}
 ) {
     // Keep last non-null room so exit animation can display it
     var lastRoom by remember { mutableStateOf(room) }
     var lastIsCalculating by remember { mutableStateOf(isCalculatingPath) }
+    var lastHasPath by remember { mutableStateOf(hasPath) }
+    var lastIsNavigationStarted by remember { mutableStateOf(isNavigationStarted) }
+    var lastShowOnMapButton by remember { mutableStateOf(showShowOnMapButton) }
     if (room != null) {
         lastRoom = room
         lastIsCalculating = isCalculatingPath
+        lastHasPath = hasPath
+        lastIsNavigationStarted = isNavigationStarted
+        lastShowOnMapButton = showShowOnMapButton
     }
 
     AnimatedVisibility(
@@ -79,8 +100,14 @@ fun RoomInfoPanel(
         RoomInfoPanelContent(
             room = lastRoom!!,
             isCalculatingPath = lastIsCalculating,
+            hasPath = lastHasPath,
+            isNavigationStarted = lastIsNavigationStarted,
+            showShowOnMapButton = lastShowOnMapButton,
             onDismiss = onDismiss,
-            onDirectionsClick = onDirectionsClick
+            onDirectionsClick = onDirectionsClick,
+            onShowOnMapClick = onShowOnMapClick,
+            onStartClick = onStartClick,
+            onExitClick = onExitClick
         )
     }
 }
@@ -89,15 +116,21 @@ fun RoomInfoPanel(
 private fun RoomInfoPanelContent(
     room: Room,
     isCalculatingPath: Boolean,
+    hasPath: Boolean,
+    isNavigationStarted: Boolean,
+    showShowOnMapButton: Boolean,
     onDismiss: () -> Unit,
-    onDirectionsClick: (Room) -> Unit
+    onDirectionsClick: (Room) -> Unit,
+    onShowOnMapClick: (Room) -> Unit,
+    onStartClick: () -> Unit,
+    onExitClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(130.dp)
+            .then(if (isNavigationStarted) Modifier.heightIn(min = 64.dp) else Modifier.height(130.dp))
             .clip(shape)
             .background(MaterialTheme.colorScheme.primaryContainer)
             .clickable(
@@ -109,7 +142,8 @@ private fun RoomInfoPanelContent(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 24.dp, end = 16.dp, top = 16.dp, bottom = 16.dp)
+                .wrapContentHeight()
+                .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)
         ) {
             // Room label with dismiss button
             Row(
@@ -127,66 +161,119 @@ private fun RoomInfoPanelContent(
                 Text(
                     text = label,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 20.sp,
+                    fontSize = 18.sp,
+                    maxLines = if (isNavigationStarted) 6 else 2,
                     modifier = Modifier.weight(1f)
                 )
 
-                // Dismiss button with down arrow
-                Icon(
-                    imageVector = Icons.Rounded.Close,
-                    contentDescription = "Dismiss",
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                if (isNavigationStarted) {
+                    TextButton(onClick = onExitClick) {
+                        Text(
+                            text = "Exit",
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Dismiss",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onDismiss
+                            )
+                            .padding(4.dp)
+                    )
+                }
+            }
+
+            if (isNavigationStarted) return@Column
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
                     modifier = Modifier
-                        .size(36.dp)
+                        .height(40.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = RoundedCornerShape(8.dp)
+                        )
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
-                            onClick = onDismiss
+                            enabled = if (hasPath) true else !isCalculatingPath,
+                            onClick = {
+                                if (hasPath) onStartClick() else onDirectionsClick(room)
+                            }
                         )
-                        .padding(4.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Directions button row
-            Row(
-                modifier = Modifier
-                    .height(40.dp)
-                    .background(
-                        color = MaterialTheme.colorScheme.primary,
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        enabled = !isCalculatingPath,
-                        onClick = { onDirectionsClick(room) }
-                    )
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Directions",
-                    color = MaterialTheme.colorScheme.background,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                if (isCalculatingPath) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (hasPath) "Start" else "Directions",
                         color = MaterialTheme.colorScheme.background,
-                        strokeWidth = 2.dp
+                        fontWeight = FontWeight.SemiBold
                     )
-                } else {
-                    Icon(
-                        imageVector = Icons.Rounded.NorthEast,
-                        contentDescription = "Directions",
-                        tint = MaterialTheme.colorScheme.background,
-                        modifier = Modifier.width(18.dp)
-                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (!hasPath && isCalculatingPath) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = MaterialTheme.colorScheme.background,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = if (hasPath) Icons.Rounded.PlayArrow else Icons.Rounded.NorthEast,
+                            contentDescription = if (hasPath) "Start" else "Directions",
+                            tint = MaterialTheme.colorScheme.background,
+                            modifier = Modifier.width(18.dp)
+                        )
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = showShowOnMapButton,
+                    enter = scaleIn(animationSpec = tween(220)) + fadeIn(animationSpec = tween(220)),
+                    exit = scaleOut(animationSpec = tween(180)) + fadeOut(animationSpec = tween(180))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .padding(start = 10.dp)
+                            .height(40.dp)
+                            .background(
+                                color = MaterialTheme.colorScheme.primary,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { onShowOnMapClick(room) }
+                            )
+                            .padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (hasPath) "Show full path" else "Show on map",
+                            color = MaterialTheme.colorScheme.onSecondary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Rounded.Map,
+                            contentDescription = if (hasPath) "Show full path" else "Show on map",
+                            tint = MaterialTheme.colorScheme.onSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }

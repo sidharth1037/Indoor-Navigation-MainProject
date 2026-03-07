@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -21,6 +23,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import `in`.project.enroute.feature.floorplan.utils.FollowingAnimator
@@ -74,10 +77,12 @@ import `in`.project.enroute.feature.home.locationselection.EntranceConfirmationP
 import `in`.project.enroute.feature.home.locationselection.EntranceMarkerOverlay
 import `in`.project.enroute.feature.home.locationselection.TapLocationConfirmationPanel
 import `in`.project.enroute.feature.home.locationselection.OriginPreviewOverlay
+import `in`.project.enroute.feature.home.locationselection.MapViewportUtils
 import android.widget.Toast
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.geometry.Offset
+import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
@@ -302,6 +307,25 @@ fun HomeScreen(
                     navigationViewModel.requestDirections(room, currentPosition, floor)
                 }
             },
+            onStartNavigation = {
+                navigationViewModel.startNavigation()
+            },
+            onExitNavigation = {
+                navigationViewModel.clearPath()
+                pdrViewModel.setHeadingTrackingMode(false)
+                floorPlanViewModel.disableFollowingMode(effectiveCanvasState)
+                floorPlanViewModel.clearPin()
+            },
+            onShowRoomOnMap = { room ->
+                floorPlanViewModel.showPinnedRoomOnMap()
+                room.floorId?.let { floorPlanViewModel.switchToFloorById(it) }
+                floorPlanViewModel.centerOnCoordinate(
+                    x = room.x,
+                    y = room.y,
+                    scale = 1.2f,
+                    buildingId = room.buildingId
+                )
+            },
             onSwitchToFloorById = { floorId -> floorPlanViewModel.switchToFloorById(floorId) },
             showMotionLabel = settingsUiState.showMotionLabel,
             onFindCorridorPoints = { room -> floorPlanViewModel.findCorridorPointsForRoom(room) },
@@ -337,6 +361,9 @@ private fun HomeScreenContent(
     onDismissHeightRequired: () -> Unit,
     onSaveHeight: (Float) -> Unit,
     onDirectionsClick: (Room) -> Unit,
+    onStartNavigation: () -> Unit,
+    onExitNavigation: () -> Unit,
+    onShowRoomOnMap: (Room) -> Unit,
     onSwitchToFloorById: (String) -> Unit = {},
     showMotionLabel: Boolean = true,
     onFindCorridorPoints: (Room) -> List<CorridorPoint> = { emptyList() },
@@ -366,6 +393,10 @@ private fun HomeScreenContent(
 
     // Tap on map to set origin: pending origin before confirmation
     var pendingOriginLocation by remember { mutableStateOf<Offset?>(null) }
+
+    // Room selection replacement flow when a route is already active.
+    var showClearPathDialog by remember { mutableStateOf(false) }
+    var pendingRoomAfterClear by remember { mutableStateOf<Room?>(null) }
 
     val density = LocalDensity.current
     var sliderHeightDp by remember { mutableStateOf(77.dp) }
@@ -404,13 +435,121 @@ private fun HomeScreenContent(
         }
     }
 
+    val routePinRoom by remember(navUiState.hasPath, navUiState.targetRoom, navUiState.targetEntrance) {
+        derivedStateOf {
+            val room = navUiState.targetRoom ?: return@derivedStateOf null
+            val entrance = navUiState.targetEntrance ?: return@derivedStateOf room
+            room.copy(x = entrance.x, y = entrance.y)
+        }
+    }
+    val activePinnedRoom = if (navUiState.hasPath) routePinRoom ?: uiState.pinnedRoom else uiState.pinnedRoom
+    
+    // Track if the pin is at an entrance (for rendering without vertical offset)
+    val isPinAtEntrance = navUiState.hasPath && navUiState.targetEntrance != null
+
     // Animate bottom button offset when room info panel is visible
-    val panelVisible = uiState.pinnedRoom != null
+    val panelVisible = activePinnedRoom != null
     val bottomButtonPadding by animateDpAsState(
-        targetValue = if (panelVisible) 16.dp + 130.dp else 16.dp,
+        targetValue = if (panelVisible) {
+            if (navUiState.isNavigationStarted) 16.dp + 74.dp else 16.dp + 130.dp
+        } else {
+            16.dp
+        },
         animationSpec = dpTween(durationMillis = 350),
         label = "bottomButtonPadding"
     )
+
+    var hasUserMovedCanvasAfterPathFound by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+
+    val pinnedRoomOffCurrentFloor by remember(activePinnedRoom, uiState.currentFloorId) {
+        derivedStateOf {
+            val room = activePinnedRoom ?: return@derivedStateOf false
+            val roomFloor = room.floorId ?: return@derivedStateOf false
+            val currentFloor = uiState.currentFloorId ?: return@derivedStateOf false
+            roomFloor != currentFloor
+        }
+    }
+
+    val pinnedRoomFarFromCenter by remember(
+        activePinnedRoom,
+        uiState.buildingStates,
+        effectiveCanvasState,
+        uiState.screenWidth,
+        uiState.screenHeight
+    ) {
+        derivedStateOf {
+            val room = activePinnedRoom ?: return@derivedStateOf false
+            val roomWorld = MapViewportUtils.resolveRoomCampusPosition(room, uiState.buildingStates)
+                ?: return@derivedStateOf false
+            !MapViewportUtils.isWorldPointNearScreenCenter(
+                worldPoint = roomWorld,
+                canvasState = effectiveCanvasState,
+                screenWidth = uiState.screenWidth,
+                screenHeight = uiState.screenHeight
+            )
+        }
+    }
+
+    val shouldShowShowOnMapButton by remember(
+        navUiState.hasPath,
+        hasUserMovedCanvasAfterPathFound,
+        pinnedRoomOffCurrentFloor,
+        pinnedRoomFarFromCenter
+    ) {
+        derivedStateOf {
+            if (navUiState.hasPath) {
+                hasUserMovedCanvasAfterPathFound
+            } else {
+                pinnedRoomOffCurrentFloor || pinnedRoomFarFromCenter
+            }
+        }
+    }
+
+    fun requestRoomSelection(room: Room) {
+        if (navUiState.hasPath) {
+            pendingRoomAfterClear = room
+            showClearPathDialog = true
+        } else {
+            onRoomTap(room)
+        }
+    }
+
+    LaunchedEffect(navUiState.multiFloorPath) {
+        if (navUiState.hasPath) {
+            hasUserMovedCanvasAfterPathFound = false
+            floorPlanViewModel?.showPinnedRoomOnMap()
+
+            // Smoothly reset rotation to north-up first so bounds calculation is accurate
+            val currentRotation = effectiveCanvasState.rotation
+            val targetRotation = -uiState.campusMetadata.north
+            
+            if (kotlin.math.abs(currentRotation - targetRotation) > 1f) {
+                // Trigger smooth rotation animation via shortest arc
+                val diff = ((targetRotation - currentRotation + 180f) % 360f + 360f) % 360f - 180f
+                northResetFrom.floatValue = currentRotation
+                northResetTo.floatValue = currentRotation + diff
+                northResetId++
+                
+                // Wait for rotation animation to fully complete (animation is 450ms)
+                kotlinx.coroutines.delay(480)
+            }
+
+            val fitPoints = navUiState.multiFloorPath.allPoints.toMutableList()
+            val userPosition = pdrUiState.pdrState.path.lastOrNull()?.position
+                ?: pdrUiState.pdrState.origin
+            if (userPosition != null) fitPoints.add(userPosition)
+
+            if (fitPoints.isNotEmpty()) {
+                val (center, zoom) = MapViewportUtils.calculateFitBoundsForWorldPoints(
+                    points = fitPoints,
+                    screenWidth = uiState.screenWidth,
+                    screenHeight = uiState.screenHeight
+                )
+                onCenterOnCampus(center.x, center.y, zoom)
+            }
+        }
+    }
 
     // Reset local pressed state when following mode is turned off so button reappears
     LaunchedEffect(uiState.isFollowingMode) {
@@ -462,9 +601,14 @@ private fun HomeScreenContent(
                     buildingStates = uiState.buildingStates,
                     campusBounds = uiState.campusBounds,
                     canvasState = effectiveCanvasState,
-                    onCanvasStateChange = onCanvasStateChange,
+                    onCanvasStateChange = { newState ->
+                        if (navUiState.hasPath) {
+                            hasUserMovedCanvasAfterPathFound = true
+                        }
+                        onCanvasStateChange(newState)
+                    },
                     displayConfig = uiState.displayConfig,
-                    onRoomTap = onRoomTap,
+                    onRoomTap = { room -> requestRoomSelection(room) },
                     onBackgroundTap = {},
                     isSelectingOrigin = pdrUiState.isSelectingOrigin,
                     onOriginTap = { origin ->
@@ -516,7 +660,9 @@ private fun HomeScreenContent(
                     buildingStates = uiState.buildingStates,
                     canvasState = effectiveCanvasState,
                     displayConfig = uiState.displayConfig,
-                    pinnedRoom = uiState.pinnedRoom,
+                    pinnedRoom = activePinnedRoom,
+                    showPinnedRoomMarker = uiState.showPinnedRoomOnMap,
+                    isPinAtEntrance = isPinAtEntrance,
                     pinDrawable = pinDrawable,
                     pinTintColor = primaryColor,
                     modifier = Modifier.fillMaxSize()
@@ -722,8 +868,11 @@ private fun HomeScreenContent(
 
                 // Room info panel slides up from bottom when a room label is tapped
                 RoomInfoPanel(
-                    room = uiState.pinnedRoom,
+                    room = activePinnedRoom,
                     isCalculatingPath = navUiState.isCalculating,
+                    hasPath = navUiState.hasPath,
+                    isNavigationStarted = navUiState.isNavigationStarted,
+                    showShowOnMapButton = shouldShowShowOnMapButton,
                     onDismiss = onBackgroundTap,
                     onDirectionsClick = { room ->
                         if (pdrUiState.pdrState.origin == null) {
@@ -733,6 +882,67 @@ private fun HomeScreenContent(
                         } else {
                             onDirectionsClick(room)
                         }
+                    },
+                    onShowOnMapClick = { room ->
+                        hasUserMovedCanvasAfterPathFound = false
+                        floorPlanViewModel?.showPinnedRoomOnMap()
+                        
+                        // When a path exists, fit the entire route on screen
+                        if (navUiState.hasPath) {
+                            coroutineScope.launch {
+                                // Smoothly reset rotation to north-up first so bounds calculation is accurate
+                                val currentRotation = effectiveCanvasState.rotation
+                                val targetRotation = -uiState.campusMetadata.north
+                                
+                                if (kotlin.math.abs(currentRotation - targetRotation) > 1f) {
+                                    // Trigger smooth rotation animation via shortest arc
+                                    val diff = ((targetRotation - currentRotation + 180f) % 360f + 360f) % 360f - 180f
+                                    northResetFrom.floatValue = currentRotation
+                                    northResetTo.floatValue = currentRotation + diff
+                                    northResetId++
+                                    
+                                    // Wait for rotation animation to fully complete (animation is 450ms)
+                                    kotlinx.coroutines.delay(480)
+                                }
+                                
+                                val fitPoints = navUiState.multiFloorPath.allPoints.toMutableList()
+                                val userPosition = pdrUiState.pdrState.path.lastOrNull()?.position
+                                    ?: pdrUiState.pdrState.origin
+                                if (userPosition != null) fitPoints.add(userPosition)
+                                
+                                if (fitPoints.isNotEmpty()) {
+                                    val (center, zoom) = MapViewportUtils.calculateFitBoundsForWorldPoints(
+                                        points = fitPoints,
+                                        screenWidth = uiState.screenWidth,
+                                        screenHeight = uiState.screenHeight
+                                    )
+                                    onCenterOnCampus(center.x, center.y, zoom)
+                                }
+                            }
+                        } else {
+                            // No path: center on the room as before
+                            onShowRoomOnMap(room)
+                        }
+                    },
+                    onStartClick = {
+                        pdrUiState.pdrState.currentFloor?.let { floor ->
+                            onSwitchToFloorById(floor)
+                        }
+                        val currentPosition = pdrUiState.pdrState.path.lastOrNull()?.position
+                            ?: pdrUiState.pdrState.origin
+                        if (currentPosition == null) {
+                            onStartNavigation()
+                        } else {
+                            coroutineScope.launch {
+                                aimPressed = true
+                                val freshHeading = onAwaitFreshHeading() ?: heading
+                                onEnableTracking(currentPosition, freshHeading)
+                                onStartNavigation()
+                            }
+                        }
+                    },
+                    onExitClick = {
+                        onExitNavigation()
                     },
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
@@ -866,7 +1076,7 @@ private fun HomeScreenContent(
                             isMorphingToSearch = false
                         },
                         onCenterView = onCenterView,
-                        onRoomTap = onRoomTap
+                        onRoomTap = { room -> requestRoomSelection(room) }
                     )
                 }
 
@@ -895,6 +1105,39 @@ private fun HomeScreenContent(
                                 onSwitchToFloorById(corridorPoints.first().floorId)
                                 showLocationSearch = false
                                 isMorphingToSearch = false
+                            }
+                        }
+                    )
+                }
+
+                if (showClearPathDialog) {
+                    AlertDialog(
+                        onDismissRequest = {
+                            showClearPathDialog = false
+                            pendingRoomAfterClear = null
+                        },
+                        title = { Text("Clear current route?") },
+                        text = { Text("Selecting another room will clear the current path.") },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    showClearPathDialog = false
+                                    onExitNavigation()
+                                    pendingRoomAfterClear?.let { room -> onRoomTap(room) }
+                                    pendingRoomAfterClear = null
+                                }
+                            ) {
+                                Text("Confirm")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(
+                                onClick = {
+                                    showClearPathDialog = false
+                                    pendingRoomAfterClear = null
+                                }
+                            ) {
+                                Text("Cancel")
                             }
                         }
                     )

@@ -115,6 +115,12 @@ data class FloorPlanUiState(
      * Null when no pin is displayed.
      */
     val pinnedRoom: Room? = null,
+
+    /**
+     * Controls whether the pinned room marker is drawn on map.
+     * The room can remain selected (panel visible) while marker is hidden.
+     */
+    val showPinnedRoomOnMap: Boolean = true,
     
     /**
      * Bounds of the campus canvas encompassing all buildings.
@@ -513,11 +519,19 @@ class FloorPlanViewModel(
             updatedBuildingStates[buildingId] = updatedBuildingState
             
             val newState = currentState.copy(buildingStates = updatedBuildingStates)
-            
-            // Check if the pinned room is still visible after floor change
-            // If not, unpin it
-            if (newState.pinnedRoom != null && !isRoomVisibleInFloorsToRender(newState.pinnedRoom, newState.allFloorsToRender)) {
-                newState.copy(pinnedRoom = null)
+
+            // Keep selected room/panel across floor switches, but hide marker if it's not visible.
+            val pinnedRoom = newState.pinnedRoom
+            if (pinnedRoom != null) {
+                val onRoomFloor = if (pinnedRoom.buildingId != null && pinnedRoom.floorId != null) {
+                    val owner = newState.buildingStates[pinnedRoom.buildingId]
+                    owner?.currentFloorData?.floorId == pinnedRoom.floorId
+                } else {
+                    pinnedRoom.floorId == null || pinnedRoom.floorId == newState.currentFloorId
+                }
+
+                val visibleOnCanvas = isRoomVisibleInFloorsToRender(pinnedRoom, newState.allFloorsToRender)
+                newState.copy(showPinnedRoomOnMap = onRoomFloor && visibleOnCanvas)
             } else {
                 newState
             }
@@ -1193,21 +1207,28 @@ class FloorPlanViewModel(
      * Resets canvas to initial state.
      */
     fun resetCanvas() {
-        _uiState.update { it.copy(canvasState = CanvasState(), pinnedRoom = null) }
+        _uiState.update { it.copy(canvasState = CanvasState(), pinnedRoom = null, showPinnedRoomOnMap = true) }
     }
     
     /**
      * Places a pin on the given room. Replaces any existing pin.
      */
     fun pinRoom(room: Room) {
-        _uiState.update { it.copy(pinnedRoom = room) }
+        _uiState.update { it.copy(pinnedRoom = room, showPinnedRoomOnMap = true) }
     }
     
     /**
      * Removes the current pin.
      */
     fun clearPin() {
-        _uiState.update { it.copy(pinnedRoom = null) }
+        _uiState.update { it.copy(pinnedRoom = null, showPinnedRoomOnMap = true) }
+    }
+
+    /**
+     * Makes the current pinned room marker visible on map again.
+     */
+    fun showPinnedRoomOnMap() {
+        _uiState.update { it.copy(showPinnedRoomOnMap = true) }
     }
     
     /**
