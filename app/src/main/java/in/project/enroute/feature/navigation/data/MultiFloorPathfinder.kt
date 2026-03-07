@@ -201,27 +201,36 @@ class MultiFloorPathfinder {
         goingUp: Boolean,
         stairConnections: List<StairwellConnection>
     ): List<StairwellConnection> {
-        return if (goingUp) {
+        val directional = if (goingUp) {
             stairConnections.filter { it.bottomFloorId == floorId }
         } else {
             stairConnections.filter { it.topFloorId == floorId }
         }
+
+        // Prefer geometry loaded from the current floor when available.
+        // Some datasets only provide the stairwell polygon on one side, so
+        // fall back to directional matches instead of failing hard.
+        val sameFloorGeometry = directional.filter { it.floorId == floorId }
+        if (sameFloorGeometry.isNotEmpty()) return sameFloorGeometry
+
+        if (directional.isNotEmpty()) {
+            Log.w(
+                TAG,
+                "No same-floor stair geometry for $floorId; using ${directional.size} " +
+                        "directional fallback connection(s)"
+            )
+        }
+        return directional
     }
 
     /**
-     * Returns the path target and next-floor start position for a [connection].
+     * Returns the point to pathfind toward on the current floor plus the
+     * start point on the next floor after stair traversal.
      *
-     * The **far edge** of the stairwell is used as the path target so the A*
-     * path physically traverses the stairwell polygon (bottom→top or top→bottom)
-     * rather than stopping at the near edge and leaving the stairwell undrawn.
-     *
-     * Going up:   path targets topMidpoint;    next floor starts at topMidpoint.
-     * Going down: path targets bottomMidpoint; next floor starts at bottomMidpoint.
-     *
-     * Entry and exit are the same point because the far-edge midpoint is valid
-     * in the shared campus-wide coordinate space on both floors.
+     * We intentionally target the far edge so the rendered segment visibly
+     * traverses the stairwell polygon.
      */
-    private fun connectionEndpoints(
+    private fun traversalEndpoints(
         connection: StairwellConnection,
         goingUp: Boolean
     ): Pair<Offset, Offset> {
@@ -230,6 +239,20 @@ class MultiFloorPathfinder {
         } else {
             connection.bottomMidpoint to connection.bottomMidpoint
         }
+    }
+
+    /**
+     * Returns the directional entry point for a connection on the floor where
+     * it is being considered.
+     *
+     * Going up candidates are entered from the bottom edge.
+     * Going down candidates are entered from the top edge.
+     */
+    private fun directionalEntryPoint(
+        connection: StairwellConnection,
+        goingUp: Boolean
+    ): Offset {
+        return if (goingUp) connection.bottomMidpoint else connection.topMidpoint
     }
 
     /**
@@ -281,9 +304,9 @@ class MultiFloorPathfinder {
                     points = path
                 ))
             } else {
-                // Intermediate floor: pathfind to the stairwell entry midpoint
-                val (entryMidpoint, exitMidpoint) = connectionEndpoints(currentConnection, goingUp)
-                val path = repo.findPath(currentPosition, entryMidpoint)
+                // Intermediate floor: pathfind across the stairwell (to the far edge)
+                val (targetMidpoint, nextFloorStart) = traversalEndpoints(currentConnection, goingUp)
+                val path = repo.findPath(currentPosition, targetMidpoint)
                 if (path.isEmpty()) return MultiFloorPath.EMPTY
 
                 segments.add(FloorPathSegment(
@@ -295,7 +318,7 @@ class MultiFloorPathfinder {
 
                 // Exit midpoint is the start position on the next floor
                 // (campus-wide coordinates are shared, so it's already valid)
-                currentPosition = exitMidpoint
+                currentPosition = nextFloorStart
 
                 // Find the next connection on the next floor (unless next is last)
                 if (i + 1 < floorSequence.size - 1) {
@@ -307,8 +330,7 @@ class MultiFloorPathfinder {
                     )
                     // Pick the connection closest to where we arrive
                     val nextConnection = nextConnections.minByOrNull { conn ->
-                        val (entry, _) = connectionEndpoints(conn, goingUp)
-                        distance(currentPosition, entry)
+                        distance(currentPosition, directionalEntryPoint(conn, goingUp))
                     }
                     if (nextConnection == null) {
                         Log.e(TAG, "No onward stairwell connection found on $nextFloorId")

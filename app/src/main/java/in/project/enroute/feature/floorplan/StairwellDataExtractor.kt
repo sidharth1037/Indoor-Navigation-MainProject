@@ -47,7 +47,7 @@ object StairwellDataExtractor {
     fun computeStairwellZones(
         buildingStates: Map<String, BuildingState>
     ): List<StairwellZone> {
-        return parseAll(buildingStates).map { p ->
+        return parseAll(buildingStates, dedupeAcrossFloors = true).map { p ->
             StairwellZone(
                 polygonId = p.polygonId,
                 boundary = p.boundary,
@@ -75,7 +75,7 @@ object StairwellDataExtractor {
     fun computeStairwellConnections(
         buildingStates: Map<String, BuildingState>
     ): List<StairwellConnection> {
-        return parseAll(buildingStates).map { p ->
+        return parseAll(buildingStates, dedupeAcrossFloors = false).map { p ->
             StairwellConnection(
                 polygonId = p.polygonId,
                 buildingId = p.buildingId,
@@ -94,7 +94,8 @@ object StairwellDataExtractor {
     // ── Shared parsing ──────────────────────────────────────────────────────
 
     private fun parseAll(
-        buildingStates: Map<String, BuildingState>
+        buildingStates: Map<String, BuildingState>,
+        dedupeAcrossFloors: Boolean
     ): List<ParsedStairwell> {
         val result = mutableListOf<ParsedStairwell>()
         val processedKeys = mutableSetOf<String>()
@@ -121,7 +122,13 @@ object StairwellDataExtractor {
                 }
 
                 for (stairwell in floorData.stairwells) {
-                    val key = "${building.buildingId}_${stairwell.polygonId}_${stairwell.floorsConnected}"
+                    // Zones: dedupe per shaft across floors.
+                    // Connections: keep one geometry per source floor.
+                    val key = if (dedupeAcrossFloors) {
+                        "${building.buildingId}_${stairwell.polygonId}_${stairwell.floorsConnected}"
+                    } else {
+                        "${building.buildingId}_${stairwell.polygonId}_${stairwell.floorsConnected}_${floorData.floorId}"
+                    }
                     if (key in processedKeys) continue
 
                     val topLines = stairwell.lines.filter { it.position == "top" }

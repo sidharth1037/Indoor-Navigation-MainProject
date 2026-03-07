@@ -27,6 +27,7 @@ import androidx.core.graphics.createBitmap
  * @param pinSizeDp Base size of the pin in dp-like units (scaled inversely with canvas zoom)
  * @param minZoomForPinSize Minimum zoom level at which pin maintains full size; below this it scales down
  * @param maxZoomForVerticalOffset Maximum zoom level for vertical offset growth; above this offset is constant
+ * @param applyVerticalOffset If true, offsets pin upward (for room labels); if false, pin tip is at exact coordinate (for entrances)
  */
 fun DrawScope.drawPin(
     pinX: Float,
@@ -39,7 +40,8 @@ fun DrawScope.drawPin(
     tintColor: Int,
     pinSizeDp: Float = 140f,
     minZoomForPinSize: Float = 1f,
-    maxZoomForVerticalOffset: Float = 1f
+    maxZoomForVerticalOffset: Float = 1f,
+    applyVerticalOffset: Boolean = true
 ) {
     // Transform room coordinate to rotated floor-plan coordinate
     val angleRad = Math.toRadians(rotationDegrees.toDouble()).toFloat()
@@ -67,12 +69,16 @@ fun DrawScope.drawPin(
         pinSizeDp / canvasScale  // scale down at lower zoom
     }
     
-    // Offset pin upward in screen space (away from room label)
+    // Offset pin upward in screen space (away from room label) only if requested
     // Directly proportional to zoom level up to maxZoomForVerticalOffset, then constant
-    val verticalOffset = if (canvasScale <= maxZoomForVerticalOffset) {
-        70f * canvasScale  // proportional below threshold
+    val verticalOffset = if (applyVerticalOffset) {
+        if (canvasScale <= maxZoomForVerticalOffset) {
+            70f * canvasScale  // proportional below threshold
+        } else {
+            70f * maxZoomForVerticalOffset  // constant above threshold
+        }
     } else {
-        70f * maxZoomForVerticalOffset  // constant above threshold
+        0f  // No offset - pin tip at exact coordinate
     }
     val adjustedScreenY = screenY - pinSize - verticalOffset
 
