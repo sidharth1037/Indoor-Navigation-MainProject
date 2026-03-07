@@ -758,7 +758,7 @@ class FloorPlanViewModel(
      * 1. Inside the currently viewed floor's boundary, OR
      * 2. Outside all buildings (using first floor boundaries for check)
      *
-     * @param point Campus-wide coordinates
+     * parameter point Campus-wide coordinates
      * @return Validation result with success/failure and error type
      */
     enum class OriginErrorType {
@@ -786,71 +786,66 @@ class FloorPlanViewModel(
             )
         }
 
-        // Get current floor from dominant building (or null if zoomed out)
-        val currentFloorId = state.currentFloorId
-        
-        // Check all buildings to see if point is inside any building
-        val buildingFloorMap = mutableMapOf<String, String>() // buildingId -> floorId where point is inside
-        
-        for ((buildingId, buildingState) in state.buildingStates) {
+        // Helper to test if point is inside a floor boundary in campus-wide coordinates.
+        fun isInsideFloor(buildingState: BuildingState, floorData: FloorPlanData): Boolean {
             val building = buildingState.building
             val relX = building.relativePosition.x
             val relY = building.relativePosition.y
-            
-            // Check all floors in this building (use first floor boundary for "outside building" check)
-            for ((floorNum, floorData) in buildingState.floors) {
-                val meta = floorData.metadata
-                val scale = meta.scale
-                val rotRad = Math.toRadians(meta.rotation.toDouble()).toFloat()
-                val cosA = cos(rotRad)
-                val sinA = sin(rotRad)
-                
-                for (polygon in floorData.boundaryPolygons) {
-                    if (polygon.points.isEmpty()) continue
-                    val transformed = polygon.points.sortedBy { it.id }.map { p ->
-                        val px = p.x * scale
-                        val py = p.y * scale
-                        Pair(px * cosA - py * sinA + relX, px * sinA + py * cosA + relY)
-                    }
-                    if (isPointInPolygon(point.x, point.y, transformed)) {
-                        // Point is inside this floor
-                        buildingFloorMap[buildingId] = floorData.floorId
-                        break // Found in this floor, no need to check other polygons
-                    }
+            val meta = floorData.metadata
+            val scale = meta.scale
+            val rotRad = Math.toRadians(meta.rotation.toDouble()).toFloat()
+            val cosA = cos(rotRad)
+            val sinA = sin(rotRad)
+
+            for (polygon in floorData.boundaryPolygons) {
+                if (polygon.points.isEmpty()) continue
+                val transformed = polygon.points.sortedBy { it.id }.map { p ->
+                    val px = p.x * scale
+                    val py = p.y * scale
+                    Pair(px * cosA - py * sinA + relX, px * sinA + py * cosA + relY)
                 }
-                
-                // If found in this floor, no need to check other floors
-                if (buildingFloorMap.containsKey(buildingId)) break
+                if (isPointInPolygon(point.x, point.y, transformed)) {
+                    return true
+                }
             }
+            return false
         }
-        
-        // Case 1: Point is not inside any building — valid (outdoor area)
-        if (buildingFloorMap.isEmpty()) {
+
+        // If the point is outside every building footprint, it's valid (campus open area).
+        val insideAnyBuilding = state.buildingStates.values.any { buildingState ->
+            val footprintFloor = buildingState.floors[1f]
+                ?: buildingState.availableFloorNumbers.firstOrNull()?.let { buildingState.floors[it] }
+                ?: buildingState.currentFloorData
+
+            footprintFloor != null && isInsideFloor(buildingState, footprintFloor)
+        }
+
+        if (!insideAnyBuilding) {
             return OriginValidationResult(isValid = true)
         }
-        
-        // Case 2: Point is inside a building — check if it's the currently viewed floor
-        val pointFloorId = buildingFloorMap.values.firstOrNull()
-        
-        if (currentFloorId == null) {
-            // Zoomed out — no current floor showing
-            // Point is inside a building but we don't know which floor is being viewed
+
+        // Point is inside a building. If no dominant floor is active, user is zoomed out.
+        val dominantBuildingState = state.dominantBuildingState
+        val currentFloorData = dominantBuildingState?.currentFloorData
+
+        if (currentFloorData == null) {
             return OriginValidationResult(
                 isValid = false,
                 errorType = OriginErrorType.INSIDE_BUILDING_ZOOMED_OUT
             )
         }
-        
-        if (pointFloorId == currentFloorId) {
-            // Point is inside the currently viewed floor — valid
+
+        // Valid only when inside the currently viewed floor.
+        if (isInsideFloor(dominantBuildingState, currentFloorData)) {
             return OriginValidationResult(isValid = true)
-        } else {
-            // Point is inside a different floor than the one being viewed
-            return OriginValidationResult(
-                isValid = false,
-                errorType = OriginErrorType.WRONG_FLOOR
-            )
         }
+
+        // Inside a building but not inside the current floor.
+        return OriginValidationResult(
+            isValid = false,
+            errorType = OriginErrorType.WRONG_FLOOR
+        )
+
     }
 
     /**
