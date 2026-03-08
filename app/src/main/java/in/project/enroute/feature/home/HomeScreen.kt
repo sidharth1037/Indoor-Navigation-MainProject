@@ -12,9 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -264,10 +262,7 @@ fun HomeScreen(
                 }
                 floorPlanViewModel.pinRoom(room)
             },
-            onBackgroundTap = {
-                floorPlanViewModel.clearPin()
-                navigationViewModel.clearPath()
-            },
+
             onEnableTracking = { position, heading ->
                 // PDR positions are already campus-wide
                 pdrViewModel.setHeadingTrackingMode(true)
@@ -316,6 +311,9 @@ fun HomeScreen(
                 floorPlanViewModel.disableFollowingMode(effectiveCanvasState)
                 floorPlanViewModel.clearPin()
             },
+            onClearOverlay = {
+                floorPlanViewModel.clearPin()
+            },
             onShowRoomOnMap = { room ->
                 floorPlanViewModel.showPinnedRoomOnMap()
                 room.floorId?.let { floorPlanViewModel.switchToFloorById(it) }
@@ -352,7 +350,6 @@ private fun HomeScreenContent(
     onFloorChange: (Float) -> Unit,
     onCenterView: (x: Float, y: Float, scale: Float, buildingId: String?) -> Unit,
     onRoomTap: (Room) -> Unit,
-    onBackgroundTap: () -> Unit,
     onEnableTracking: (position: Offset, headingRadians: Float) -> Unit,
     onAwaitFreshHeading: suspend () -> Float?,
     onSetOriginClick: () -> Unit,
@@ -363,6 +360,7 @@ private fun HomeScreenContent(
     onDirectionsClick: (Room) -> Unit,
     onStartNavigation: () -> Unit,
     onExitNavigation: () -> Unit,
+    onClearOverlay: () -> Unit = {},
     onShowRoomOnMap: (Room) -> Unit,
     onSwitchToFloorById: (String) -> Unit = {},
     showMotionLabel: Boolean = true,
@@ -394,9 +392,12 @@ private fun HomeScreenContent(
     // Tap on map to set origin: pending origin before confirmation
     var pendingOriginLocation by remember { mutableStateOf<Offset?>(null) }
 
-    // Room selection replacement flow when a route is already active.
-    var showClearPathDialog by remember { mutableStateOf(false) }
-    var pendingRoomAfterClear by remember { mutableStateOf<Room?>(null) }
+    // Overlay room: shown when user taps a label/searches while a path is active.
+    // Stacks a second RoomInfoPanel + pin on top of the existing navigation panel.
+    var overlayPinnedRoom by remember { mutableStateOf<Room?>(null) }
+    // True after the user presses Directions on the overlay panel.
+    // Gates path state so the overlay doesn't inherit the old path's Start button.
+    var overlayRequestedDirections by remember { mutableStateOf(false) }
 
     val density = LocalDensity.current
     var sliderHeightDp by remember { mutableStateOf(77.dp) }
@@ -506,12 +507,18 @@ private fun HomeScreenContent(
         }
     }
 
+    // rememberUpdatedState ensures the latest hasPath is always readable,
+    // even through FloorPlanCanvas's stale pointerInput(Unit) lambda closure.
+    val currentHasPath = rememberUpdatedState(navUiState.hasPath)
+    val currentOnRoomTap = rememberUpdatedState(onRoomTap)
+
     fun requestRoomSelection(room: Room) {
-        if (navUiState.hasPath) {
-            pendingRoomAfterClear = room
-            showClearPathDialog = true
+        if (currentHasPath.value) {
+            // Path is active — show overlay pin + panel instead of replacing
+            overlayPinnedRoom = room
+            overlayRequestedDirections = false
         } else {
-            onRoomTap(room)
+            currentOnRoomTap.value(room)
         }
     }
 
@@ -609,7 +616,7 @@ private fun HomeScreenContent(
                     },
                     displayConfig = uiState.displayConfig,
                     onRoomTap = { room -> requestRoomSelection(room) },
-                    onBackgroundTap = {},
+                    onBackgroundTap = { /* no-op */ },
                     isSelectingOrigin = pdrUiState.isSelectingOrigin,
                     onOriginTap = { origin ->
                         // Store as pending - user must confirm
@@ -663,6 +670,8 @@ private fun HomeScreenContent(
                     pinnedRoom = activePinnedRoom,
                     showPinnedRoomMarker = uiState.showPinnedRoomOnMap,
                     isPinAtEntrance = isPinAtEntrance,
+                    // Hide overlay pin when directions were requested (route pin takes over)
+                    overlayPinnedRoom = if (overlayRequestedDirections) null else overlayPinnedRoom,
                     pinDrawable = pinDrawable,
                     pinTintColor = primaryColor,
                     modifier = Modifier.fillMaxSize()
@@ -716,7 +725,12 @@ private fun HomeScreenContent(
                             buildingName = uiState.sliderBuildingName,
                             availableFloors = uiState.sliderFloorNumbers,
                             currentFloor = uiState.sliderCurrentFloor,
-                            onFloorChange = onFloorChange,
+                            onFloorChange = { 
+                                // Clear pending origin choices when floor changes
+                                pendingOriginLocation = null
+                                onDismissOriginError()
+                                onFloorChange(it) 
+                            },
                             isVisible = true,
                             onHeightMeasured = { px ->
                                 sliderHeightDp = with(density) { px.toDp() }
@@ -751,7 +765,11 @@ private fun HomeScreenContent(
                                 buildingName = uiState.sliderBuildingName,
                                 availableFloors = uiState.sliderFloorNumbers,
                                 currentFloor = uiState.sliderCurrentFloor,
-                                onFloorChange = onFloorChange,
+                                onFloorChange = {
+                                    pendingOriginLocation = null
+                                    onDismissOriginError()
+                                    onFloorChange(it)
+                                },
                                 isVisible = true,
                                 onHeightMeasured = { px ->
                                     sliderHeightDp = with(density) { px.toDp() }
@@ -873,7 +891,9 @@ private fun HomeScreenContent(
                     hasPath = navUiState.hasPath,
                     isNavigationStarted = navUiState.isNavigationStarted,
                     showShowOnMapButton = shouldShowShowOnMapButton,
-                    onDismiss = onBackgroundTap,
+                    onDismiss = {
+                        onExitNavigation()
+                    },
                     onDirectionsClick = { room ->
                         if (pdrUiState.pdrState.origin == null) {
                             // Origin not set → show dialog, remember room for later
@@ -942,6 +962,117 @@ private fun HomeScreenContent(
                         }
                     },
                     onExitClick = {
+                        overlayPinnedRoom = null
+                        onExitNavigation()
+                    },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+
+                // Overlay panel: shown when user taps a label/searches while a path is active.
+                // Stacks on top of the path panel; dismissing reveals the path panel below.
+                // When Directions is pressed here, the overlay stays visible and updates
+                // in-place to show Start / Show full route once the path is computed.
+                RoomInfoPanel(
+                    room = overlayPinnedRoom,
+                    isCalculatingPath = if (overlayRequestedDirections) navUiState.isCalculating else false,
+                    hasPath = if (overlayRequestedDirections) navUiState.hasPath else false,
+                    isNavigationStarted = if (overlayRequestedDirections) navUiState.isNavigationStarted else false,
+                    showShowOnMapButton = if (overlayRequestedDirections) {
+                        // After requesting directions, use the route-based check
+                        shouldShowShowOnMapButton
+                    } else {
+                        // Before directions, check if overlay room is off-floor or far from center
+                        overlayPinnedRoom != null && run {
+                            val room = overlayPinnedRoom!!
+                            val roomFloor = room.floorId
+                            val currentFloor = uiState.currentFloorId
+                            val offFloor = roomFloor != null && currentFloor != null && roomFloor != currentFloor
+                            val farFromCenter = run {
+                                val world = MapViewportUtils.resolveRoomCampusPosition(room, uiState.buildingStates)
+                                world != null && !MapViewportUtils.isWorldPointNearScreenCenter(
+                                    worldPoint = world,
+                                    canvasState = effectiveCanvasState,
+                                    screenWidth = uiState.screenWidth,
+                                    screenHeight = uiState.screenHeight
+                                )
+                            }
+                            offFloor || farFromCenter
+                        }
+                    },
+                    onDismiss = {
+                        overlayPinnedRoom = null
+                        overlayRequestedDirections = false
+                        onClearOverlay()
+                    },
+                    onDirectionsClick = { room ->
+                        // Clear old path silently, pin this room, request new directions.
+                        // Don't clear overlayPinnedRoom — the panel stays and updates in-place.
+                        overlayRequestedDirections = true
+                        onExitNavigation()
+                        onRoomTap(room)
+                        if (pdrUiState.pdrState.origin == null) {
+                            pendingDirectionsRoom = room
+                            showOriginDialog = true
+                        } else {
+                            onDirectionsClick(room)
+                        }
+                    },
+                    onShowOnMapClick = { room ->
+                        hasUserMovedCanvasAfterPathFound = false
+                        floorPlanViewModel?.showPinnedRoomOnMap()
+
+                        if (navUiState.hasPath) {
+                            coroutineScope.launch {
+                                val currentRotation = effectiveCanvasState.rotation
+                                val targetRotation = -uiState.campusMetadata.north
+
+                                if (kotlin.math.abs(currentRotation - targetRotation) > 1f) {
+                                    val diff = ((targetRotation - currentRotation + 180f) % 360f + 360f) % 360f - 180f
+                                    northResetFrom.floatValue = currentRotation
+                                    northResetTo.floatValue = currentRotation + diff
+                                    northResetId++
+                                    kotlinx.coroutines.delay(480)
+                                }
+
+                                val fitPoints = navUiState.multiFloorPath.allPoints.toMutableList()
+                                val userPosition = pdrUiState.pdrState.path.lastOrNull()?.position
+                                    ?: pdrUiState.pdrState.origin
+                                if (userPosition != null) fitPoints.add(userPosition)
+
+                                if (fitPoints.isNotEmpty()) {
+                                    val (center, zoom) = MapViewportUtils.calculateFitBoundsForWorldPoints(
+                                        points = fitPoints,
+                                        screenWidth = uiState.screenWidth,
+                                        screenHeight = uiState.screenHeight
+                                    )
+                                    onCenterOnCampus(center.x, center.y, zoom)
+                                }
+                            }
+                        } else {
+                            onShowRoomOnMap(room)
+                        }
+                    },
+                    onStartClick = {
+                        // Start navigation from overlay — clear overlay, delegate to main flow
+                        overlayPinnedRoom = null
+                        pdrUiState.pdrState.currentFloor?.let { floor ->
+                            onSwitchToFloorById(floor)
+                        }
+                        val currentPosition = pdrUiState.pdrState.path.lastOrNull()?.position
+                            ?: pdrUiState.pdrState.origin
+                        if (currentPosition == null) {
+                            onStartNavigation()
+                        } else {
+                            coroutineScope.launch {
+                                aimPressed = true
+                                val freshHeading = onAwaitFreshHeading() ?: heading
+                                onEnableTracking(currentPosition, freshHeading)
+                                onStartNavigation()
+                            }
+                        }
+                    },
+                    onExitClick = {
+                        overlayPinnedRoom = null
                         onExitNavigation()
                     },
                     modifier = Modifier.align(Alignment.BottomCenter)
@@ -1110,38 +1241,7 @@ private fun HomeScreenContent(
                     )
                 }
 
-                if (showClearPathDialog) {
-                    AlertDialog(
-                        onDismissRequest = {
-                            showClearPathDialog = false
-                            pendingRoomAfterClear = null
-                        },
-                        title = { Text("Clear current route?") },
-                        text = { Text("Selecting another room will clear the current path.") },
-                        confirmButton = {
-                            TextButton(
-                                onClick = {
-                                    showClearPathDialog = false
-                                    onExitNavigation()
-                                    pendingRoomAfterClear?.let { room -> onRoomTap(room) }
-                                    pendingRoomAfterClear = null
-                                }
-                            ) {
-                                Text("Confirm")
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(
-                                onClick = {
-                                    showClearPathDialog = false
-                                    pendingRoomAfterClear = null
-                                }
-                            ) {
-                                Text("Cancel")
-                            }
-                        }
-                    )
-                }
+
             }
         }
     }

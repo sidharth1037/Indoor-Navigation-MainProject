@@ -19,11 +19,11 @@ import `in`.project.enroute.feature.floorplan.rendering.CanvasState
 
 /**
  * Configurable constants for entrance marker rendering.
- * All sizes are in world-coordinate units (scale with canvas zoom).
+ * All sizes are in screen units (they remain constant irrespective of zoom level).
  */
 object EntranceMarkerConfig {
-    /** Radius of the main circle in world units. */
-    var MARKER_RADIUS = 20f
+    /** Radius of the main circle in screen units. */
+    var MARKER_RADIUS = 36f
 
     /** Stroke width of the main circle outline. */
     var RING_STROKE_WIDTH = 5f
@@ -34,8 +34,8 @@ object EntranceMarkerConfig {
     /** Stroke width of the outer selection ring. */
     var SELECTION_RING_STROKE = 5f
 
-    /** Text size for the number label inside the marker (world units). */
-    var NUMBER_TEXT_SIZE = 22f
+    /** Text size for the number label inside the marker (screen units). */
+    var NUMBER_TEXT_SIZE = 34f
 }
 
 /**
@@ -81,6 +81,7 @@ fun EntranceMarkerOverlay(
                     isSelected = isSelected,
                     isSingle = corridorPoints.size == 1,
                     canvasRotation = canvasState.rotation,
+                    canvasScale = canvasState.scale,
                     primaryColor = primaryColor,
                     backgroundColor = backgroundColor
                 )
@@ -91,7 +92,9 @@ fun EntranceMarkerOverlay(
 
 /**
  * Draws a single entrance marker — numbered circle with outer selection ring when selected.
- * All sizes are in world units (they scale with the canvas).
+ * Sizes are divided by an effective scale to appear constant on screen down to a certain
+ * zoom level. Below a scale of 0.4f (when room labels disappear), the effective scale
+ * is capped, which causes the markers to scale down (shrink) along with the canvas.
  */
 private fun DrawScope.drawMarker(
     center: Offset,
@@ -99,11 +102,18 @@ private fun DrawScope.drawMarker(
     isSelected: Boolean,
     isSingle: Boolean,
     canvasRotation: Float,
+    canvasScale: Float,
     primaryColor: Color,
     backgroundColor: Color
 ) {
-    val radius = EntranceMarkerConfig.MARKER_RADIUS
-    val strokeWidth = EntranceMarkerConfig.RING_STROKE_WIDTH
+    // When canvasScale drops below 0.4f, we stop increasing the inverse scale,
+    // meaning the markers will start shrinking proportionally with the canvas.
+    val effectiveScale = canvasScale.coerceAtLeast(0.4f)
+
+    val radius = EntranceMarkerConfig.MARKER_RADIUS / effectiveScale
+    val strokeWidth = EntranceMarkerConfig.RING_STROKE_WIDTH / effectiveScale
+    val selectionRingGap = EntranceMarkerConfig.SELECTION_RING_GAP / effectiveScale
+    val selectionRingStroke = EntranceMarkerConfig.SELECTION_RING_STROKE / effectiveScale
 
     // White filled background
     drawCircle(
@@ -122,7 +132,7 @@ private fun DrawScope.drawMarker(
     // Number text
     val paint = android.graphics.Paint().apply {
         color = primaryColor.toArgb()
-        textSize = EntranceMarkerConfig.NUMBER_TEXT_SIZE
+        textSize = EntranceMarkerConfig.NUMBER_TEXT_SIZE / effectiveScale
         textAlign = android.graphics.Paint.Align.CENTER
         isFakeBoldText = true
         isAntiAlias = true
@@ -141,12 +151,12 @@ private fun DrawScope.drawMarker(
 
     // Selection ring: outer circle around the marker
     if (isSelected || isSingle) {
-        val selectionRadius = radius + EntranceMarkerConfig.SELECTION_RING_GAP + EntranceMarkerConfig.SELECTION_RING_STROKE / 2f
+        val selectionRadius = radius + selectionRingGap + selectionRingStroke / 2f
         drawCircle(
             color = primaryColor,
             radius = selectionRadius,
             center = center,
-            style = Stroke(width = EntranceMarkerConfig.SELECTION_RING_STROKE)
+            style = Stroke(width = selectionRingStroke)
         )
     }
 }

@@ -34,6 +34,7 @@ fun FloorPlanLabelsOverlay(
     pinnedRoom: Room? = null,
     showPinnedRoomMarker: Boolean = true,
     isPinAtEntrance: Boolean = false,
+    overlayPinnedRoom: Room? = null,
     pinDrawable: VectorDrawable? = null,
     pinTintColor: Int = android.graphics.Color.BLACK
 ) {
@@ -101,7 +102,7 @@ fun FloorPlanLabelsOverlay(
                 }
             }
 
-            // Pin on the pinned room
+            // Pin on the pinned room (destination when path is active)
             if (showPinnedRoomMarker && pinnedRoom != null && pinDrawable != null) {
                 val ownerBuilding = if (pinnedRoom.buildingId != null) {
                     buildingStates[pinnedRoom.buildingId]
@@ -131,6 +132,42 @@ fun FloorPlanLabelsOverlay(
                                 pinDrawable = pinDrawable,
                                 tintColor = pinTintColor,
                                 applyVerticalOffset = !isPinAtEntrance
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Second pin for overlay room (shown when user taps another label while path is active)
+            if (overlayPinnedRoom != null && pinDrawable != null) {
+                val overlayOwner = if (overlayPinnedRoom.buildingId != null) {
+                    buildingStates[overlayPinnedRoom.buildingId]
+                } else {
+                    buildingStates.values.find { bs ->
+                        bs.floorsToRender.any { fd ->
+                            fd.rooms.any { it.id == overlayPinnedRoom.id && it.floorId == overlayPinnedRoom.floorId }
+                        }
+                    }
+                }
+                if (overlayOwner != null) {
+                    val overlayFloorData = overlayPinnedRoom.floorId?.let { floorId ->
+                        overlayOwner.floors.values.firstOrNull { it.floorId == floorId }
+                    } ?: overlayOwner.floorsToRender.lastOrNull()
+
+                    if (overlayFloorData != null) {
+                        val relX = overlayOwner.building.relativePosition.x
+                        val relY = overlayOwner.building.relativePosition.y
+                        translate(left = relX, top = relY) {
+                            drawPin(
+                                pinX = overlayPinnedRoom.x,
+                                pinY = overlayPinnedRoom.y,
+                                scale = overlayFloorData.metadata.scale,
+                                rotationDegrees = overlayFloorData.metadata.rotation,
+                                canvasScale = canvasState.scale,
+                                canvasRotation = canvasState.rotation,
+                                pinDrawable = pinDrawable,
+                                tintColor = pinTintColor,
+                                applyVerticalOffset = true
                             )
                         }
                     }

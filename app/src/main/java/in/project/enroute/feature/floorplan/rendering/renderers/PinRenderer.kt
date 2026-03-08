@@ -36,7 +36,7 @@ fun DrawScope.drawPin(
     rotationDegrees: Float,
     canvasScale: Float,
     canvasRotation: Float,
-    pinDrawable: VectorDrawable,
+    pinDrawable: VectorDrawable?,
     tintColor: Int,
     pinSizeDp: Float = 140f,
     minZoomForPinSize: Float = 1f,
@@ -89,14 +89,14 @@ fun DrawScope.drawPin(
         canvas.nativeCanvas.rotate(-canvasRotation)
 
         // Tint the drawable
-        pinDrawable.colorFilter = PorterDuffColorFilter(tintColor, PorterDuff.Mode.SRC_IN)
+        pinDrawable?.colorFilter = PorterDuffColorFilter(tintColor, PorterDuff.Mode.SRC_IN)
 
         // Render drawable to bitmap at target size
         val bitmapSize = pinSize.toInt().coerceAtLeast(1)
         val bitmap = createBitmap(bitmapSize, bitmapSize)
         val bitmapCanvas = Canvas(bitmap)
-        pinDrawable.setBounds(0, 0, bitmapSize, bitmapSize)
-        pinDrawable.draw(bitmapCanvas)
+        pinDrawable?.setBounds(0, 0, bitmapSize, bitmapSize)
+        pinDrawable?.draw(bitmapCanvas)
 
         // Draw so the bottom-center of the pin sits above the coordinate
         val left = screenX - pinSize / 2f

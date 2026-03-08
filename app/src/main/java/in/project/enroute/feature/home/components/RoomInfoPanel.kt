@@ -262,14 +262,14 @@ private fun RoomInfoPanelContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (hasPath) "Show full path" else "Show on map",
+                            text = if (hasPath) "Show full route" else "Show on map",
                             color = MaterialTheme.colorScheme.onSecondary,
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Icon(
                             imageVector = Icons.Rounded.Map,
-                            contentDescription = if (hasPath) "Show full path" else "Show on map",
+                            contentDescription = if (hasPath) "Show full route" else "Show on map",
                             tint = MaterialTheme.colorScheme.onSecondary,
                             modifier = Modifier.size(18.dp)
                         )
