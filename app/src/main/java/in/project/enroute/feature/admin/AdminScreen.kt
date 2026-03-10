@@ -4,11 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -20,18 +16,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import `in`.project.enroute.feature.campussearch.CampusSearchButton
-import `in`.project.enroute.feature.campussearch.CampusSearchOverlay
-import `in`.project.enroute.feature.campussearch.MORPH_DURATION_MS
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,166 +93,190 @@ private fun StatusBar(message: String, isError: Boolean, onDismiss: () -> Unit) 
 
 // ── Step 1: Select / Create Campus ──────────────────────────────
 
-// Layout constants for the admin search-button morph animation.
-private val ADMIN_TITLE_TOP = 16.dp    // Column padding-top
-private val ADMIN_TITLE_HEIGHT = 32.dp // 24sp title ≈ 32dp
-private val ADMIN_BUTTON_GAP = 24.dp   // spacing between title and button
-
-/** Resting Y for the search button on the Admin screen. */
-private val ADMIN_BUTTON_RESTING_Y =
-    ADMIN_TITLE_TOP + ADMIN_TITLE_HEIGHT + ADMIN_BUTTON_GAP
-
 @Composable
 private fun SelectCampusScreen(viewModel: AdminViewModel, uiState: AdminUiState) {
-    var showSearch by remember { mutableStateOf(false) }
-    var isMorphing by remember { mutableStateOf(false) }
-    val coroutineScope = rememberCoroutineScope()
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        // ── Background: title + create campus form (fades when morphing) ──
-        val bgAlpha by animateFloatAsState(
-            targetValue = if (isMorphing) 0f else 1f,
-            animationSpec = tween(200),
-            label = "admin_bg_alpha"
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text(
+            text = "Admin Panel",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.SemiBold
         )
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .alpha(bgAlpha)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text(
-                text = "Admin Panel",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+        // ── My Campuses ──────────────────────────────────────────
+        Text(
+            text = "My Campuses",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Medium
+        )
 
-            // Reserve space for the search button (rendered as overlay)
-            Spacer(modifier = Modifier.height(70.dp))
-
-            HorizontalDivider()
-
-            // ── Create new campus ────────────────────────────────
-            Text(
-                text = "Create New Campus",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Medium
-            )
-
-            OutlinedTextField(
-                value = uiState.newCampusId,
-                onValueChange = { viewModel.updateNewCampusId(it) },
-                label = { Text("Campus ID") },
-                placeholder = { Text("e.g., sjcet_palai") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-
-            OutlinedTextField(
-                value = uiState.newCampusName,
-                onValueChange = { viewModel.updateNewCampusName(it) },
-                label = { Text("Campus Name") },
-                placeholder = { Text("e.g., SJCET Palai") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-
-            OutlinedTextField(
-                value = uiState.newCampusLocation,
-                onValueChange = { viewModel.updateNewCampusLocation(it) },
-                label = { Text("Location") },
-                placeholder = { Text("e.g., Palai, Kerala") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = uiState.newCampusLatitude,
-                    onValueChange = { viewModel.updateNewCampusLatitude(it) },
-                    label = { Text("Latitude") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                )
-                OutlinedTextField(
-                    value = uiState.newCampusLongitude,
-                    onValueChange = { viewModel.updateNewCampusLongitude(it) },
-                    label = { Text("Longitude") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                )
+        when {
+            uiState.isMyCampusesLoading -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                }
             }
-
-            OutlinedTextField(
-                value = uiState.newCampusNorth,
-                onValueChange = { viewModel.updateNewCampusNorth(it) },
-                label = { Text("North bearing (degrees)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-            )
-
-            Button(
-                onClick = { viewModel.createCampus() },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !uiState.isLoading
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Create Campus")
+            uiState.myCampusesError != null -> {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Failed to load campuses: ${uiState.myCampusesError}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TextButton(onClick = { viewModel.loadMyCampuses() }) {
+                            Text("Retry")
+                        }
+                    }
+                }
+            }
+            uiState.myCampuses.isEmpty() -> {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Text(
+                        text = "No campuses created yet. Create one below.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            else -> {
+                uiState.myCampuses.forEach { campus ->
+                    OutlinedCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.selectCampus(campus.id, campus.name) }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.LocationCity,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = campus.name,
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                                Text(
+                                    text = campus.id,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Icon(
+                                Icons.Default.ChevronRight,
+                                contentDescription = "Open",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             }
         }
 
-        // ── Morphing search button ───────────────────────────────
-        CampusSearchButton(
-            isMorphing = isMorphing,
-            restingY = ADMIN_BUTTON_RESTING_Y,
-            placeholderText = "Search for a campus...",
-            onAnimationFinished = { showSearch = true },
-            onClick = { isMorphing = true }
+        HorizontalDivider()
+
+        // ── Create new campus ────────────────────────────────
+        Text(
+            text = "Create New Campus",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Medium
         )
 
-        // ── Search overlay ───────────────────────────────────────
-        AnimatedVisibility(
-            visible = showSearch,
-            enter = fadeIn(tween(300)),
-            exit = fadeOut(tween(200))
+        OutlinedTextField(
+            value = uiState.newCampusId,
+            onValueChange = { viewModel.updateNewCampusId(it) },
+            label = { Text("Campus ID") },
+            placeholder = { Text("e.g., sjcet_palai") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+
+        OutlinedTextField(
+            value = uiState.newCampusName,
+            onValueChange = { viewModel.updateNewCampusName(it) },
+            label = { Text("Campus Name") },
+            placeholder = { Text("e.g., SJCET Palai") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+
+        OutlinedTextField(
+            value = uiState.newCampusLocation,
+            onValueChange = { viewModel.updateNewCampusLocation(it) },
+            label = { Text("Location") },
+            placeholder = { Text("e.g., Palai, Kerala") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            CampusSearchOverlay(
-                query = uiState.searchQuery,
-                onQueryChange = { viewModel.updateSearchQuery(it) },
-                results = uiState.searchResults,
-                isLoading = uiState.isSearching,
-                error = uiState.searchError,
-                hasSearched = uiState.hasSearched,
-                placeholderText = "Search for a campus...",
-                onBack = {
-                    showSearch = false
-                    coroutineScope.launch {
-                        delay(100)
-                        isMorphing = false
-                        delay(MORPH_DURATION_MS.toLong())
-                        viewModel.updateSearchQuery("")
-                    }
-                },
-                onCampusSelected = { id ->
-                    // Find the name from results
-                    val name = uiState.searchResults
-                        .firstOrNull { it.id == id }?.name ?: id
-                    showSearch = false
-                    isMorphing = false
-                    viewModel.selectCampus(id, name)
-                },
-                onRetry = { viewModel.retrySearch() }
+            OutlinedTextField(
+                value = uiState.newCampusLatitude,
+                onValueChange = { viewModel.updateNewCampusLatitude(it) },
+                label = { Text("Latitude") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
             )
+            OutlinedTextField(
+                value = uiState.newCampusLongitude,
+                onValueChange = { viewModel.updateNewCampusLongitude(it) },
+                label = { Text("Longitude") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+            )
+        }
+
+        OutlinedTextField(
+            value = uiState.newCampusNorth,
+            onValueChange = { viewModel.updateNewCampusNorth(it) },
+            label = { Text("North bearing (degrees)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+        )
+
+        Button(
+            onClick = { viewModel.createCampus() },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !uiState.isLoading
+        ) {
+            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Create Campus")
         }
     }
 }

@@ -58,7 +58,8 @@ class FirebaseFloorPlanRepository(
             location = doc.getString("location") ?: "",
             latitude = doc.getDouble("latitude") ?: 0.0,
             longitude = doc.getDouble("longitude") ?: 0.0,
-            north = doc.getDouble("north")?.toFloat() ?: 0f
+            north = doc.getDouble("north")?.toFloat() ?: 0f,
+            createdBy = doc.getString("createdBy") ?: ""
         )
     }
 
@@ -477,19 +478,38 @@ class FirebaseFloorPlanRepository(
         }
 
         /**
-         * Creates a new campus document and returns its ID.
+         * Creates a new campus document with the admin's UID.
          */
         suspend fun createCampus(
             campusId: String,
             metadata: CampusMetadata,
+            adminUid: String,
             firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
         ) = withContext(Dispatchers.IO) {
+            val metadataWithOwner = metadata.copy(createdBy = adminUid)
             firestore
                 .collection("campuses")
                 .document(campusId)
-                .set(metadata)
+                .set(metadataWithOwner)
                 .await()
             invalidateCampusCache()
+        }
+
+        /**
+         * Returns all campuses created by the given admin UID.
+         */
+        suspend fun getCampusesByAdmin(
+            adminUid: String,
+            firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+        ): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+            val snapshot = firestore.collection("campuses")
+                .whereEqualTo("createdBy", adminUid)
+                .get()
+                .await()
+            snapshot.documents.map { doc ->
+                val name = doc.getString("name") ?: doc.id
+                doc.id to name
+            }.sortedBy { it.second }
         }
 
         /**

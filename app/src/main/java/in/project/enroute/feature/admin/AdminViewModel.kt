@@ -8,9 +8,8 @@ import androidx.lifecycle.viewModelScope
 import `in`.project.enroute.data.cache.FloorPlanCache
 import `in`.project.enroute.data.model.CampusMetadata
 import `in`.project.enroute.data.repository.FirebaseFloorPlanRepository
+import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import `in`.project.enroute.feature.campussearch.CampusItem
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,12 +44,10 @@ enum class AdminStep {
 data class AdminUiState(
     val step: AdminStep = AdminStep.SELECT_CAMPUS,
 
-    // Campus search
-    val searchQuery: String = "",
-    val searchResults: List<CampusItem> = emptyList(),
-    val hasSearched: Boolean = false,
-    val isSearching: Boolean = false,
-    val searchError: String? = null,
+    // Admin's campuses
+    val myCampuses: List<CampusItem> = emptyList(),
+    val isMyCampusesLoading: Boolean = false,
+    val myCampusesError: String? = null,
 
     // Campus data
     val selectedCampusId: String = "",
@@ -87,49 +84,31 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
 
     private var repository: FirebaseFloorPlanRepository? = null
     private val cache = FloorPlanCache(application.applicationContext)
-    private var searchJob: Job? = null
 
-    // ── Campus search ────────────────────────────────────────────
-
-    /**
-     * Called on every keystroke in the admin campus search.
-     * Debounces 250 ms and queries Firebase.
-     */
-    fun updateSearchQuery(query: String) {
-        _uiState.update { it.copy(searchQuery = query) }
-        searchJob?.cancel()
-
-        if (query.isBlank()) {
-            _uiState.update {
-                it.copy(searchResults = emptyList(), hasSearched = false, searchError = null, isSearching = false)
-            }
-            return
-        }
-
-        searchJob = viewModelScope.launch {
-            delay(250)
-            _uiState.update { it.copy(isSearching = true, searchError = null) }
-            try {
-                val results = FirebaseFloorPlanRepository.searchCampuses(query)
-                val items = results.map { CampusItem(it.first, it.second) }
-                _uiState.update {
-                    it.copy(searchResults = items, isSearching = false, hasSearched = true)
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(isSearching = false, searchError = e.message, hasSearched = true)
-                }
-            }
-        }
+    init {
+        loadMyCampuses()
     }
 
-    fun retrySearch() {
-        val q = _uiState.value.searchQuery
-        if (q.isNotBlank()) {
-            _uiState.update { it.copy(searchQuery = "") }
-            updateSearchQuery(q)
+    // ── Admin's campuses ─────────────────────────────────────────
+
+    /**
+     * Loads all campuses created by the currently logged-in admin.
+     */
+    fun loadMyCampuses() {
+        val uid = AdminAuthRepository.currentUser?.uid ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isMyCampusesLoading = true, myCampusesError = null) }
+            try {
+                val results = FirebaseFloorPlanRepository.getCampusesByAdmin(uid)
+                val items = results.map { CampusItem(it.first, it.second) }
+                _uiState.update {
+                    it.copy(myCampuses = items, isMyCampusesLoading = false)
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isMyCampusesLoading = false, myCampusesError = e.message)
+                }
+            }
         }
     }
 
@@ -154,6 +133,14 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        val uid = AdminAuthRepository.currentUser?.uid
+        if (uid == null) {
+            _uiState.update {
+                it.copy(statusMessage = "Not logged in", isError = true)
+            }
+            return
+        }
+
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             try {
@@ -164,7 +151,7 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                     longitude = state.newCampusLongitude.toDoubleOrNull() ?: 0.0,
                     north = state.newCampusNorth.toFloatOrNull() ?: 0f
                 )
-                FirebaseFloorPlanRepository.createCampus(state.newCampusId, metadata)
+                FirebaseFloorPlanRepository.createCampus(state.newCampusId, metadata, uid)
 
                 repository = FirebaseFloorPlanRepository(state.newCampusId)
                 _uiState.update {
@@ -185,6 +172,7 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 loadBuildings()
+                loadMyCampuses()
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -247,12 +235,10 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 step = AdminStep.SELECT_CAMPUS,
-                statusMessage = null,
-                searchQuery = "",
-                searchResults = emptyList(),
-                hasSearched = false
+                statusMessage = null
             )
         }
+        loadMyCampuses()
     }
 
     fun uploadBuildingMetadata(context: Context) {
