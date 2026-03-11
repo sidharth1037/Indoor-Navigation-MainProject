@@ -25,9 +25,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Directions
 import androidx.compose.material.icons.rounded.Map
-import androidx.compose.material.icons.rounded.NorthEast
-import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Navigation
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -130,7 +130,7 @@ private fun RoomInfoPanelContent(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (isNavigationStarted) Modifier.heightIn(min = 64.dp) else Modifier.height(130.dp))
+            .then(if (isNavigationStarted) Modifier.heightIn(min = 64.dp) else Modifier.height(110.dp))
             .clip(shape)
             .background(MaterialTheme.colorScheme.primaryContainer)
             .clickable(
@@ -205,7 +205,7 @@ private fun RoomInfoPanelContent(
                         .height(40.dp)
                         .background(
                             color = MaterialTheme.colorScheme.primary,
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(50)
                         )
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
@@ -232,7 +232,7 @@ private fun RoomInfoPanelContent(
                         )
                     } else {
                         Icon(
-                            imageVector = if (hasPath) Icons.Rounded.PlayArrow else Icons.Rounded.NorthEast,
+                            imageVector = if (hasPath) Icons.Rounded.Navigation else Icons.Rounded.Directions,
                             contentDescription = if (hasPath) "Start" else "Directions",
                             tint = MaterialTheme.colorScheme.background,
                             modifier = Modifier.width(18.dp)
@@ -251,7 +251,7 @@ private fun RoomInfoPanelContent(
                             .height(40.dp)
                             .background(
                                 color = MaterialTheme.colorScheme.primary,
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(50)
                             )
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },

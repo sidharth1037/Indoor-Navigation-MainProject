@@ -75,7 +75,7 @@ fun EntranceConfirmationPanel(
         val isSingle = corridorPoints.size == 1
         val hasSelection = selectedIndex != null
         val actionButtonHeight = 40.dp
-        val actionButtonShape = RoundedCornerShape(12.dp)
+        val actionButtonShape = RoundedCornerShape(50)
 
         Box(
             modifier = Modifier

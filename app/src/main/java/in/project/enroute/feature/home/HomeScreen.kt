@@ -469,7 +469,7 @@ private fun HomeScreenContent(
     val panelVisible = activePinnedRoom != null
     val bottomButtonPadding by animateDpAsState(
         targetValue = if (panelVisible) {
-            if (navUiState.isNavigationStarted) 16.dp + 74.dp else 16.dp + 130.dp
+            if (navUiState.isNavigationStarted) 16.dp + 74.dp else 16.dp + 110.dp
         } else {
             16.dp
         },

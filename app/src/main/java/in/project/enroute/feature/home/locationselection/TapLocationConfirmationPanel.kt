@@ -67,7 +67,7 @@ fun TapLocationConfirmationPanel(
     ) {
         val shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
         val actionButtonHeight = 40.dp
-        val actionButtonShape = RoundedCornerShape(12.dp)
+        val actionButtonShape = RoundedCornerShape(50)
 
         Box(
             modifier = Modifier

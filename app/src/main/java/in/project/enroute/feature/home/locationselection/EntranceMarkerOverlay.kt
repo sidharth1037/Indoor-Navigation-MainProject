@@ -54,7 +54,8 @@ fun EntranceMarkerOverlay(
     modifier: Modifier = Modifier
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
-    val backgroundColor = MaterialTheme.colorScheme.background
+    val backgroundColor = MaterialTheme.colorScheme.primaryContainer
+    val textColor = MaterialTheme.colorScheme.onPrimaryContainer
 
     Canvas(
         modifier = modifier
@@ -83,7 +84,8 @@ fun EntranceMarkerOverlay(
                     canvasRotation = canvasState.rotation,
                     canvasScale = canvasState.scale,
                     primaryColor = primaryColor,
-                    backgroundColor = backgroundColor
+                    backgroundColor = backgroundColor,
+                    textColor = textColor
                 )
             }
         }
@@ -104,7 +106,8 @@ private fun DrawScope.drawMarker(
     canvasRotation: Float,
     canvasScale: Float,
     primaryColor: Color,
-    backgroundColor: Color
+    backgroundColor: Color,
+    textColor: Color
 ) {
     // When canvasScale drops below 0.4f, we stop increasing the inverse scale,
     // meaning the markers will start shrinking proportionally with the canvas.
@@ -131,7 +134,7 @@ private fun DrawScope.drawMarker(
 
     // Number text
     val paint = android.graphics.Paint().apply {
-        color = primaryColor.toArgb()
+        color = textColor.toArgb()
         textSize = EntranceMarkerConfig.NUMBER_TEXT_SIZE / effectiveScale
         textAlign = android.graphics.Paint.Align.CENTER
         isFakeBoldText = true
