@@ -58,6 +58,7 @@ import `in`.project.enroute.feature.pdr.ui.components.MotionLabel
 
 import `in`.project.enroute.feature.home.components.RoomInfoPanel
 import `in`.project.enroute.feature.home.components.StopTrackingButton
+import `in`.project.enroute.feature.home.components.StopTrackingConfirmDialog
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -396,6 +397,9 @@ private fun HomeScreenContent(
     // Show walking tutorial after origin is confirmed, delayed for centering animation
     var showWalkingTutorial by remember { mutableStateOf(false) }
     var pendingWalkingTutorial by remember { mutableStateOf(false) }
+
+    // Stop tracking confirmation dialog
+    var showStopTrackingConfirmDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(pendingWalkingTutorial) {
         if (pendingWalkingTutorial) {
@@ -892,7 +896,7 @@ private fun HomeScreenContent(
                 if (pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin) {
                     StopTrackingButton(
                         isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
-                        onClick = onClearPdrClick,
+                        onClick = { showStopTrackingConfirmDialog = true },
                         modifier = Modifier
                             .align(Alignment.BottomStart)
                             .padding(start = 8.dp, bottom = bottomButtonPadding)
@@ -1105,6 +1109,17 @@ private fun HomeScreenContent(
                             showOriginDialog = false
                             showLocationSearch = true
                         }
+                    )
+                }
+
+                // Stop tracking confirmation dialog
+                if (showStopTrackingConfirmDialog) {
+                    StopTrackingConfirmDialog(
+                        onConfirm = {
+                            showStopTrackingConfirmDialog = false
+                            onClearPdrClick()
+                        },
+                        onDismiss = { showStopTrackingConfirmDialog = false }
                     )
                 }
 
