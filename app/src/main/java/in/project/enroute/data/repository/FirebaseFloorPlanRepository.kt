@@ -58,7 +58,8 @@ class FirebaseFloorPlanRepository(
             location = doc.getString("location") ?: "",
             latitude = doc.getDouble("latitude") ?: 0.0,
             longitude = doc.getDouble("longitude") ?: 0.0,
-            north = doc.getDouble("north")?.toFloat() ?: 0f
+            north = doc.getDouble("north")?.toFloat() ?: 0f,
+            createdBy = doc.getString("createdBy") ?: ""
         )
     }
 
@@ -421,16 +422,92 @@ class FirebaseFloorPlanRepository(
     }
 
     /**
-     * Deletes a campus and all its sub-collections from Firestore.
+     * Deletes a single floor and all its floor_data sub-collection documents
+     * from Firestore.
+     */
+    suspend fun deleteFloor(buildingId: String, floorId: String) = withContext(Dispatchers.IO) {
+        val floorRef = firestore
+            .collection("campuses").document(campusId)
+            .collection("buildings").document(buildingId)
+            .collection("floors").document(floorId)
+
+        // Delete floor_data sub-collection documents
+        val floorDataDocs = floorRef.collection("floor_data").get().await()
+        for (doc in floorDataDocs.documents) {
+            doc.reference.delete().await()
+        }
+        // Delete the floor document itself
+        floorRef.delete().await()
+    }
+
+    /**
+     * Deletes a building, all its floors (with their floor_data), and the
+     * building document itself from Firestore.
+     */
+    suspend fun deleteBuilding(buildingId: String) = withContext(Dispatchers.IO) {
+        val buildingRef = firestore
+            .collection("campuses").document(campusId)
+            .collection("buildings").document(buildingId)
+
+        // Delete all floors under this building
+        val floorDocs = buildingRef.collection("floors").get().await()
+        for (floorDoc in floorDocs.documents) {
+            // Delete floor_data sub-collection
+            val floorDataDocs = floorDoc.reference.collection("floor_data").get().await()
+            for (dataDoc in floorDataDocs.documents) {
+                dataDoc.reference.delete().await()
+            }
+            floorDoc.reference.delete().await()
+        }
+        // Delete the building document itself
+        buildingRef.delete().await()
+    }
+
+    /**
+     * Deletes a campus document and recursively deletes all buildings,
+     * floors, and floor_data sub-collections underneath it.
      */
     suspend fun deleteCampus() = withContext(Dispatchers.IO) {
-        // Note: Firestore doesn't recursively delete sub-collections.
-        // For production, use Firebase Admin SDK or Cloud Functions.
-        // This deletes the campus document only.
+        val campusRef = firestore.collection("campuses").document(campusId)
+
+        // Delete all buildings (which recursively deletes floors + floor_data)
+        val buildingDocs = campusRef.collection("buildings").get().await()
+        for (buildingDoc in buildingDocs.documents) {
+            deleteBuilding(buildingDoc.id)
+        }
+        // Delete the campus document itself
+        campusRef.delete().await()
+        invalidateCampusCache()
+        clearAdminCampusCache()
+    }
+
+    /**
+     * Updates campus metadata fields in Firestore using merge so that
+     * only the provided fields are overwritten (preserves createdBy etc.).
+     */
+    suspend fun updateCampusMetadata(fields: Map<String, Any>) = withContext(Dispatchers.IO) {
         firestore
             .collection("campuses")
             .document(campusId)
-            .delete()
+            .set(fields, com.google.firebase.firestore.SetOptions.merge())
+            .await()
+        invalidateCampusCache()
+        clearAdminCampusCache()
+    }
+
+    /**
+     * Updates building metadata fields in Firestore using merge.
+     */
+    suspend fun updateBuildingMetadata(
+        buildingId: String,
+        fields: Map<String, Any?>
+    ) = withContext(Dispatchers.IO) {
+        firestore
+            .collection("campuses")
+            .document(campusId)
+            .collection("buildings")
+            .document(buildingId)
+            .set(fields, com.google.firebase.firestore.SetOptions.merge())
             .await()
     }
 
@@ -440,6 +517,12 @@ class FirebaseFloorPlanRepository(
          * first search and invalidated when a campus is created or deleted.
          */
         private var cachedCampuses: List<Pair<String, String>>? = null
+
+        /**
+         * In-memory cache of campuses created by a specific admin UID.
+         * Keyed by UID so switching admins works correctly.
+         */
+        private var adminCampusCache: Pair<String, List<Pair<String, String>>>? = null
 
         /**
          * Searches campuses whose name or ID contains [query] (case-insensitive).
@@ -477,19 +560,51 @@ class FirebaseFloorPlanRepository(
         }
 
         /**
-         * Creates a new campus document and returns its ID.
+         * Creates a new campus document with the admin's UID.
          */
         suspend fun createCampus(
             campusId: String,
             metadata: CampusMetadata,
+            adminUid: String,
             firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
         ) = withContext(Dispatchers.IO) {
+            val metadataWithOwner = metadata.copy(createdBy = adminUid)
             firestore
                 .collection("campuses")
                 .document(campusId)
-                .set(metadata)
+                .set(metadataWithOwner)
                 .await()
             invalidateCampusCache()
+        }
+
+        /**
+         * Returns all campuses created by the given admin UID.
+         * Results are cached in memory; subsequent calls return instantly.
+         */
+        suspend fun getCampusesByAdmin(
+            adminUid: String,
+            firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+        ): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+            adminCampusCache?.let { (uid, campuses) ->
+                if (uid == adminUid) return@withContext campuses
+            }
+
+            val snapshot = firestore.collection("campuses")
+                .whereEqualTo("createdBy", adminUid)
+                .get()
+                .await()
+            val result = snapshot.documents.map { doc ->
+                val name = doc.getString("name") ?: doc.id
+                doc.id to name
+            }.sortedBy { it.second }
+
+            adminCampusCache = adminUid to result
+            result
+        }
+
+        /** Clears the admin campus cache (call on logout). */
+        fun clearAdminCampusCache() {
+            adminCampusCache = null
         }
 
         /**
