@@ -55,6 +55,7 @@ fun FloorSlider(
     onFloorChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
     isVisible: Boolean = true,
+    disabled: Boolean = false,
     onHeightMeasured: (Int) -> Unit = {}
 ) {
     AnimatedVisibility(
@@ -68,6 +69,7 @@ fun FloorSlider(
             availableFloors = availableFloors,
             currentFloor = currentFloor,
             onFloorChange = onFloorChange,
+            disabled = disabled,
             onHeightMeasured = onHeightMeasured
         )
     }
@@ -79,6 +81,7 @@ private fun FloorSliderContent(
     availableFloors: List<Float>,
     currentFloor: Float,
     onFloorChange: (Float) -> Unit,
+    disabled: Boolean = false,
     onHeightMeasured: (Int) -> Unit = {}
 ) {
     var lastValidBuildingName by remember { mutableStateOf(buildingName) }
@@ -145,7 +148,8 @@ private fun FloorSliderContent(
             availableFloors = safeFloors,
             prevFloor = prevFloor,
             nextFloor = nextFloor,
-            onFloorChange = onFloorChange
+            onFloorChange = onFloorChange,
+            disabled = disabled
         )
     }
 }
@@ -156,7 +160,8 @@ private fun FloorControls(
     availableFloors: List<Float>,
     prevFloor: Float?,
     nextFloor: Float?,
-    onFloorChange: (Float) -> Unit
+    onFloorChange: (Float) -> Unit,
+    disabled: Boolean = false
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
     val disabledColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
@@ -170,7 +175,7 @@ private fun FloorControls(
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         FloorButton(
-            enabled = prevFloor != null,
+            enabled = prevFloor != null && !disabled,
             onClick = { prevFloor?.let { onFloorChange(it) } },
             isPrevious = true,
             primaryColor = primaryColor,
@@ -183,11 +188,12 @@ private fun FloorControls(
             floors = availableFloors,
             onFloorChange = onFloorChange,
             primaryColor = primaryColor,
+            disabled = disabled,
             modifier = Modifier
         )
 
         FloorButton(
-            enabled = nextFloor != null,
+            enabled = nextFloor != null && !disabled,
             onClick = { nextFloor?.let { onFloorChange(it) } },
             isPrevious = false,
             primaryColor = primaryColor,
@@ -234,7 +240,8 @@ private fun FloorDisplay(
     currentFloor: Float,
     onFloorChange: (Float) -> Unit,
     primaryColor: Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    disabled: Boolean = false
 ) {
     var expanded by remember { mutableStateOf(false) }
     
@@ -244,16 +251,20 @@ private fun FloorDisplay(
         "Floor $currentFloor"
     }
 
+    val pillColor = if (disabled) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f) else primaryColor
+
     Box(modifier = modifier) {
         Box(
             modifier = Modifier
                 .wrapContentWidth()
                 .height(30.dp)
-                .background(color = primaryColor, shape = RoundedCornerShape(percent = 50))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { expanded = true }
+                .background(color = pillColor, shape = RoundedCornerShape(percent = 50))
+                .then(
+                    if (!disabled) Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { expanded = true } else Modifier
+                )
                 .padding(horizontal = 12.dp),
             contentAlignment = Alignment.Center
         ) {

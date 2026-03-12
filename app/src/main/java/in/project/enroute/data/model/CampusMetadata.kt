@@ -38,5 +38,11 @@ data class CampusMetadata(
      * point at this angle (clockwise from screen-top).
      * As the user rotates the canvas, the compass rotates by the same amount.
      */
-    val north: Float = 0f
+    val north: Float = 0f,
+
+    /**
+     * Firebase UID of the admin who created this campus.
+     * Used to filter campuses in the admin panel.
+     */
+    val createdBy: String = ""
 )

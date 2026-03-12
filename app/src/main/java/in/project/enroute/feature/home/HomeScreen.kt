@@ -58,6 +58,7 @@ import `in`.project.enroute.feature.pdr.ui.components.MotionLabel
 
 import `in`.project.enroute.feature.home.components.RoomInfoPanel
 import `in`.project.enroute.feature.home.components.StopTrackingButton
+import `in`.project.enroute.feature.home.components.StopTrackingConfirmDialog
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -76,6 +77,7 @@ import `in`.project.enroute.feature.home.locationselection.EntranceMarkerOverlay
 import `in`.project.enroute.feature.home.locationselection.TapLocationConfirmationPanel
 import `in`.project.enroute.feature.home.locationselection.OriginPreviewOverlay
 import `in`.project.enroute.feature.home.locationselection.MapViewportUtils
+import `in`.project.enroute.feature.home.locationselection.WalkingTutorialDialog
 import android.widget.Toast
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -392,6 +394,21 @@ private fun HomeScreenContent(
     // Tap on map to set origin: pending origin before confirmation
     var pendingOriginLocation by remember { mutableStateOf<Offset?>(null) }
 
+    // Show walking tutorial after origin is confirmed, delayed for centering animation
+    var showWalkingTutorial by remember { mutableStateOf(false) }
+    var pendingWalkingTutorial by remember { mutableStateOf(false) }
+
+    // Stop tracking confirmation dialog
+    var showStopTrackingConfirmDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(pendingWalkingTutorial) {
+        if (pendingWalkingTutorial) {
+            kotlinx.coroutines.delay(900)  // wait for centering animation to finish
+            showWalkingTutorial = true
+            pendingWalkingTutorial = false
+        }
+    }
+
     // Overlay room: shown when user taps a label/searches while a path is active.
     // Stacks a second RoomInfoPanel + pin on top of the existing navigation panel.
     var overlayPinnedRoom by remember { mutableStateOf<Room?>(null) }
@@ -452,7 +469,7 @@ private fun HomeScreenContent(
     val panelVisible = activePinnedRoom != null
     val bottomButtonPadding by animateDpAsState(
         targetValue = if (panelVisible) {
-            if (navUiState.isNavigationStarted) 16.dp + 74.dp else 16.dp + 130.dp
+            if (navUiState.isNavigationStarted) 16.dp + 74.dp else 16.dp + 110.dp
         } else {
             16.dp
         },
@@ -732,6 +749,7 @@ private fun HomeScreenContent(
                                 onFloorChange(it) 
                             },
                             isVisible = true,
+                            disabled = locationCorridorPoints.isNotEmpty(),
                             onHeightMeasured = { px ->
                                 sliderHeightDp = with(density) { px.toDp() }
                             }
@@ -771,6 +789,7 @@ private fun HomeScreenContent(
                                     onFloorChange(it)
                                 },
                                 isVisible = true,
+                                disabled = locationCorridorPoints.isNotEmpty(),
                                 onHeightMeasured = { px ->
                                     sliderHeightDp = with(density) { px.toDp() }
                                 }
@@ -877,7 +896,7 @@ private fun HomeScreenContent(
                 if (pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin) {
                     StopTrackingButton(
                         isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
-                        onClick = onClearPdrClick,
+                        onClick = { showStopTrackingConfirmDialog = true },
                         modifier = Modifier
                             .align(Alignment.BottomStart)
                             .padding(start = 8.dp, bottom = bottomButtonPadding)
@@ -1092,6 +1111,24 @@ private fun HomeScreenContent(
                         }
                     )
                 }
+
+                // Stop tracking confirmation dialog
+                if (showStopTrackingConfirmDialog) {
+                    StopTrackingConfirmDialog(
+                        onConfirm = {
+                            showStopTrackingConfirmDialog = false
+                            onClearPdrClick()
+                        },
+                        onDismiss = { showStopTrackingConfirmDialog = false }
+                    )
+                }
+
+                // Walking tutorial dialog — shown after origin is confirmed
+                if (showWalkingTutorial) {
+                    WalkingTutorialDialog(
+                        onDismiss = { showWalkingTutorial = false }
+                    )
+                }
                 
                 // Height required dialog
                 if (pdrUiState.showHeightRequired) {
@@ -1113,6 +1150,7 @@ private fun HomeScreenContent(
                                 val constraintData = vm.getFloorConstraintData(origin)
                                 pdrViewModel?.setOrigin(origin, currentFloor, constraintData)
                                 pendingOriginLocation = null
+                                pendingWalkingTutorial = true
                             }
                         }
                     },
@@ -1155,6 +1193,7 @@ private fun HomeScreenContent(
                             onOriginSelected(point.campusPosition)
                             locationCorridorPoints = emptyList()
                             selectedEntranceIndex = null
+                            pendingWalkingTutorial = true
                         },
                         onDismiss = {
                             locationCorridorPoints = emptyList()

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import `in`.project.enroute.data.cache.FloorPlanCache
+import `in`.project.enroute.data.repository.FirebaseFloorPlanRepository
 import `in`.project.enroute.feature.settings.data.SettingsRepository
 import `in`.project.enroute.feature.pdr.data.model.StrideConfig
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -154,6 +155,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
      * fetches fresh data from Firebase.
      */
     fun clearBackendCache() {
+        FirebaseFloorPlanRepository.clearAdminCampusCache()
         viewModelScope.launch {
             cache.clearAllCache()
         }
