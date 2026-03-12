@@ -5,15 +5,12 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import `in`.project.enroute.data.cache.CachedCampusData
 import `in`.project.enroute.data.cache.FloorPlanCache
 import `in`.project.enroute.data.model.CampusMetadata
-import `in`.project.enroute.data.model.FloorPlanMetadata
-import `in`.project.enroute.data.model.LabelPosition
-import `in`.project.enroute.data.model.RelativePosition
 import `in`.project.enroute.data.repository.FirebaseFloorPlanRepository
-import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import `in`.project.enroute.feature.campussearch.CampusItem
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,19 +38,19 @@ enum class AdminStep {
     SELECT_CAMPUS,       // Choose existing campus or create new one
     CAMPUS_HOME,         // Campus selected → show buildings + options
     ADD_BUILDING,        // Upload building metadata
-    ADD_FLOOR,           // Select building + floor + upload floor files
-    EDIT_CAMPUS,         // Edit campus metadata fields
-    EDIT_BUILDING        // Edit building metadata fields
+    ADD_FLOOR            // Select building + floor + upload floor files
 }
 
 // ── UI State ─────────────────────────────────────────────────────
 data class AdminUiState(
     val step: AdminStep = AdminStep.SELECT_CAMPUS,
 
-    // Admin's campuses
-    val myCampuses: List<CampusItem> = emptyList(),
-    val isMyCampusesLoading: Boolean = false,
-    val myCampusesError: String? = null,
+    // Campus search
+    val searchQuery: String = "",
+    val searchResults: List<CampusItem> = emptyList(),
+    val hasSearched: Boolean = false,
+    val isSearching: Boolean = false,
+    val searchError: String? = null,
 
     // Campus data
     val selectedCampusId: String = "",
@@ -80,25 +77,7 @@ data class AdminUiState(
     // Status
     val isLoading: Boolean = false,
     val statusMessage: String? = null,
-    val isError: Boolean = false,
-    val loadedFromCache: Boolean = false,
-
-    // Edit campus metadata
-    val editCampusName: String = "",
-    val editCampusLocation: String = "",
-    val editCampusLatitude: String = "",
-    val editCampusLongitude: String = "",
-    val editCampusNorth: String = "",
-
-    // Edit building metadata
-    val editBuildingId: String = "",
-    val editBuildingName: String = "",
-    val editBuildingScale: String = "",
-    val editBuildingRotation: String = "",
-    val editBuildingLabelX: String = "",
-    val editBuildingLabelY: String = "",
-    val editBuildingRelX: String = "",
-    val editBuildingRelY: String = ""
+    val isError: Boolean = false
 )
 
 class AdminViewModel(application: Application) : AndroidViewModel(application) {
@@ -108,56 +87,59 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
 
     private var repository: FirebaseFloorPlanRepository? = null
     private val cache = FloorPlanCache(application.applicationContext)
+    private var searchJob: Job? = null
 
-    /** In-memory reference to the cached campus data for the selected campus. */
-    private var cachedCampusData: CachedCampusData? = null
+    // ── Campus search ────────────────────────────────────────────
 
-    init {
-        // React to login/logout: reset on logout, reload on login
-        viewModelScope.launch {
-            AdminAuthRepository.isLoggedIn.collect { loggedIn ->
-                if (loggedIn) {
-                    loadMyCampuses()
-                } else {
-                    _uiState.value = AdminUiState()
-                    repository = null
+    /**
+     * Called on every keystroke in the admin campus search.
+     * Debounces 250 ms and queries Firebase.
+     */
+    fun updateSearchQuery(query: String) {
+        _uiState.update { it.copy(searchQuery = query) }
+        searchJob?.cancel()
+
+        if (query.isBlank()) {
+            _uiState.update {
+                it.copy(searchResults = emptyList(), hasSearched = false, searchError = null, isSearching = false)
+            }
+            return
+        }
+
+        searchJob = viewModelScope.launch {
+            delay(250)
+            _uiState.update { it.copy(isSearching = true, searchError = null) }
+            try {
+                val results = FirebaseFloorPlanRepository.searchCampuses(query)
+                val items = results.map { CampusItem(it.first, it.second) }
+                _uiState.update {
+                    it.copy(searchResults = items, isSearching = false, hasSearched = true)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isSearching = false, searchError = e.message, hasSearched = true)
                 }
             }
         }
     }
 
-    // ── Admin's campuses ─────────────────────────────────────────
-
-    /**
-     * Loads all campuses created by the currently logged-in admin.
-     */
-    fun loadMyCampuses() {
-        val uid = AdminAuthRepository.currentUser?.uid ?: return
-        viewModelScope.launch {
-            _uiState.update { it.copy(isMyCampusesLoading = true, myCampusesError = null) }
-            try {
-                val results = FirebaseFloorPlanRepository.getCampusesByAdmin(uid)
-                val items = results.map { CampusItem(it.first, it.second) }
-                _uiState.update {
-                    it.copy(myCampuses = items, isMyCampusesLoading = false)
-                }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(isMyCampusesLoading = false, myCampusesError = e.message)
-                }
-            }
+    fun retrySearch() {
+        val q = _uiState.value.searchQuery
+        if (q.isNotBlank()) {
+            _uiState.update { it.copy(searchQuery = "") }
+            updateSearchQuery(q)
         }
     }
 
     fun selectCampus(campusId: String, campusName: String) {
         repository = FirebaseFloorPlanRepository(campusId)
-        cachedCampusData = null
         _uiState.update {
             it.copy(
                 selectedCampusId = campusId,
                 selectedCampusName = campusName,
-                step = AdminStep.CAMPUS_HOME,
-                loadedFromCache = false
+                step = AdminStep.CAMPUS_HOME
             )
         }
         loadBuildings()
@@ -172,14 +154,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val uid = AdminAuthRepository.currentUser?.uid
-        if (uid == null) {
-            _uiState.update {
-                it.copy(statusMessage = "Not logged in", isError = true)
-            }
-            return
-        }
-
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             try {
@@ -190,7 +164,7 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                     longitude = state.newCampusLongitude.toDoubleOrNull() ?: 0.0,
                     north = state.newCampusNorth.toFloatOrNull() ?: 0f
                 )
-                FirebaseFloorPlanRepository.createCampus(state.newCampusId, metadata, uid)
+                FirebaseFloorPlanRepository.createCampus(state.newCampusId, metadata)
 
                 repository = FirebaseFloorPlanRepository(state.newCampusId)
                 _uiState.update {
@@ -211,7 +185,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 loadBuildings()
-                loadMyCampuses()
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -226,35 +199,12 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Building management ──────────────────────────────────────
 
-    /**
-     * Loads the building list for the selected campus.
-     * Checks the disk cache first; falls back to Firebase on a cache miss.
-     */
     private fun loadBuildings() {
-        val campusId = _uiState.value.selectedCampusId
-        if (campusId.isBlank()) return
-
+        val repo = repository ?: return
         viewModelScope.launch {
             try {
-                // ── 1. Try disk cache ──
-                val cached = cache.loadCampusData(campusId)
-                if (cached != null) {
-                    cachedCampusData = cached
-                    val buildingIds = cached.buildings
-                        .map { it.building.buildingId }
-                        .sortedBy { it.removePrefix("building_").toIntOrNull() ?: 0 }
-                    _uiState.update {
-                        it.copy(availableBuildings = buildingIds, loadedFromCache = true)
-                    }
-                    return@launch
-                }
-
-                // ── 2. Fall back to Firebase ──
-                val repo = repository ?: return@launch
                 val buildings = repo.getAvailableBuildings()
-                _uiState.update {
-                    it.copy(availableBuildings = buildings, loadedFromCache = false)
-                }
+                _uiState.update { it.copy(availableBuildings = buildings) }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -297,10 +247,12 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 step = AdminStep.SELECT_CAMPUS,
-                statusMessage = null
+                statusMessage = null,
+                searchQuery = "",
+                searchResults = emptyList(),
+                hasSearched = false
             )
         }
-        loadMyCampuses()
     }
 
     fun uploadBuildingMetadata(context: Context) {
@@ -339,8 +291,8 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                             buildingMetadataFileName = ""
                         )
                     }
-                    invalidateCacheForSelectedCampus()
                     loadBuildings()
+                    invalidateCacheForSelectedCampus()
                 } else {
                     _uiState.update {
                         it.copy(
@@ -369,27 +321,10 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         loadFloorsForBuilding(buildingId)
     }
 
-    /**
-     * Loads the floor list for [buildingId].
-     * Checks the in-memory cached campus data first; falls back to Firebase.
-     */
     private fun loadFloorsForBuilding(buildingId: String) {
+        val repo = repository ?: return
         viewModelScope.launch {
             try {
-                // ── 1. Try cached campus data ──
-                val cached = cachedCampusData
-                if (cached != null) {
-                    val cachedBuilding = cached.buildings
-                        .find { it.building.buildingId == buildingId }
-                    if (cachedBuilding != null) {
-                        val floors = cachedBuilding.building.availableFloors
-                        _uiState.update { it.copy(availableFloors = floors) }
-                        return@launch
-                    }
-                }
-
-                // ── 2. Fall back to Firebase ──
-                val repo = repository ?: return@launch
                 val floors = repo.getAvailableFloors(buildingId)
                 _uiState.update { it.copy(availableFloors = floors) }
             } catch (e: Exception) {
@@ -478,9 +413,9 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                         floorId = ""
                     )
                 }
-                // Refresh floor list after invalidating cache
-                invalidateCacheForSelectedCampus()
+                // Refresh floor list
                 loadFloorsForBuilding(state.selectedBuildingForFloor)
+                invalidateCacheForSelectedCampus()
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -540,334 +475,14 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
     // ── Helpers ──────────────────────────────────────────────────
 
     /**
-     * Clears both the in-memory and disk cache for the currently selected
-     * campus so that the next load fetches fresh data from Firebase.
+     * Clears the disk cache for the currently selected campus so that
+     * the next time the home screen loads, it fetches fresh data.
      */
     private fun invalidateCacheForSelectedCampus() {
         val campusId = _uiState.value.selectedCampusId
         if (campusId.isNotBlank()) {
-            cachedCampusData = null
             viewModelScope.launch {
                 cache.clearCache(campusId)
-            }
-            _uiState.update { it.copy(loadedFromCache = false) }
-        }
-    }
-
-    /**
-     * Public action: clears the campus cache and reloads buildings
-     * from Firebase so the admin can see the latest backend state.
-     */
-    fun clearCampusCache() {
-        invalidateCacheForSelectedCampus()
-        _uiState.update {
-            it.copy(
-                statusMessage = "Cache cleared for ${it.selectedCampusName}",
-                isError = false
-            )
-        }
-        loadBuildings()
-    }
-
-    /**
-     * Forces a fresh load of building data from Firebase,
-     * bypassing and clearing the disk cache.
-     */
-    fun refreshFromDatabase() {
-        invalidateCacheForSelectedCampus()
-        _uiState.update {
-            it.copy(
-                statusMessage = "Refreshing from database…",
-                isError = false
-            )
-        }
-        loadBuildings()
-    }
-
-    // ── Delete operations ────────────────────────────────────────
-
-    /**
-     * Deletes a single floor from Firebase and refreshes floor list.
-     */
-    fun deleteFloor(buildingId: String, floorId: String) {
-        val repo = repository ?: return
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
-            try {
-                repo.deleteFloor(buildingId, floorId)
-                invalidateCacheForSelectedCampus()
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        statusMessage = "Floor '$floorId' deleted from '$buildingId'",
-                        isError = false
-                    )
-                }
-                loadBuildings()
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        statusMessage = "Failed to delete floor: ${e.message}",
-                        isError = true
-                    )
-                }
-            }
-        }
-    }
-
-    /**
-     * Deletes a building and all its floors from Firebase.
-     */
-    fun deleteBuilding(buildingId: String) {
-        val repo = repository ?: return
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
-            try {
-                repo.deleteBuilding(buildingId)
-                invalidateCacheForSelectedCampus()
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        statusMessage = "Building '$buildingId' deleted",
-                        isError = false
-                    )
-                }
-                loadBuildings()
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        statusMessage = "Failed to delete building: ${e.message}",
-                        isError = true
-                    )
-                }
-            }
-        }
-    }
-
-    /**
-     * Deletes the entire campus and returns to SELECT_CAMPUS step.
-     */
-    fun deleteCampus() {
-        val repo = repository ?: return
-        val campusId = _uiState.value.selectedCampusId
-        val campusName = _uiState.value.selectedCampusName
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
-            try {
-                repo.deleteCampus()
-                cache.clearCache(campusId)
-                cachedCampusData = null
-                repository = null
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        step = AdminStep.SELECT_CAMPUS,
-                        selectedCampusId = "",
-                        selectedCampusName = "",
-                        availableBuildings = emptyList(),
-                        statusMessage = "Campus '$campusName' deleted",
-                        isError = false,
-                        loadedFromCache = false
-                    )
-                }
-                loadMyCampuses()
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        statusMessage = "Failed to delete campus: ${e.message}",
-                        isError = true
-                    )
-                }
-            }
-        }
-    }
-
-    /**
-     * Loads floors for a given building (used by delete-floor dialog).
-     */
-    fun loadFloorsForBuildingPublic(buildingId: String) {
-        loadFloorsForBuilding(buildingId)
-    }
-
-    // ── Edit campus metadata ─────────────────────────────────────
-
-    /**
-     * Opens the edit-campus screen, pre-populating fields from Firebase.
-     */
-    fun navigateToEditCampus() {
-        val repo = repository ?: return
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
-            try {
-                val meta = repo.loadCampusMetadata()
-                _uiState.update {
-                    it.copy(
-                        step = AdminStep.EDIT_CAMPUS,
-                        isLoading = false,
-                        statusMessage = null,
-                        editCampusName = meta.name,
-                        editCampusLocation = meta.location,
-                        editCampusLatitude = if (meta.latitude != 0.0) meta.latitude.toString() else "",
-                        editCampusLongitude = if (meta.longitude != 0.0) meta.longitude.toString() else "",
-                        editCampusNorth = if (meta.north != 0f) meta.north.toString() else ""
-                    )
-                }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        statusMessage = "Failed to load campus metadata: ${e.message}",
-                        isError = true
-                    )
-                }
-            }
-        }
-    }
-
-    fun updateEditCampusName(value: String) { _uiState.update { it.copy(editCampusName = value) } }
-    fun updateEditCampusLocation(value: String) { _uiState.update { it.copy(editCampusLocation = value) } }
-    fun updateEditCampusLatitude(value: String) { _uiState.update { it.copy(editCampusLatitude = value) } }
-    fun updateEditCampusLongitude(value: String) { _uiState.update { it.copy(editCampusLongitude = value) } }
-    fun updateEditCampusNorth(value: String) { _uiState.update { it.copy(editCampusNorth = value) } }
-
-    fun saveEditCampus() {
-        val repo = repository ?: return
-        val state = _uiState.value
-        if (state.editCampusName.isBlank()) {
-            _uiState.update { it.copy(statusMessage = "Campus name is required", isError = true) }
-            return
-        }
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
-            try {
-                val fields = mutableMapOf<String, Any>(
-                    "name" to state.editCampusName,
-                    "location" to state.editCampusLocation,
-                    "latitude" to (state.editCampusLatitude.toDoubleOrNull() ?: 0.0),
-                    "longitude" to (state.editCampusLongitude.toDoubleOrNull() ?: 0.0),
-                    "north" to (state.editCampusNorth.toFloatOrNull() ?: 0f)
-                )
-                repo.updateCampusMetadata(fields)
-                invalidateCacheForSelectedCampus()
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        selectedCampusName = state.editCampusName,
-                        step = AdminStep.CAMPUS_HOME,
-                        statusMessage = "Campus metadata updated",
-                        isError = false
-                    )
-                }
-                loadMyCampuses()
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        statusMessage = "Failed to update: ${e.message}",
-                        isError = true
-                    )
-                }
-            }
-        }
-    }
-
-    // ── Edit building metadata ───────────────────────────────────
-
-    /**
-     * Opens the edit-building screen, pre-populating fields from Firebase.
-     */
-    fun navigateToEditBuilding(buildingId: String) {
-        val repo = repository ?: return
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
-            try {
-                val meta = repo.loadBuildingMetadata(buildingId)
-                _uiState.update {
-                    it.copy(
-                        step = AdminStep.EDIT_BUILDING,
-                        isLoading = false,
-                        statusMessage = null,
-                        editBuildingId = buildingId,
-                        editBuildingName = meta.buildingName,
-                        editBuildingScale = meta.scale.toString(),
-                        editBuildingRotation = meta.rotation.toString(),
-                        editBuildingLabelX = meta.labelPosition?.x?.toString() ?: "",
-                        editBuildingLabelY = meta.labelPosition?.y?.toString() ?: "",
-                        editBuildingRelX = meta.relativePosition.x.toString(),
-                        editBuildingRelY = meta.relativePosition.y.toString()
-                    )
-                }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        statusMessage = "Failed to load building metadata: ${e.message}",
-                        isError = true
-                    )
-                }
-            }
-        }
-    }
-
-    fun updateEditBuildingName(value: String) { _uiState.update { it.copy(editBuildingName = value) } }
-    fun updateEditBuildingScale(value: String) { _uiState.update { it.copy(editBuildingScale = value) } }
-    fun updateEditBuildingRotation(value: String) { _uiState.update { it.copy(editBuildingRotation = value) } }
-    fun updateEditBuildingLabelX(value: String) { _uiState.update { it.copy(editBuildingLabelX = value) } }
-    fun updateEditBuildingLabelY(value: String) { _uiState.update { it.copy(editBuildingLabelY = value) } }
-    fun updateEditBuildingRelX(value: String) { _uiState.update { it.copy(editBuildingRelX = value) } }
-    fun updateEditBuildingRelY(value: String) { _uiState.update { it.copy(editBuildingRelY = value) } }
-
-    fun saveEditBuilding() {
-        val repo = repository ?: return
-        val state = _uiState.value
-        if (state.editBuildingId.isBlank() || state.editBuildingName.isBlank()) {
-            _uiState.update { it.copy(statusMessage = "Building name is required", isError = true) }
-            return
-        }
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
-            try {
-                val fields = mutableMapOf<String, Any?>(
-                    "buildingId" to state.editBuildingId,
-                    "buildingName" to state.editBuildingName,
-                    "scale" to (state.editBuildingScale.toFloatOrNull() ?: 1f),
-                    "rotation" to (state.editBuildingRotation.toFloatOrNull() ?: 0f),
-                    "relativePosition" to mapOf(
-                        "x" to (state.editBuildingRelX.toFloatOrNull() ?: 0f),
-                        "y" to (state.editBuildingRelY.toFloatOrNull() ?: 0f)
-                    )
-                )
-                // Only include labelPosition if at least one coordinate is set
-                val lx = state.editBuildingLabelX.toFloatOrNull()
-                val ly = state.editBuildingLabelY.toFloatOrNull()
-                if (lx != null || ly != null) {
-                    fields["labelPosition"] = mapOf(
-                        "x" to (lx ?: 0f),
-                        "y" to (ly ?: 0f)
-                    )
-                }
-                repo.updateBuildingMetadata(state.editBuildingId, fields)
-                invalidateCacheForSelectedCampus()
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        step = AdminStep.CAMPUS_HOME,
-                        statusMessage = "Building '${state.editBuildingName}' updated",
-                        isError = false
-                    )
-                }
-                loadBuildings()
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        statusMessage = "Failed to update: ${e.message}",
-                        isError = true
-                    )
-                }
             }
         }
     }

@@ -2,7 +2,6 @@ package `in`.project.enroute.feature.admin.auth
 
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
-import `in`.project.enroute.data.repository.FirebaseFloorPlanRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,9 +59,8 @@ object AdminAuthRepository {
         }
     }
 
-    /** Sign out the current user and clear cached admin data. */
+    /** Sign out the current user. */
     fun logout() {
-        FirebaseFloorPlanRepository.clearAdminCampusCache()
         auth.signOut()
     }
 }
