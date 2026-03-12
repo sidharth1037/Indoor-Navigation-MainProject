@@ -477,23 +477,6 @@ class FirebaseFloorPlanRepository(
         }
 
         /**
-         * Fetches all campuses with their GPS coordinates from Firestore.
-         * Skips campuses without valid coordinates.
-         */
-        suspend fun getAllCampusesWithLocation(
-            firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
-        ): List<CampusLocationInfo> = withContext(Dispatchers.IO) {
-            val snapshot = firestore.collection("campuses").get().await()
-            snapshot.documents.mapNotNull { doc ->
-                val name = doc.getString("name") ?: doc.id
-                val lat = doc.getDouble("latitude") ?: return@mapNotNull null
-                val lng = doc.getDouble("longitude") ?: return@mapNotNull null
-                if (lat == 0.0 && lng == 0.0) return@mapNotNull null
-                CampusLocationInfo(id = doc.id, name = name, latitude = lat, longitude = lng)
-            }
-        }
-
-        /**
          * Creates a new campus document and returns its ID.
          */
         suspend fun createCampus(
