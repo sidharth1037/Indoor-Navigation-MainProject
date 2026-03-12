@@ -70,6 +70,7 @@ dependencies {
     implementation(libs.androidx.compose.animation)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
+    implementation(libs.play.services.location)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
