@@ -40,8 +40,17 @@ fun NavigationGraph(
         composable(Screen.Welcome.route) {
             WelcomeScreen(
                 onCampusSelected = { campusId ->
-                    // Push Home on top of Welcome so back gesture returns here
                     navController.navigate(Screen.Home.createRoute(campusId)) {
+                        launchSingleTop = true
+                    }
+                },
+                onSettingsClick = {
+                    navController.navigate(Screen.Settings.route) {
+                        launchSingleTop = true
+                    }
+                },
+                onAdminClick = {
+                    navController.navigate(Screen.Admin.route) {
                         launchSingleTop = true
                     }
                 }
@@ -52,7 +61,6 @@ fun NavigationGraph(
             arguments = listOf(navArgument("campusId") { type = NavType.StringType })
         ) { backStackEntry ->
             val campusId = backStackEntry.arguments?.getString("campusId") ?: ""
-            // Scope ViewModels to this navigation destination's backstack entry
             val floorPlanViewModel: FloorPlanViewModel = viewModel(backStackEntry)
             val pdrViewModel: PdrViewModel = viewModel(backStackEntry)
             val navigationViewModel: NavigationViewModel = viewModel(backStackEntry)
@@ -60,7 +68,17 @@ fun NavigationGraph(
                 campusId = campusId,
                 floorPlanViewModel = floorPlanViewModel,
                 pdrViewModel = pdrViewModel,
-                navigationViewModel = navigationViewModel
+                navigationViewModel = navigationViewModel,
+                onSettingsClick = {
+                    navController.navigate(Screen.Settings.route) {
+                        launchSingleTop = true
+                    }
+                },
+                onAdminClick = {
+                    navController.navigate(Screen.Admin.route) {
+                        launchSingleTop = true
+                    }
+                }
             )
         }
         composable(Screen.Settings.route) {

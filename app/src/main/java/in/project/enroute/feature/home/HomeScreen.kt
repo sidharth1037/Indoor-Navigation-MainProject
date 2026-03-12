@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -59,6 +60,8 @@ import `in`.project.enroute.feature.pdr.ui.components.MotionLabel
 import `in`.project.enroute.feature.home.components.RoomInfoPanel
 import `in`.project.enroute.feature.home.components.StopTrackingButton
 import `in`.project.enroute.feature.home.components.StopTrackingConfirmDialog
+import `in`.project.enroute.feature.home.components.OverlayNavButtons
+import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -90,7 +93,9 @@ fun HomeScreen(
     floorPlanViewModel: FloorPlanViewModel = viewModel(),
     pdrViewModel: PdrViewModel = viewModel(),
     navigationViewModel: NavigationViewModel = viewModel(),
-    settingsViewModel: SettingsViewModel = viewModel()
+    settingsViewModel: SettingsViewModel = viewModel(),
+    onSettingsClick: () -> Unit = {},
+    onAdminClick: () -> Unit = {}
 ) {
     val uiState by floorPlanViewModel.uiState.collectAsState()
     val pdrUiState by pdrViewModel.uiState.collectAsState()
@@ -334,7 +339,9 @@ fun HomeScreen(
             onDismissOriginError = { originErrorType = null },
             onOriginError = { errorType -> originErrorType = errorType },
             floorPlanViewModel = floorPlanViewModel,
-            pdrViewModel = pdrViewModel
+            pdrViewModel = pdrViewModel,
+            onSettingsClick = onSettingsClick,
+            onAdminClick = onAdminClick
         )
     }
 }
@@ -372,7 +379,9 @@ private fun HomeScreenContent(
     onDismissOriginError: () -> Unit = {},
     onOriginError: (FloorPlanViewModel.OriginErrorType) -> Unit = {},
     floorPlanViewModel: FloorPlanViewModel? = null,
-    pdrViewModel: PdrViewModel? = null
+    pdrViewModel: PdrViewModel? = null,
+    onSettingsClick: () -> Unit = {},
+    onAdminClick: () -> Unit = {}
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var isMorphingToSearch by remember { mutableStateOf(false) }
@@ -888,6 +897,7 @@ private fun HomeScreenContent(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
+                        .navigationBarsPadding()
                         .padding(bottom = bottomButtonPadding, end = 8.dp)
                 )
                 
@@ -899,7 +909,28 @@ private fun HomeScreenContent(
                         onClick = { showStopTrackingConfirmDialog = true },
                         modifier = Modifier
                             .align(Alignment.BottomStart)
+                            .navigationBarsPadding()
                             .padding(start = 8.dp, bottom = bottomButtonPadding)
+                    )
+                }
+
+                // Settings & Admin overlay buttons — bottom left, above StopTrackingButton
+                val isAdminLoggedIn by AdminAuthRepository.isLoggedIn.collectAsState()
+                val stopTrackingVisible = pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin
+                val navButtonsBottomPadding by animateDpAsState(
+                    targetValue = bottomButtonPadding + if (stopTrackingVisible) 59.dp else 0.dp,
+                    animationSpec = dpTween(durationMillis = 350),
+                    label = "navButtonsBottomPadding"
+                )
+                if (!pdrUiState.isSelectingOrigin) {
+                    OverlayNavButtons(
+                        isAdminVisible = isAdminLoggedIn,
+                        onSettingsClick = onSettingsClick,
+                        onAdminClick = onAdminClick,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .navigationBarsPadding()
+                            .padding(start = 8.dp, bottom = navButtonsBottomPadding)
                     )
                 }
 

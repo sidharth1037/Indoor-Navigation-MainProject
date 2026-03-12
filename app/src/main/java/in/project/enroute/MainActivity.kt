@@ -4,35 +4,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AdminPanelSettings
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.navigation.NavDestination.Companion.hierarchy
-import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import `in`.project.enroute.core.navigation.NavigationGraph
-import `in`.project.enroute.core.navigation.Screen
-import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import `in`.project.enroute.ui.theme.EnrouteTheme
 
 class MainActivity : ComponentActivity() {
@@ -50,76 +28,12 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen() {
     val navController = rememberNavController()
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentDestination = navBackStackEntry?.destination
-    val currentRoute = currentDestination?.route
-
-    // Observe admin auth state reactively
-    val isAdminLoggedIn by AdminAuthRepository.isLoggedIn.collectAsState()
-
-    // Home tab is selected when on Welcome OR Home (they're the same tab conceptually)
-    val isHomeTabSelected = currentRoute == Screen.Welcome.route ||
-            currentRoute?.startsWith("home/") == true
-
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        bottomBar = {
-            Box(modifier = Modifier.navigationBarsPadding()) {
-                NavigationBar(
-                    modifier = Modifier.height(64.dp),
-                    windowInsets = WindowInsets(0, 0, 0, 0)
-                ) {
-                    NavigationBarItem(
-                        icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                        label = { Text("Home", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
-                        selected = isHomeTabSelected,
-                        onClick = {
-                            navController.navigate(Screen.Welcome.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        }
-                    )
-                    NavigationBarItem(
-                        icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                        label = { Text("Settings", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
-                        selected = currentDestination?.hierarchy?.any { it.route == Screen.Settings.route } == true,
-                        onClick = {
-                            navController.navigate(Screen.Settings.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        }
-                    )
-                    if (isAdminLoggedIn) {
-                        NavigationBarItem(
-                            icon = { Icon(Icons.Default.AdminPanelSettings, contentDescription = "Admin") },
-                            label = { Text("Admin", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
-                            selected = currentDestination?.hierarchy?.any { it.route == Screen.Admin.route } == true,
-                            onClick = {
-                                navController.navigate(Screen.Admin.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-        }
-    ) { innerPadding ->
+    Surface(modifier = Modifier.fillMaxSize()) {
         NavigationGraph(
             navController = navController,
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
         )
     }
 }

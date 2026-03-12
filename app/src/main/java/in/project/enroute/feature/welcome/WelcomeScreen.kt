@@ -19,13 +19,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LocationOff
 import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Refresh
@@ -63,6 +63,8 @@ import `in`.project.enroute.feature.campussearch.CampusItem
 import `in`.project.enroute.feature.campussearch.CampusSearchButton
 import `in`.project.enroute.feature.campussearch.CampusSearchOverlay
 import `in`.project.enroute.feature.campussearch.MORPH_DURATION_MS
+import `in`.project.enroute.feature.home.components.OverlayNavButtons
+import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -229,11 +231,11 @@ class WelcomeViewModel(application: Application) : AndroidViewModel(application)
 
 // ── Composables ──────────────────────────────────────────────────
 
-private val TITLE_TOP_SPACER = 120.dp
+private val TITLE_TOP_SPACER = 80.dp
 private val TITLE_HEIGHT = 48.dp
 private val SUBTITLE_SPACER = 8.dp
 private val SUBTITLE_HEIGHT = 20.dp
-private val BUTTON_SPACER = 48.dp
+private val BUTTON_SPACER = 32.dp
 
 /** Resting Y for the search button on the Welcome screen. */
 private val WELCOME_BUTTON_RESTING_Y =
@@ -245,7 +247,9 @@ private val WELCOME_BUTTON_RESTING_Y =
 @Composable
 fun WelcomeScreen(
     viewModel: WelcomeViewModel = viewModel(),
-    onCampusSelected: (campusId: String) -> Unit
+    onCampusSelected: (campusId: String) -> Unit,
+    onSettingsClick: () -> Unit = {},
+    onAdminClick: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showSearch by remember { mutableStateOf(false) }
@@ -291,8 +295,7 @@ fun WelcomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 24.dp)
-                .alpha(bgAlpha)
-                .verticalScroll(rememberScrollState()),
+                .alpha(bgAlpha),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(modifier = Modifier.height(TITLE_TOP_SPACER))
@@ -313,62 +316,86 @@ fun WelcomeScreen(
             )
 
             // Space for the search button (it's rendered as an overlay)
-            Spacer(modifier = Modifier.height(BUTTON_SPACER + 48.dp + 48.dp))
+            Spacer(modifier = Modifier.height(BUTTON_SPACER + 48.dp + 32.dp))
 
             // ── Recently viewed campuses ─────────────────────────
             if (uiState.recentCampuses.isNotEmpty()) {
-                Text(
-                    text = "Recently viewed",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 4.dp, bottom = 8.dp)
-                )
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    uiState.recentCampuses.forEachIndexed { index, campus ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        // ── Header row ───────────────────────────
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    viewModel.addRecent(campus.id, campus.name)
-                                    viewModel.updateQuery("")
-                                    onCampusSelected(campus.id)
-                                }
-                                .padding(horizontal = 4.dp, vertical = 8.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = campus.name,
+                                text = "Recently viewed",
                                 fontSize = 15.sp,
-                                color = MaterialTheme.colorScheme.onBackground,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.weight(1f)
                             )
-                            IconButton(
-                                onClick = { viewModel.removeRecent(campus.id) },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Remove",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
                         }
-                        if (index < uiState.recentCampuses.lastIndex) {
-                            HorizontalDivider(
-                                thickness = 0.5.dp,
-                                color = MaterialTheme.colorScheme.outlineVariant
-                            )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            uiState.recentCampuses.forEachIndexed { index, campus ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            viewModel.addRecent(campus.id, campus.name)
+                                            viewModel.updateQuery("")
+                                            onCampusSelected(campus.id)
+                                        }
+                                        .padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = campus.name,
+                                        fontSize = 15.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    IconButton(
+                                        onClick = { viewModel.removeRecent(campus.id) },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Remove",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                if (index < uiState.recentCampuses.lastIndex) {
+                                    HorizontalDivider(
+                                        thickness = 0.5.dp,
+                                        color = MaterialTheme.colorScheme.outlineVariant
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
 
             // ── Nearby buildings section ──────────────────────────
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -502,8 +529,21 @@ fun WelcomeScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            // Bottom spacing to avoid overlapping the nav buttons
+            Spacer(modifier = Modifier.height(80.dp))
         }
+
+        // ── Settings & Admin overlay buttons (bottom left) ───────
+        val isAdminLoggedIn by AdminAuthRepository.isLoggedIn.collectAsState()
+        OverlayNavButtons(
+            isAdminVisible = isAdminLoggedIn,
+            onSettingsClick = onSettingsClick,
+            onAdminClick = onAdminClick,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .navigationBarsPadding()
+                .padding(start = 8.dp, bottom = 16.dp)
+        )
 
         // ── Morphing search button ───────────────────────────────
         CampusSearchButton(
