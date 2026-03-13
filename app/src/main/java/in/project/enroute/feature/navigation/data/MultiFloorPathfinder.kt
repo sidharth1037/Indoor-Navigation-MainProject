@@ -54,7 +54,8 @@ class MultiFloorPathfinder {
         stairConnections: List<StairwellConnection>,
         wallsByFloor: Map<String, List<Wall>>,
         boundaryByFloor: Map<String, List<CampusBoundaryPolygon>>,
-        repoByFloor: MutableMap<String, NavigationRepository>
+        repoByFloor: MutableMap<String, NavigationRepository>,
+        precalculatedGrids: Map<String, PrecalculatedFloorGrid> = emptyMap()
     ): MultiFloorPath {
         val goalFloorId = goalEntrance.floorId
 
@@ -62,7 +63,7 @@ class MultiFloorPathfinder {
         if (startFloorId == goalFloorId) {
             val repo = getOrBuildRepo(
                 startFloorId, wallsByFloor, boundaryByFloor, repoByFloor,
-                allEntrances, stairConnections
+                allEntrances, stairConnections, precalculatedGrids
             ) ?: return MultiFloorPath.EMPTY
             val path = repo.findPath(start, goalEntrance.campusOffset)
             if (path.isEmpty()) return MultiFloorPath.EMPTY
@@ -125,7 +126,8 @@ class MultiFloorPathfinder {
                 allEntrances = allEntrances,
                 wallsByFloor = wallsByFloor,
                 boundaryByFloor = boundaryByFloor,
-                repoByFloor = repoByFloor
+                repoByFloor = repoByFloor,
+                precalculatedGrids = precalculatedGrids
             )
             if (candidate.isEmpty) continue
 
@@ -273,7 +275,8 @@ class MultiFloorPathfinder {
         allEntrances: List<CampusEntrance>,
         wallsByFloor: Map<String, List<Wall>>,
         boundaryByFloor: Map<String, List<CampusBoundaryPolygon>>,
-        repoByFloor: MutableMap<String, NavigationRepository>
+        repoByFloor: MutableMap<String, NavigationRepository>,
+        precalculatedGrids: Map<String, PrecalculatedFloorGrid>
     ): MultiFloorPath {
         val segments = mutableListOf<FloorPathSegment>()
         val visitedFloors = mutableSetOf<String>()
@@ -289,7 +292,7 @@ class MultiFloorPathfinder {
 
             val repo = getOrBuildRepo(
                 floorId, wallsByFloor, boundaryByFloor, repoByFloor,
-                allEntrances, stairConnections
+                allEntrances, stairConnections, precalculatedGrids
             ) ?: return MultiFloorPath.EMPTY
 
             if (isLastFloor) {
@@ -352,7 +355,8 @@ class MultiFloorPathfinder {
 
     /**
      * Gets or lazily builds a [NavigationRepository] for the given floor.
-     * The grid bounds include both entrance positions and stairwell midpoints.
+     * Checks precalculated grids first for instant construction, then falls
+     * back to the expensive distance-transform computation.
      */
     private fun getOrBuildRepo(
         floorId: String,
@@ -360,9 +364,26 @@ class MultiFloorPathfinder {
         boundaryByFloor: Map<String, List<CampusBoundaryPolygon>>,
         repoByFloor: MutableMap<String, NavigationRepository>,
         allEntrances: List<CampusEntrance>,
-        stairConnections: List<StairwellConnection>
+        stairConnections: List<StairwellConnection>,
+        precalculatedGrids: Map<String, PrecalculatedFloorGrid> = emptyMap()
     ): NavigationRepository? {
         return repoByFloor[floorId] ?: run {
+            // ── 1. Try precalculated data (instant) ──
+            val precalcGrid = precalculatedGrids[floorId]
+            if (precalcGrid != null) {
+                Log.d(TAG, "Using precalculated grid for floor $floorId " +
+                        "(${precalcGrid.maxGridX}x${precalcGrid.maxGridY})")
+                val distanceGrid = GridSerializer.decode(
+                    precalcGrid.gridData, precalcGrid.maxGridX, precalcGrid.maxGridY
+                )
+                return NavigationRepository.fromPrecalculated(
+                    precalcGrid.originX, precalcGrid.originY,
+                    precalcGrid.maxGridX, precalcGrid.maxGridY,
+                    precalcGrid.gridSize, distanceGrid
+                ).also { repoByFloor[floorId] = it }
+            }
+
+            // ── 2. Fall back to expensive computation ──
             val walls = wallsByFloor[floorId]
             if (walls.isNullOrEmpty()) {
                 Log.e(TAG, "No walls for floor $floorId — cannot pathfind")
@@ -390,7 +411,7 @@ class MultiFloorPathfinder {
             Log.d(TAG, "Building distance transform for floor $floorId " +
                     "(${walls.size} walls, ${allBoundPoints.size} bound points, " +
                     "${boundaries.size} boundary polygons, ground=${floorNum <= 1f})")
-            NavigationRepository(walls, allBoundPoints, boundaries).also { repoByFloor[floorId] = it }
+            NavigationRepository.build(walls, allBoundPoints, boundaries).also { repoByFloor[floorId] = it }
         }
     }
 

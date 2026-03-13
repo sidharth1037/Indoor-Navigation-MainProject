@@ -3,6 +3,8 @@ package `in`.project.enroute.feature.navigation
 import androidx.compose.ui.geometry.Offset
 import `in`.project.enroute.data.model.Wall
 import `in`.project.enroute.feature.navigation.data.CampusBoundaryPolygon
+import `in`.project.enroute.feature.navigation.data.GridSerializer
+import `in`.project.enroute.feature.navigation.data.PrecalculatedFloorGrid
 import kotlin.math.abs
 import kotlin.math.sqrt
 import android.util.Log
@@ -23,20 +25,22 @@ import java.util.PriorityQueue
  *
  * Supports campus-wide coordinates including negative values via a bounding-box
  * origin offset ([originX], [originY]).
+ *
+ * Use [build] to compute the distance transform from walls, or
+ * [fromPrecalculated] to skip computation using a pre-computed grid.
  */
-class NavigationRepository(
-    walls: List<Wall>,
-    /** Optional extra points (campus-wide) that must be inside the grid.
-     *  Used by multi-floor pathfinding to guarantee stair / goal entrances
-     *  fall within the distance-transform grid. */
-    additionalBoundaryPoints: List<Offset> = emptyList(),
-    /** Optional boundary polygons (campus-wide) defining the floor outline.
-     *  Grid cells outside ALL polygons are hard-blocked so A* stays indoors. */
-    boundaryPolygons: List<CampusBoundaryPolygon> = emptyList()
+class NavigationRepository private constructor(
+    private val originX: Float,
+    private val originY: Float,
+    private val maxGridX: Int,
+    private val maxGridY: Int,
+    private val gridSize: Float,
+    private val distanceGrid: Array<FloatArray>
 ) {
 
     companion object {
         private const val TAG = "NavigationRepository"
+        private const val DEFAULT_GRID_SIZE = 15f
 
         /**
          * Cells closer than this many grid-units to any wall are impassable.
@@ -53,53 +57,130 @@ class NavigationRepository(
          * through them so that corner rounding is preserved after smoothing.
          */
         private const val WALL_BUFFER_THRESHOLD = 1.5f
-    }
 
-    private val gridSize = 15f   // finer grid → better narrow-gap resolution
+        /**
+         * Builds a NavigationRepository by computing the distance transform
+         * and marking exterior cells. This is the expensive path.
+         */
+        fun build(
+            walls: List<Wall>,
+            additionalBoundaryPoints: List<Offset> = emptyList(),
+            boundaryPolygons: List<CampusBoundaryPolygon> = emptyList()
+        ): NavigationRepository {
+            val gs = DEFAULT_GRID_SIZE
 
-    // Grid origin offset (allows negative world coordinates)
-    private val originX: Float
-    private val originY: Float
+            // Compute bounding box from wall extents (with padding)
+            var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+            var maxX = Float.MIN_VALUE; var maxY = Float.MIN_VALUE
+            for (wall in walls) {
+                minX = minOf(minX, wall.x1, wall.x2)
+                minY = minOf(minY, wall.y1, wall.y2)
+                maxX = maxOf(maxX, wall.x1, wall.x2)
+                maxY = maxOf(maxY, wall.y1, wall.y2)
+            }
+            // Also include any additional boundary points (stair / goal entrances)
+            for (pt in additionalBoundaryPoints) {
+                minX = minOf(minX, pt.x)
+                minY = minOf(minY, pt.y)
+                maxX = maxOf(maxX, pt.x)
+                maxY = maxOf(maxY, pt.y)
+            }
+            // Floor the origin to grid boundary, with padding
+            val oX = (minX / gs - 2).toInt() * gs
+            val oY = (minY / gs - 2).toInt() * gs
+            val mgX = ((maxX - oX) / gs + 4).toInt()
+            val mgY = ((maxY - oY) / gs + 4).toInt()
+            val grid = Array(mgX) { FloatArray(mgY) }
 
-    // Grid dimensions in cells
-    private val maxGridX: Int
-    private val maxGridY: Int
+            Log.d(TAG, "Grid: origin($oX, $oY), size ${mgX}x$mgY, " +
+                    "cells=${mgX * mgY}, gridSize=$gs")
 
-    // Distance transform: minimum distance (in grid-units) to any wall for each cell
-    private val distanceGrid: Array<FloatArray>
+            computeDistanceTransform(grid, walls, oX, oY, gs, mgX, mgY)
 
-    init {
-        // Compute bounding box from wall extents (with padding)
-        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
-        var maxX = Float.MIN_VALUE; var maxY = Float.MIN_VALUE
-        for (wall in walls) {
-            minX = minOf(minX, wall.x1, wall.x2)
-            minY = minOf(minY, wall.y1, wall.y2)
-            maxX = maxOf(maxX, wall.x1, wall.x2)
-            maxY = maxOf(maxY, wall.y1, wall.y2)
+            if (boundaryPolygons.isNotEmpty()) {
+                markExteriorCells(grid, boundaryPolygons, oX, oY, gs, mgX, mgY)
+            }
+
+            return NavigationRepository(oX, oY, mgX, mgY, gs, grid)
         }
-        // Also include any additional boundary points (stair / goal entrances)
-        for (pt in additionalBoundaryPoints) {
-            minX = minOf(minX, pt.x)
-            minY = minOf(minY, pt.y)
-            maxX = maxOf(maxX, pt.x)
-            maxY = maxOf(maxY, pt.y)
+
+        /**
+         * Constructs a NavigationRepository from a precalculated distanceGrid,
+         * skipping all expensive computation.
+         */
+        fun fromPrecalculated(
+            originX: Float,
+            originY: Float,
+            maxGridX: Int,
+            maxGridY: Int,
+            gridSize: Float,
+            distanceGrid: Array<FloatArray>
+        ): NavigationRepository {
+            Log.d(TAG, "fromPrecalculated: origin($originX, $originY), " +
+                    "size ${maxGridX}x$maxGridY, gridSize=$gridSize")
+            return NavigationRepository(originX, originY, maxGridX, maxGridY, gridSize, distanceGrid)
         }
-        // Floor the origin to grid boundary, with padding
-        originX = (minX / gridSize - 2).toInt() * gridSize
-        originY = (minY / gridSize - 2).toInt() * gridSize
-        maxGridX = ((maxX - originX) / gridSize + 4).toInt()
-        maxGridY = ((maxY - originY) / gridSize + 4).toInt()
-        distanceGrid = Array(maxGridX) { FloatArray(maxGridY) }
 
-        Log.d(TAG, "Grid: origin($originX, $originY), size ${maxGridX}x$maxGridY, " +
-                "cells=${maxGridX * maxGridY}, gridSize=$gridSize")
-        computeDistanceTransform(walls)
+        // ── static distance transform helpers ──────────────────────────
 
-        // Block cells outside the floor boundary so A* stays inside the building.
-        // Uses point-in-polygon on the actual boundary data from the backend.
-        if (boundaryPolygons.isNotEmpty()) {
-            markExteriorCells(boundaryPolygons)
+        private fun computeDistanceTransform(
+            grid: Array<FloatArray>,
+            walls: List<Wall>,
+            originX: Float, originY: Float,
+            gridSize: Float,
+            maxGridX: Int, maxGridY: Int
+        ) {
+            for (x in 0 until maxGridX) for (y in 0 until maxGridY) {
+                grid[x][y] = Float.MAX_VALUE
+            }
+
+            walls.forEach { wall ->
+                val x1 = (wall.x1 - originX) / gridSize
+                val y1 = (wall.y1 - originY) / gridSize
+                val x2 = (wall.x2 - originX) / gridSize
+                val y2 = (wall.y2 - originY) / gridSize
+                for (x in 0 until maxGridX) for (y in 0 until maxGridY) {
+                    val d = distanceToSegment(x.toFloat(), y.toFloat(), x1, y1, x2, y2)
+                    if (d < grid[x][y]) grid[x][y] = d
+                }
+            }
+        }
+
+        private fun markExteriorCells(
+            grid: Array<FloatArray>,
+            polygons: List<CampusBoundaryPolygon>,
+            originX: Float, originY: Float,
+            gridSize: Float,
+            maxGridX: Int, maxGridY: Int
+        ) {
+            var blocked = 0
+            for (x in 0 until maxGridX) for (y in 0 until maxGridY) {
+                if (grid[x][y] < WALL_BLOCK_THRESHOLD) continue
+
+                val wx = (x + 0.5f) * gridSize + originX
+                val wy = (y + 0.5f) * gridSize + originY
+                val point = Offset(wx, wy)
+                val inside = polygons.any { it.contains(point) }
+                if (!inside) {
+                    grid[x][y] = 0f
+                    blocked++
+                }
+            }
+            Log.d(TAG, "markExteriorCells: blocked $blocked exterior cells " +
+                    "using ${polygons.size} boundary polygon(s)")
+        }
+
+        /** Point-to-segment distance (grid-unit space). */
+        private fun distanceToSegment(
+            px: Float, py: Float,
+            x1: Float, y1: Float, x2: Float, y2: Float
+        ): Float {
+            val dx = x2 - x1; val dy = y2 - y1
+            val lenSq = dx * dx + dy * dy
+            if (lenSq == 0f) return sqrt((px - x1) * (px - x1) + (py - y1) * (py - y1))
+            val t = (((px - x1) * dx + (py - y1) * dy) / lenSq).coerceIn(0f, 1f)
+            val cx = x1 + t * dx; val cy = y1 + t * dy
+            return sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy))
         }
     }
 
@@ -112,68 +193,6 @@ class NavigationRepository(
     /** Grid cell centre → world coordinate. */
     private fun gridToWorldX(gx: Int): Float = (gx + 0.5f) * gridSize + originX
     private fun gridToWorldY(gy: Int): Float = (gy + 0.5f) * gridSize + originY
-
-    // ── distance transform ──────────────────────────────────────────
-
-    /**
-     * Populates [distanceGrid]: for every cell, the minimum distance (in
-     * grid-units) to the nearest wall segment.
-     */
-    private fun computeDistanceTransform(walls: List<Wall>) {
-        for (x in 0 until maxGridX) for (y in 0 until maxGridY) {
-            distanceGrid[x][y] = Float.MAX_VALUE
-        }
-
-        walls.forEach { wall ->
-            val x1 = (wall.x1 - originX) / gridSize
-            val y1 = (wall.y1 - originY) / gridSize
-            val x2 = (wall.x2 - originX) / gridSize
-            val y2 = (wall.y2 - originY) / gridSize
-            for (x in 0 until maxGridX) for (y in 0 until maxGridY) {
-                val d = distanceToSegment(x.toFloat(), y.toFloat(), x1, y1, x2, y2)
-                if (d < distanceGrid[x][y]) distanceGrid[x][y] = d
-            }
-        }
-    }
-
-    /**
-     * Blocks every grid cell whose centre falls outside ALL [polygons].
-     *
-     * Uses the ray-casting point-in-polygon test from [CampusBoundaryPolygon].
-     * A cell only needs to be inside at least one polygon to be considered
-     * interior (supports multi-section buildings).
-     */
-    private fun markExteriorCells(polygons: List<CampusBoundaryPolygon>) {
-        var blocked = 0
-        for (x in 0 until maxGridX) for (y in 0 until maxGridY) {
-            // Skip cells already blocked by walls
-            if (distanceGrid[x][y] < WALL_BLOCK_THRESHOLD) continue
-
-            val wx = gridToWorldX(x)
-            val wy = gridToWorldY(y)
-            val point = Offset(wx, wy)
-            val inside = polygons.any { it.contains(point) }
-            if (!inside) {
-                distanceGrid[x][y] = 0f  // hard-block exterior
-                blocked++
-            }
-        }
-        Log.d(TAG, "markExteriorCells: blocked $blocked exterior cells " +
-                "using ${polygons.size} boundary polygon(s)")
-    }
-
-    /** Point-to-segment distance (grid-unit space). */
-    private fun distanceToSegment(
-        px: Float, py: Float,
-        x1: Float, y1: Float, x2: Float, y2: Float
-    ): Float {
-        val dx = x2 - x1; val dy = y2 - y1
-        val lenSq = dx * dx + dy * dy
-        if (lenSq == 0f) return sqrt((px - x1) * (px - x1) + (py - y1) * (py - y1))
-        val t = (((px - x1) * dx + (py - y1) * dy) / lenSq).coerceIn(0f, 1f)
-        val cx = x1 + t * dx; val cy = y1 + t * dy
-        return sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy))
-    }
 
     // ── cell queries ────────────────────────────────────────────────
 
@@ -205,6 +224,24 @@ class NavigationRepository(
             dist < 3.0f -> 2.0f                              // near wall — moderate nudge
             else        -> 1.0f                              // open space
         }
+    }
+
+    // ── export for precalculation ───────────────────────────────────
+
+    /**
+     * Exports the computed distance grid for persistent storage.
+     * Used by the admin precalculation engine.
+     */
+    fun exportGrid(floorId: String): PrecalculatedFloorGrid {
+        return PrecalculatedFloorGrid(
+            floorId = floorId,
+            originX = originX,
+            originY = originY,
+            maxGridX = maxGridX,
+            maxGridY = maxGridY,
+            gridSize = gridSize,
+            gridData = GridSerializer.encode(distanceGrid, maxGridX, maxGridY)
+        )
     }
 
     // ── A* pathfinding ──────────────────────────────────────────────
