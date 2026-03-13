@@ -7,6 +7,8 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
 import `in`.project.enroute.data.model.*
+import `in`.project.enroute.feature.navigation.data.PrecalculatedFloorGrid
+import `in`.project.enroute.feature.navigation.data.PrecalculatedNavMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -509,6 +511,119 @@ class FirebaseFloorPlanRepository(
             .document(buildingId)
             .set(fields, com.google.firebase.firestore.SetOptions.merge())
             .await()
+    }
+
+    // ── Precalculated navigation data ─────────────────────────────
+
+    /**
+     * Uploads precalculated metadata document.
+     */
+    suspend fun uploadPrecalculatedMetadata(
+        metadata: PrecalculatedNavMetadata
+    ) = withContext(Dispatchers.IO) {
+        firestore
+            .collection("campuses").document(campusId)
+            .collection("precalculated_nav")
+            .document("metadata")
+            .set(mapOf(
+                "version" to metadata.version,
+                "computedAt" to metadata.computedAt,
+                "gridSize" to metadata.gridSize,
+                "floorIds" to metadata.floorIds
+            ))
+            .await()
+    }
+
+    /**
+     * Uploads a precalculated distance-transform grid for one floor.
+     */
+    suspend fun uploadPrecalculatedGrid(
+        floorId: String,
+        grid: PrecalculatedFloorGrid
+    ) = withContext(Dispatchers.IO) {
+        firestore
+            .collection("campuses").document(campusId)
+            .collection("precalculated_nav")
+            .document("grid_$floorId")
+            .set(mapOf(
+                "originX" to grid.originX,
+                "originY" to grid.originY,
+                "maxGridX" to grid.maxGridX,
+                "maxGridY" to grid.maxGridY,
+                "gridSize" to grid.gridSize,
+                "gridData" to grid.gridData
+            ))
+            .await()
+    }
+
+    /**
+     * Loads precalculated metadata, or null if not available.
+     */
+    suspend fun loadPrecalculatedMetadata(): PrecalculatedNavMetadata? =
+        withContext(Dispatchers.IO) {
+            try {
+                val doc = firestore
+                    .collection("campuses").document(campusId)
+                    .collection("precalculated_nav")
+                    .document("metadata")
+                    .get().await()
+                if (!doc.exists()) return@withContext null
+                PrecalculatedNavMetadata(
+                    version = doc.getLong("version")?.toInt() ?: 1,
+                    computedAt = doc.getLong("computedAt") ?: 0L,
+                    gridSize = doc.getDouble("gridSize")?.toFloat() ?: 15f,
+                    floorIds = (doc.get("floorIds") as? List<*>)
+                        ?.mapNotNull { it as? String } ?: emptyList()
+                )
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+    /**
+     * Loads all precalculated floor grids for this campus.
+     * Returns null if no precalculated data exists.
+     */
+    suspend fun loadAllPrecalculatedGrids(): Map<String, PrecalculatedFloorGrid>? =
+        withContext(Dispatchers.IO) {
+            try {
+                val metadata = loadPrecalculatedMetadata() ?: return@withContext null
+                val grids = mutableMapOf<String, PrecalculatedFloorGrid>()
+                for (floorId in metadata.floorIds) {
+                    val doc = firestore
+                        .collection("campuses").document(campusId)
+                        .collection("precalculated_nav")
+                        .document("grid_$floorId")
+                        .get().await()
+                    if (!doc.exists()) continue
+                    grids[floorId] = PrecalculatedFloorGrid(
+                        floorId = floorId,
+                        originX = doc.getDouble("originX")?.toFloat() ?: 0f,
+                        originY = doc.getDouble("originY")?.toFloat() ?: 0f,
+                        maxGridX = doc.getLong("maxGridX")?.toInt() ?: 0,
+                        maxGridY = doc.getLong("maxGridY")?.toInt() ?: 0,
+                        gridSize = doc.getDouble("gridSize")?.toFloat() ?: 15f,
+                        gridData = doc.getString("gridData") ?: ""
+                    )
+                }
+                if (grids.isEmpty()) null else grids
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+    /**
+     * Deletes all precalculated navigation data for this campus.
+     * Called when floor data changes to invalidate stale grids.
+     */
+    suspend fun deletePrecalculatedNav() = withContext(Dispatchers.IO) {
+        val navCol = firestore
+            .collection("campuses").document(campusId)
+            .collection("precalculated_nav")
+        val docs = navCol.get().await()
+        for (doc in docs.documents) {
+            doc.reference.delete().await()
+        }
     }
 
     companion object {

@@ -19,7 +19,9 @@ import `in`.project.enroute.feature.floorplan.state.BuildingState
 import `in`.project.enroute.feature.pdr.correction.CampusBuilding
 import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
 import `in`.project.enroute.feature.pdr.correction.StairwellZone
+import `in`.project.enroute.feature.navigation.data.PrecalculatedFloorGrid
 import `in`.project.enroute.feature.navigation.data.StairwellConnection
+import android.util.Log
 import `in`.project.enroute.feature.floorplan.utils.FollowingAnimator
 import `in`.project.enroute.feature.floorplan.utils.FollowingConfig
 import `in`.project.enroute.feature.floorplan.utils.CenteringConfig
@@ -952,6 +954,39 @@ class FloorPlanViewModel(
      */
     fun getStairwellConnections(): List<StairwellConnection> =
         StairwellDataExtractor.computeStairwellConnections(_uiState.value.buildingStates)
+
+    /**
+     * Loads precalculated navigation grids for the current campus.
+     * Tries the disk cache first, falls back to Firebase.
+     * Returns null if no precalculated data exists.
+     */
+    suspend fun loadPrecalculatedNavData(): Map<String, PrecalculatedFloorGrid>? {
+        val campusId = currentCampusId.ifBlank { return null }
+        try {
+            // 1. Try disk cache first
+            val cached = cache.loadCampusData(campusId)
+            if (cached?.precalculatedGrids != null) {
+                Log.d("FloorPlanViewModel", "Loaded ${cached.precalculatedGrids.size} precalculated grids from disk cache")
+                return cached.precalculatedGrids
+            }
+
+            // 2. Fall back to Firebase
+            val firebaseRepo = FirebaseFloorPlanRepository(campusId)
+            val grids = firebaseRepo.loadAllPrecalculatedGrids()
+            if (grids != null) {
+                Log.d("FloorPlanViewModel", "Loaded ${grids.size} precalculated grids from Firebase")
+                // Update the disk cache with the grids
+                val existingCache = cache.loadCampusData(campusId)
+                if (existingCache != null) {
+                    cache.saveCampusData(campusId, existingCache.copy(precalculatedGrids = grids))
+                }
+            }
+            return grids
+        } catch (e: Exception) {
+            Log.w("FloorPlanViewModel", "No precalculated nav data available: ${e.message}")
+            return null
+        }
+    }
 
     /**
      * Returns [FloorConstraintData] for every loaded floor, keyed by floor ID.

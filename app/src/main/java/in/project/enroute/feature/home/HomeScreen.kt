@@ -129,6 +129,16 @@ fun HomeScreen(
         }
     }
 
+    // Load precalculated navigation grids at campus-load time (not when user taps Directions)
+    LaunchedEffect(uiState.buildingStates) {
+        if (uiState.buildingStates.isNotEmpty()) {
+            val grids = floorPlanViewModel.loadPrecalculatedNavData()
+            if (grids != null) {
+                navigationViewModel.supplyPrecalculatedGrids(grids)
+            }
+        }
+    }
+
     // Supply building boundary data to PdrViewModel for automatic building detection
     LaunchedEffect(uiState.buildingStates) {
         if (uiState.buildingStates.isNotEmpty()) {

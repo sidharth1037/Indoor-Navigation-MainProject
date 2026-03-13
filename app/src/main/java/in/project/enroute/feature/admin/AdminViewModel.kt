@@ -8,12 +8,11 @@ import androidx.lifecycle.viewModelScope
 import `in`.project.enroute.data.cache.CachedCampusData
 import `in`.project.enroute.data.cache.FloorPlanCache
 import `in`.project.enroute.data.model.CampusMetadata
-import `in`.project.enroute.data.model.FloorPlanMetadata
-import `in`.project.enroute.data.model.LabelPosition
-import `in`.project.enroute.data.model.RelativePosition
 import `in`.project.enroute.data.repository.FirebaseFloorPlanRepository
 import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import `in`.project.enroute.feature.campussearch.CampusItem
+import `in`.project.enroute.feature.navigation.data.NavDataPrecalculator
+import `in`.project.enroute.feature.navigation.data.PrecalculatedNavMetadata
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,20 +35,8 @@ data class SelectedFile(
     val type: FloorFileType
 )
 
-// ── Upload step / mode for the UI wizard ─────────────────────────
-enum class AdminStep {
-    SELECT_CAMPUS,       // Choose existing campus or create new one
-    CAMPUS_HOME,         // Campus selected → show buildings + options
-    ADD_BUILDING,        // Upload building metadata
-    ADD_FLOOR,           // Select building + floor + upload floor files
-    EDIT_CAMPUS,         // Edit campus metadata fields
-    EDIT_BUILDING        // Edit building metadata fields
-}
-
 // ── UI State ─────────────────────────────────────────────────────
 data class AdminUiState(
-    val step: AdminStep = AdminStep.SELECT_CAMPUS,
-
     // Admin's campuses
     val myCampuses: List<CampusItem> = emptyList(),
     val isMyCampusesLoading: Boolean = false,
@@ -98,7 +85,11 @@ data class AdminUiState(
     val editBuildingLabelX: String = "",
     val editBuildingLabelY: String = "",
     val editBuildingRelX: String = "",
-    val editBuildingRelY: String = ""
+    val editBuildingRelY: String = "",
+
+    // Precalculation
+    val isPrecalculating: Boolean = false,
+    val precalculationProgress: String = ""
 )
 
 class AdminViewModel(application: Application) : AndroidViewModel(application) {
@@ -156,7 +147,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 selectedCampusId = campusId,
                 selectedCampusName = campusName,
-                step = AdminStep.CAMPUS_HOME,
                 loadedFromCache = false
             )
         }
@@ -197,7 +187,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         selectedCampusId = state.newCampusId,
                         selectedCampusName = state.newCampusName,
-                        step = AdminStep.CAMPUS_HOME,
                         isLoading = false,
                         statusMessage = "Campus '${state.newCampusName}' created",
                         isError = false,
@@ -261,10 +250,12 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun navigateToAddBuilding() {
+
+
+    /** Resets state for the Add Building screen. */
+    fun prepareAddBuilding() {
         _uiState.update {
             it.copy(
-                step = AdminStep.ADD_BUILDING,
                 buildingId = "",
                 buildingMetadataUri = null,
                 buildingMetadataFileName = "",
@@ -273,10 +264,11 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun navigateToAddFloor() {
+
+    /** Resets state for the Add Floor screen. */
+    fun prepareAddFloor() {
         _uiState.update {
             it.copy(
-                step = AdminStep.ADD_FLOOR,
                 selectedBuildingForFloor = "",
                 floorId = "",
                 selectedFiles = emptyList(),
@@ -286,22 +278,8 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun navigateToCampusHome() {
-        _uiState.update {
-            it.copy(step = AdminStep.CAMPUS_HOME, statusMessage = null)
-        }
-        loadBuildings()
-    }
 
-    fun navigateToSelectCampus() {
-        _uiState.update {
-            it.copy(
-                step = AdminStep.SELECT_CAMPUS,
-                statusMessage = null
-            )
-        }
-        loadMyCampuses()
-    }
+
 
     fun uploadBuildingMetadata(context: Context) {
         val repo = repository ?: return
@@ -549,8 +527,71 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
             cachedCampusData = null
             viewModelScope.launch {
                 cache.clearCache(campusId)
+                // Also delete stale precalculated nav data
+                try {
+                    FirebaseFloorPlanRepository(campusId).deletePrecalculatedNav()
+                } catch (_: Exception) { /* best effort */ }
             }
             _uiState.update { it.copy(loadedFromCache = false) }
+        }
+    }
+
+    /**
+     * Runs the full navigation data precalculation for the selected campus.
+     * Loads all floor data, transforms to campus coordinates, computes
+     * distance transforms, and uploads results to Firestore.
+     */
+    fun precalculateNavData() {
+        val repo = repository ?: return
+        val campusId = _uiState.value.selectedCampusId
+        if (campusId.isBlank()) return
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(isPrecalculating = true, precalculationProgress = "Starting...", statusMessage = null)
+            }
+            try {
+                val result = NavDataPrecalculator.precalculate(repo) { progress ->
+                    _uiState.update { it.copy(precalculationProgress = progress) }
+                }
+
+                // Upload grids to Firestore
+                for ((floorId, grid) in result.floorGrids) {
+                    _uiState.update { it.copy(precalculationProgress = "Uploading grid for $floorId...") }
+                    repo.uploadPrecalculatedGrid(floorId, grid)
+                }
+
+                // Upload metadata
+                _uiState.update { it.copy(precalculationProgress = "Uploading metadata...") }
+                repo.uploadPrecalculatedMetadata(PrecalculatedNavMetadata(
+                    version = 1,
+                    computedAt = System.currentTimeMillis(),
+                    gridSize = 15f,
+                    floorIds = result.floorGrids.keys.toList()
+                ))
+
+                // Invalidate cache so users pick up the new grids
+                cachedCampusData = null
+                cache.clearCache(campusId)
+
+                _uiState.update {
+                    it.copy(
+                        isPrecalculating = false,
+                        precalculationProgress = "",
+                        statusMessage = "Precalculation complete! ${result.floorGrids.size} floor grids uploaded.",
+                        isError = false
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isPrecalculating = false,
+                        precalculationProgress = "",
+                        statusMessage = "Precalculation failed: ${e.message}",
+                        isError = true
+                    )
+                }
+            }
         }
     }
 
@@ -663,7 +704,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        step = AdminStep.SELECT_CAMPUS,
                         selectedCampusId = "",
                         selectedCampusName = "",
                         availableBuildings = emptyList(),
@@ -697,7 +737,12 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Opens the edit-campus screen, pre-populating fields from Firebase.
      */
-    fun navigateToEditCampus() {
+
+
+    /**
+     * Loads campus metadata from Firebase and populates the edit-campus fields.
+     */
+    fun prepareEditCampus() {
         val repo = repository ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
@@ -705,7 +750,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                 val meta = repo.loadCampusMetadata()
                 _uiState.update {
                     it.copy(
-                        step = AdminStep.EDIT_CAMPUS,
                         isLoading = false,
                         statusMessage = null,
                         editCampusName = meta.name,
@@ -756,7 +800,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         isLoading = false,
                         selectedCampusName = state.editCampusName,
-                        step = AdminStep.CAMPUS_HOME,
                         statusMessage = "Campus metadata updated",
                         isError = false
                     )
@@ -776,10 +819,11 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Edit building metadata ───────────────────────────────────
 
+
     /**
-     * Opens the edit-building screen, pre-populating fields from Firebase.
+     * Loads building metadata from Firebase and populates the edit-building fields.
      */
-    fun navigateToEditBuilding(buildingId: String) {
+    fun prepareEditBuilding(buildingId: String) {
         val repo = repository ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
@@ -787,7 +831,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                 val meta = repo.loadBuildingMetadata(buildingId)
                 _uiState.update {
                     it.copy(
-                        step = AdminStep.EDIT_BUILDING,
                         isLoading = false,
                         statusMessage = null,
                         editBuildingId = buildingId,
@@ -854,7 +897,6 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        step = AdminStep.CAMPUS_HOME,
                         statusMessage = "Building '${state.editBuildingName}' updated",
                         isError = false
                     )

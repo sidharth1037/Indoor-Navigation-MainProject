@@ -10,9 +10,11 @@ import `in`.project.enroute.data.model.Room
 import `in`.project.enroute.data.model.Wall
 import `in`.project.enroute.feature.navigation.data.CampusBoundaryPolygon
 import `in`.project.enroute.feature.navigation.data.CampusEntrance
+import `in`.project.enroute.feature.navigation.data.CoordinateTransform
 import `in`.project.enroute.feature.navigation.data.FloorPathSegment
 import `in`.project.enroute.feature.navigation.data.MultiFloorPath
 import `in`.project.enroute.feature.navigation.data.MultiFloorPathfinder
+import `in`.project.enroute.feature.navigation.data.PrecalculatedFloorGrid
 import `in`.project.enroute.feature.navigation.data.StairwellConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,8 +24,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.cos
-import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -136,6 +136,15 @@ class NavigationViewModel : ViewModel() {
      */
     private val repositoryByFloor = mutableMapOf<String, NavigationRepository>()
 
+    /**
+     * Precalculated distance-transform grids, keyed by floor ID.
+     * Loaded from Firestore/cache at campus-load time. When present, used
+     * by MultiFloorPathfinder to skip expensive grid computation.
+     * Stored separately from repositoryByFloor so clearing repos
+     * (on data supply) does not lose precalculated data.
+     */
+    private val precalculatedGrids = mutableMapOf<String, PrecalculatedFloorGrid>()
+
     /** Running pathfinding job — cancelled if a new request comes in. */
     private var pathfindingJob: Job? = null
 
@@ -214,6 +223,18 @@ class NavigationViewModel : ViewModel() {
         stairwellConnections = connections
         repositoryByFloor.clear()
         Log.d(TAG, "Supplied ${connections.size} stairwell connections")
+    }
+
+    /**
+     * Supplies precalculated distance-transform grids for instant pathfinding.
+     * Called after floor data and stairwell connections have been supplied.
+     * The grids are used lazily by MultiFloorPathfinder.getOrBuildRepo().
+     */
+    fun supplyPrecalculatedGrids(grids: Map<String, PrecalculatedFloorGrid>) {
+        precalculatedGrids.clear()
+        precalculatedGrids.putAll(grids)
+        repositoryByFloor.clear()  // force rebuild from precalculated data
+        Log.d(TAG, "Supplied ${grids.size} precalculated floor grids: ${grids.keys}")
     }
 
     /**
@@ -526,7 +547,8 @@ class NavigationViewModel : ViewModel() {
                 stairConnections = stairwellConnections,
                 wallsByFloor = campusWallsByFloor.toMap(),
                 boundaryByFloor = campusBoundaryByFloor.toMap(),
-                repoByFloor = repositoryByFloor
+                repoByFloor = repositoryByFloor,
+                precalculatedGrids = precalculatedGrids.toMap()
             )
         }
 
@@ -560,7 +582,8 @@ class NavigationViewModel : ViewModel() {
             stairConnections = stairwellConnections,
             wallsByFloor = campusWallsByFloor.toMap(),
             boundaryByFloor = campusBoundaryByFloor.toMap(),
-            repoByFloor = repositoryByFloor
+            repoByFloor = repositoryByFloor,
+            precalculatedGrids = precalculatedGrids.toMap()
         )
 
         return reverseRoute(reverse)
@@ -617,24 +640,11 @@ class NavigationViewModel : ViewModel() {
     // Coordinate transform
     // ──────────────────────────────────────────────
 
-    /**
-     * Transforms raw floor plan coordinates to campus-wide coordinates.
-     * raw → scale → rotate → offset by building relativePosition.
-     */
     private fun rawToCampus(
         x: Float, y: Float,
         scale: Float, rotationDegrees: Float,
         offsetX: Float, offsetY: Float
-    ): Pair<Float, Float> {
-        val sx = x * scale
-        val sy = y * scale
-        val rad = Math.toRadians(rotationDegrees.toDouble())
-        val cosA = cos(rad).toFloat()
-        val sinA = sin(rad).toFloat()
-        val rx = sx * cosA - sy * sinA
-        val ry = sx * sinA + sy * cosA
-        return Pair(rx + offsetX, ry + offsetY)
-    }
+    ): Pair<Float, Float> = CoordinateTransform.rawToCampus(x, y, scale, rotationDegrees, offsetX, offsetY)
 
     override fun onCleared() {
         super.onCleared()

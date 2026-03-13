@@ -10,6 +10,7 @@ import com.google.gson.JsonSerializationContext
 import com.google.gson.JsonSerializer
 import com.google.gson.reflect.TypeToken
 import `in`.project.enroute.data.model.*
+import `in`.project.enroute.feature.navigation.data.PrecalculatedFloorGrid
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -22,7 +23,9 @@ import java.lang.reflect.Type
 data class CachedCampusData(
     val campusMetadata: CampusMetadata,
     val buildings: List<CachedBuilding>,
-    val cachedAt: Long = System.currentTimeMillis()
+    val cachedAt: Long = System.currentTimeMillis(),
+    /** Precalculated distance-transform grids keyed by floor ID. Null if not yet precalculated. */
+    val precalculatedGrids: Map<String, PrecalculatedFloorGrid>? = null
 )
 
 /**
