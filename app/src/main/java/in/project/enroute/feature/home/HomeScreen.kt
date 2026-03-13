@@ -917,11 +917,7 @@ private fun HomeScreenContent(
                 // Settings & Admin overlay buttons — bottom left, above StopTrackingButton
                 val isAdminLoggedIn by AdminAuthRepository.isLoggedIn.collectAsState()
                 val stopTrackingVisible = pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin
-                val navButtonsBottomPadding by animateDpAsState(
-                    targetValue = bottomButtonPadding + if (stopTrackingVisible) 59.dp else 0.dp,
-                    animationSpec = dpTween(durationMillis = 350),
-                    label = "navButtonsBottomPadding"
-                )
+                val navButtonsBottomPadding = bottomButtonPadding + if (stopTrackingVisible) 59.dp else 0.dp
                 if (!pdrUiState.isSelectingOrigin) {
                     OverlayNavButtons(
                         isAdminVisible = isAdminLoggedIn,
