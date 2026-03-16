@@ -231,11 +231,13 @@ class WelcomeViewModel(application: Application) : AndroidViewModel(application)
 
 // ── Composables ──────────────────────────────────────────────────
 
-private val TITLE_TOP_SPACER = 80.dp
+private val TITLE_TOP_SPACER = 36.dp
 private val TITLE_HEIGHT = 48.dp
-private val SUBTITLE_SPACER = 8.dp
+private val SUBTITLE_SPACER = 4.dp
 private val SUBTITLE_HEIGHT = 20.dp
-private val BUTTON_SPACER = 32.dp
+private val BUTTON_SPACER = 20.dp
+
+private const val MAX_CARD_ITEMS = 3
 
 /** Resting Y for the search button on the Welcome screen. */
 private val WELCOME_BUTTON_RESTING_Y =
@@ -316,7 +318,7 @@ fun WelcomeScreen(
             )
 
             // Space for the search button (it's rendered as an overlay)
-            Spacer(modifier = Modifier.height(BUTTON_SPACER + 48.dp + 32.dp))
+            Spacer(modifier = Modifier.height(BUTTON_SPACER + 48.dp + 16.dp))
 
             // ── Recently viewed campuses ─────────────────────────
             if (uiState.recentCampuses.isNotEmpty()) {
@@ -327,7 +329,7 @@ fun WelcomeScreen(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
                     )
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                         // ── Header row ───────────────────────────
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -337,22 +339,24 @@ fun WelcomeScreen(
                                 imageVector = Icons.Default.History,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(15.dp)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = "Recently viewed",
-                                fontSize = 15.sp,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.weight(1f)
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
 
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            uiState.recentCampuses.forEachIndexed { index, campus ->
+                            val visibleRecent = uiState.recentCampuses.take(MAX_CARD_ITEMS)
+                            val hiddenCount = uiState.recentCampuses.size - visibleRecent.size
+                            visibleRecent.forEachIndexed { index, campus ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -361,33 +365,41 @@ fun WelcomeScreen(
                                             viewModel.updateQuery("")
                                             onCampusSelected(campus.id)
                                         }
-                                        .padding(vertical = 10.dp),
+                                        .padding(vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
                                         text = campus.name,
-                                        fontSize = 15.sp,
+                                        fontSize = 13.sp,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.weight(1f)
                                     )
                                     IconButton(
                                         onClick = { viewModel.removeRecent(campus.id) },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(28.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Close,
                                             contentDescription = "Remove",
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
+                                            modifier = Modifier.size(14.dp)
                                         )
                                     }
                                 }
-                                if (index < uiState.recentCampuses.lastIndex) {
+                                if (index < visibleRecent.lastIndex || hiddenCount > 0) {
                                     HorizontalDivider(
                                         thickness = 0.5.dp,
                                         color = MaterialTheme.colorScheme.outlineVariant
                                     )
                                 }
+                            }
+                            if (hiddenCount > 0) {
+                                Text(
+                                    text = "and $hiddenCount more",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 5.dp)
+                                )
                             }
                         }
                     }
@@ -395,7 +407,7 @@ fun WelcomeScreen(
             }
 
             // ── Nearby buildings section ──────────────────────────
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -404,7 +416,7 @@ fun WelcomeScreen(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
                 )
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                     // ── Header row ───────────────────────────
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -414,12 +426,12 @@ fun WelcomeScreen(
                             imageVector = Icons.Default.NearMe,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(15.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "Nearby Buildings",
-                            fontSize = 15.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f)
@@ -427,19 +439,19 @@ fun WelcomeScreen(
                         if (!uiState.isLoadingNearby) {
                             IconButton(
                                 onClick = { viewModel.refreshNearbyBuildings() },
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(28.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Refresh,
                                     contentDescription = "Refresh nearby",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(15.dp)
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
                     when {
                         // GPS is off
@@ -447,19 +459,19 @@ fun WelcomeScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 8.dp),
+                                    .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.LocationOff,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(15.dp)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = "Turn on GPS to see nearby buildings",
-                                    fontSize = 13.sp,
+                                    fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.error
                                 )
                             }
@@ -470,19 +482,19 @@ fun WelcomeScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 12.dp),
+                                    .padding(vertical = 6.dp),
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
+                                    modifier = Modifier.size(14.dp),
                                     strokeWidth = 2.dp,
                                     color = MaterialTheme.colorScheme.primary
                                 )
-                                Spacer(modifier = Modifier.width(10.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "Finding nearby buildings\u2026",
-                                    fontSize = 13.sp,
+                                    fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -490,7 +502,9 @@ fun WelcomeScreen(
 
                         // Results found
                         uiState.nearbyBuildings.isNotEmpty() -> {
-                            uiState.nearbyBuildings.forEachIndexed { index, campus ->
+                            val visibleNearby = uiState.nearbyBuildings.take(MAX_CARD_ITEMS)
+                            val hiddenNearbyCount = uiState.nearbyBuildings.size - visibleNearby.size
+                            visibleNearby.forEachIndexed { index, campus ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -498,21 +512,29 @@ fun WelcomeScreen(
                                             viewModel.addRecent(campus.id, campus.name)
                                             onCampusSelected(campus.id)
                                         }
-                                        .padding(vertical = 10.dp),
+                                        .padding(vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
                                         text = campus.name,
-                                        fontSize = 15.sp,
+                                        fontSize = 13.sp,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                 }
-                                if (index < uiState.nearbyBuildings.lastIndex) {
+                                if (index < visibleNearby.lastIndex || hiddenNearbyCount > 0) {
                                     HorizontalDivider(
                                         thickness = 0.5.dp,
                                         color = MaterialTheme.colorScheme.outlineVariant
                                     )
                                 }
+                            }
+                            if (hiddenNearbyCount > 0) {
+                                Text(
+                                    text = "and $hiddenNearbyCount more",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 5.dp)
+                                )
                             }
                         }
 
@@ -520,9 +542,9 @@ fun WelcomeScreen(
                         uiState.hasLoadedNearby -> {
                             Text(
                                 text = "No nearby buildings found",
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(vertical = 8.dp)
+                                modifier = Modifier.padding(vertical = 4.dp)
                             )
                         }
                     }
@@ -530,7 +552,7 @@ fun WelcomeScreen(
             }
 
             // Bottom spacing to avoid overlapping the nav buttons
-            Spacer(modifier = Modifier.height(80.dp))
+            Spacer(modifier = Modifier.height(88.dp))
         }
 
         // ── Settings & Admin overlay buttons (bottom left) ───────

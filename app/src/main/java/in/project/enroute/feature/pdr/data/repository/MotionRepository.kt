@@ -55,7 +55,7 @@ class MotionRepository(private val appContext: Context) {
     /** Maps a short key to the asset paths. */
     private fun modelFilesFor(key: String): Pair<String, String> = when (key) {
         "v6_64" -> "model/model_v6_64.tflite" to "model/model_meta_v6_64.json"
-        else    -> "model/model_v6.tflite"     to "model/model_meta_v6.json"
+        else    -> "model/model_v6.1.tflite"     to "model/model_meta_v6.1.json"
     }
 
     /**

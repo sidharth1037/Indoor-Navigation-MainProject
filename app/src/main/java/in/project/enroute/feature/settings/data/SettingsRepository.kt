@@ -37,6 +37,7 @@ class SettingsRepository(private val context: Context) {
         val TURN_WINDOW        = intPreferencesKey("turn_window")
         val TURN_THRESHOLD     = floatPreferencesKey("turn_threshold")
         val TURN_SENSITIVITY   = floatPreferencesKey("turn_sensitivity")
+        val SHOW_ORIGIN_INSTRUCTIONS = booleanPreferencesKey("show_origin_instructions")
     }
     
     /**
@@ -162,5 +163,11 @@ class SettingsRepository(private val context: Context) {
     /** Overall strength of turn-based stride reduction. Null = default 0.5. */
     val turnSensitivity: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.TURN_SENSITIVITY] }
     suspend fun saveTurnSensitivity(v: Float) = context.dataStore.edit { it[PreferencesKeys.TURN_SENSITIVITY] = v }
+
+    // ── Origin dialog ─────────────────────────────────────────────────────
+
+    /** Whether to show instructions expanded in the origin selection dialog. Defaults to true for first-time users. */
+    val showOriginInstructions: Flow<Boolean> = context.dataStore.data.map { it[PreferencesKeys.SHOW_ORIGIN_INSTRUCTIONS] ?: true }
+    suspend fun saveShowOriginInstructions(v: Boolean) = context.dataStore.edit { it[PreferencesKeys.SHOW_ORIGIN_INSTRUCTIONS] = v }
 
 }

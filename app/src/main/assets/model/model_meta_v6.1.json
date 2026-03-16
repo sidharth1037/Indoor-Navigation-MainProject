@@ -1,0 +1,47 @@
+{
+  "model_version": "6.0",
+  "mean": [
+    0.0165,
+    2.7812,
+    8.8768,
+    9.9808
+  ],
+  "std": [
+    2.3525,
+    2.3706,
+    3.1639,
+    2.8427
+  ],
+  "feature_order": [
+    "acc_x",
+    "acc_y",
+    "acc_z",
+    "acc_mag"
+  ],
+  "units": {
+    "acc_x": "m/s^2",
+    "acc_y": "m/s^2",
+    "acc_z": "m/s^2",
+    "acc_mag": "m/s^2"
+  },
+  "classes": [
+    "walking",
+    "upstairs",
+    "downstairs",
+    "idle"
+  ],
+  "class_map": {
+    "0": "walking",
+    "1": "upstairs",
+    "2": "downstairs",
+    "3": "idle"
+  },
+  "window_size": 96,
+  "step_size": 48,
+  "sample_rate": 50,
+  "input_shape": [
+    1,
+    96,
+    4
+  ]
+}
