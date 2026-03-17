@@ -22,22 +22,13 @@ fun CampusHomeScreen(
     uiState: AdminUiState,
     onBack: () -> Unit,
     onAddBuilding: () -> Unit,
-    onAddFloor: () -> Unit,
     onEditCampus: () -> Unit,
     onEditBuilding: (String) -> Unit,
     onCampusDeleted: () -> Unit
 ) {
     // Dialog states
-    var showDeleteFloorDialog by remember { mutableStateOf(false) }
     var showDeleteBuildingDialog by remember { mutableStateOf(false) }
     var showDeleteCampusDialog by remember { mutableStateOf(false) }
-    var showEditBuildingPicker by remember { mutableStateOf(false) }
-
-    // Delete-floor dialog: needs building + floor selection
-    var deleteFloorBuilding by remember { mutableStateOf("") }
-    var deleteFloorId by remember { mutableStateOf("") }
-    var deleteFloorBuildingExpanded by remember { mutableStateOf(false) }
-    var deleteFloorFloorExpanded by remember { mutableStateOf(false) }
 
     // Delete-building dialog: needs building selection
     var deleteBuildingId by remember { mutableStateOf("") }
@@ -60,7 +51,7 @@ fun CampusHomeScreen(
             Column {
                 Text(
                     text = uiState.selectedCampusName,
-                    fontSize = 24.sp,
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
@@ -94,7 +85,11 @@ fun CampusHomeScreen(
             }
         } else {
             uiState.availableBuildings.forEach { buildingId ->
-                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                OutlinedCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onEditBuilding(buildingId) }
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -109,7 +104,13 @@ fun CampusHomeScreen(
                         Spacer(modifier = Modifier.width(16.dp))
                         Text(
                             text = buildingId,
-                            style = MaterialTheme.typography.titleSmall
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = "Open building",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -168,16 +169,6 @@ fun CampusHomeScreen(
             Text("Add Building")
         }
 
-        FilledTonalButton(
-            onClick = onAddFloor,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = uiState.availableBuildings.isNotEmpty()
-        ) {
-            Icon(Icons.Default.Layers, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Add Floor Data")
-        }
-
         // ── Edit actions ─────────────────────────────────────────
         HorizontalDivider()
 
@@ -194,16 +185,6 @@ fun CampusHomeScreen(
             Icon(Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(8.dp))
             Text("Edit Campus Metadata")
-        }
-
-        FilledTonalButton(
-            onClick = { showEditBuildingPicker = true },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = uiState.availableBuildings.isNotEmpty()
-        ) {
-            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Edit Building Metadata")
         }
 
         // ── Tools ────────────────────────────────────────────────
@@ -242,23 +223,6 @@ fun CampusHomeScreen(
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Medium
         )
-
-        OutlinedButton(
-            onClick = {
-                deleteFloorBuilding = ""
-                deleteFloorId = ""
-                showDeleteFloorDialog = true
-            },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = uiState.availableBuildings.isNotEmpty(),
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = MaterialTheme.colorScheme.error
-            )
-        ) {
-            Icon(Icons.Default.LayersClear, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Delete Floor")
-        }
 
         OutlinedButton(
             onClick = {
@@ -308,109 +272,6 @@ fun CampusHomeScreen(
     }
 
     // ═══════ Dialogs ═══════
-
-    // ── Delete Floor Dialog ──────────────────────────────────────
-    if (showDeleteFloorDialog) {
-        AlertDialog(
-            onDismissRequest = { showDeleteFloorDialog = false },
-            title = { Text("Delete Floor") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        "Select the building and floor to delete. This action cannot be undone.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-
-                    // Building dropdown
-                    ExposedDropdownMenuBox(
-                        expanded = deleteFloorBuildingExpanded,
-                        onExpandedChange = { deleteFloorBuildingExpanded = it }
-                    ) {
-                        OutlinedTextField(
-                            value = deleteFloorBuilding.ifEmpty { "Select building" },
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Building") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = deleteFloorBuildingExpanded) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .menuAnchor(
-                                    type = ExposedDropdownMenuAnchorType.PrimaryNotEditable,
-                                    enabled = true
-                                )
-                        )
-                        ExposedDropdownMenu(
-                            expanded = deleteFloorBuildingExpanded,
-                            onDismissRequest = { deleteFloorBuildingExpanded = false }
-                        ) {
-                            uiState.availableBuildings.forEach { id ->
-                                DropdownMenuItem(
-                                    text = { Text(id) },
-                                    onClick = {
-                                        deleteFloorBuilding = id
-                                        deleteFloorId = ""
-                                        deleteFloorBuildingExpanded = false
-                                        viewModel.loadFloorsForBuildingPublic(id)
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    // Floor dropdown (populated after building selection)
-                    if (deleteFloorBuilding.isNotEmpty()) {
-                        ExposedDropdownMenuBox(
-                            expanded = deleteFloorFloorExpanded,
-                            onExpandedChange = { deleteFloorFloorExpanded = it }
-                        ) {
-                            OutlinedTextField(
-                                value = deleteFloorId.ifEmpty { "Select floor" },
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Floor") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = deleteFloorFloorExpanded) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor(
-                                        type = ExposedDropdownMenuAnchorType.PrimaryNotEditable,
-                                        enabled = true
-                                    )
-                            )
-                            ExposedDropdownMenu(
-                                expanded = deleteFloorFloorExpanded,
-                                onDismissRequest = { deleteFloorFloorExpanded = false }
-                            ) {
-                                uiState.availableFloors.forEach { id ->
-                                    DropdownMenuItem(
-                                        text = { Text(id) },
-                                        onClick = {
-                                            deleteFloorId = id
-                                            deleteFloorFloorExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.deleteFloor(deleteFloorBuilding, deleteFloorId)
-                        showDeleteFloorDialog = false
-                    },
-                    enabled = deleteFloorBuilding.isNotEmpty() && deleteFloorId.isNotEmpty() && !uiState.isLoading,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
-                    )
-                ) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteFloorDialog = false }) { Text("Cancel") }
-            }
-        )
-    }
 
     // ── Delete Building Dialog ───────────────────────────────────
     if (showDeleteBuildingDialog) {
@@ -514,53 +375,4 @@ fun CampusHomeScreen(
         )
     }
 
-    // ── Edit Building Picker Dialog ──────────────────────────────
-    if (showEditBuildingPicker) {
-        AlertDialog(
-            onDismissRequest = { showEditBuildingPicker = false },
-            title = { Text("Select Building to Edit") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    uiState.availableBuildings.forEach { buildingId ->
-                        OutlinedCard(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showEditBuildingPicker = false
-                                    onEditBuilding(buildingId)
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Default.Business,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text(
-                                    text = buildingId,
-                                    style = MaterialTheme.typography.titleSmall
-                                )
-                                Spacer(modifier = Modifier.weight(1f))
-                                Icon(
-                                    Icons.Default.ChevronRight,
-                                    contentDescription = "Edit",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showEditBuildingPicker = false }) { Text("Cancel") }
-            }
-        )
-    }
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
+import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -22,7 +23,7 @@ sealed class AdminRoute(val route: String) {
 // ── Admin screen entry point ───────────────────────────────────
 
 @Composable
-fun AdminScreen(viewModel: AdminViewModel = viewModel()) {
+fun AdminScreen(viewModel: AdminViewModel = viewModel(), onBack: () -> Unit = {}, onLogout: () -> Unit = {}) {
     val uiState by viewModel.uiState.collectAsState()
     val navController = rememberNavController()
 
@@ -45,6 +46,11 @@ fun AdminScreen(viewModel: AdminViewModel = viewModel()) {
                 SelectCampusScreen(
                     viewModel = viewModel,
                     uiState = uiState,
+                    onBack = onBack,
+                    onLogout = {
+                        AdminAuthRepository.logout()
+                        onLogout()
+                    },
                     onCampusSelected = { navController.navigate(AdminRoute.CampusHome.route) }
                 )
             }
@@ -57,10 +63,6 @@ fun AdminScreen(viewModel: AdminViewModel = viewModel()) {
                     onAddBuilding = {
                         viewModel.prepareAddBuilding()
                         navController.navigate(AdminRoute.AddBuilding.route)
-                    },
-                    onAddFloor = {
-                        viewModel.prepareAddFloor()
-                        navController.navigate(AdminRoute.AddFloor.route)
                     },
                     onEditCampus = {
                         viewModel.prepareEditCampus()
@@ -104,6 +106,11 @@ fun AdminScreen(viewModel: AdminViewModel = viewModel()) {
                 EditBuildingScreen(
                     viewModel = viewModel,
                     uiState = uiState,
+                    onAddFloorForBuilding = { buildingId ->
+                        viewModel.prepareAddFloor()
+                        viewModel.selectBuildingForFloor(buildingId)
+                        navController.navigate(AdminRoute.AddFloor.route)
+                    },
                     onBack = { navController.popBackStack() }
                 )
             }

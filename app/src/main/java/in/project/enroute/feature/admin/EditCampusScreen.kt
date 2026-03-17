@@ -36,7 +36,7 @@ fun EditCampusScreen(
             }
             Text(
                 text = "Edit Campus Metadata",
-                fontSize = 24.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold
             )
         }

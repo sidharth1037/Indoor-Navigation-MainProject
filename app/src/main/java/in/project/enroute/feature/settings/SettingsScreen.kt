@@ -9,11 +9,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -30,7 +32,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import `in`.project.enroute.feature.settings.components.HeightSettingItem
 
 // ── Reusable helpers ─────────────────────────────────────────────────────────
@@ -68,10 +69,9 @@ private fun SubsectionHeader(title: String) {
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel(),
-    onAdminLogin: () -> Unit = {}
+    onBack: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val isAdminLoggedIn by AdminAuthRepository.isLoggedIn.collectAsState()
 
     Column(
         modifier = Modifier
@@ -79,12 +79,16 @@ fun SettingsScreen(
             .padding(16.dp)
             .verticalScroll(rememberScrollState())
     ) {
-        Text(
-            text = "Settings",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Text(
+                text = "Settings",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
 
         // ─────────────────────────────────────────────────────────────────────
         // 1. USER PROFILE
@@ -269,36 +273,6 @@ fun SettingsScreen(
         Text("Replay count: ${uiState.stairReplayCount} steps", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         Slider(value = uiState.stairReplayCount.toFloat(), onValueChange = { viewModel.updateStairReplayCount(it.toInt()) }, valueRange = 0f..8f, steps = 7, modifier = Modifier.fillMaxWidth())
         Text("How many buffered steps to replay on the new floor. Default 3.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
-
-        // ─────────────────────────────────────────────────────────────────────
-        // 4. ADMIN
-        // ─────────────────────────────────────────────────────────────────────
-        SectionHeader(title = "ADMIN")
-
-        if (isAdminLoggedIn) {
-            Text(
-                text = "Signed in as ${AdminAuthRepository.currentUser?.email ?: "admin"}",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            OutlinedButton(
-                onClick = { AdminAuthRepository.logout() },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error
-                )
-            ) {
-                Text("Logout Admin")
-            }
-        } else {
-            OutlinedButton(
-                onClick = onAdminLogin,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Admin Login")
-            }
-        }
 
         Spacer(Modifier.height(24.dp))
     }

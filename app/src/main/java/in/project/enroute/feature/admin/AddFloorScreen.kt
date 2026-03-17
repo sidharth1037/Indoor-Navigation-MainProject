@@ -50,7 +50,7 @@ fun AddFloorScreen(
             }
             Text(
                 text = "Add Floor Data",
-                fontSize = 24.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold
             )
         }

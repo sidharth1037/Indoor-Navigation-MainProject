@@ -61,7 +61,6 @@ import `in`.project.enroute.feature.home.components.RoomInfoPanel
 import `in`.project.enroute.feature.home.components.StopTrackingButton
 import `in`.project.enroute.feature.home.components.StopTrackingConfirmDialog
 import `in`.project.enroute.feature.home.components.OverlayNavButtons
-import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -925,12 +924,10 @@ private fun HomeScreenContent(
                 }
 
                 // Settings & Admin overlay buttons — bottom left, above StopTrackingButton
-                val isAdminLoggedIn by AdminAuthRepository.isLoggedIn.collectAsState()
                 val stopTrackingVisible = pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin
                 val navButtonsBottomPadding = bottomButtonPadding + if (stopTrackingVisible) 59.dp else 0.dp
                 if (!pdrUiState.isSelectingOrigin) {
                     OverlayNavButtons(
-                        isAdminVisible = isAdminLoggedIn,
                         onSettingsClick = onSettingsClick,
                         onAdminClick = onAdminClick,
                         modifier = Modifier

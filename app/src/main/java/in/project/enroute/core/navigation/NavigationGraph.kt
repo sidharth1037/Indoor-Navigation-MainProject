@@ -9,6 +9,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import `in`.project.enroute.feature.admin.AdminScreen
+import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import `in`.project.enroute.feature.admin.auth.AdminLoginScreen
 import `in`.project.enroute.feature.floorplan.FloorPlanViewModel
 import `in`.project.enroute.feature.home.HomeScreen
@@ -40,6 +41,7 @@ fun NavigationGraph(
         composable(Screen.Welcome.route) {
             WelcomeScreen(
                 onCampusSelected = { campusId ->
+                    // Push Home on top of Welcome so back gesture returns here
                     navController.navigate(Screen.Home.createRoute(campusId)) {
                         launchSingleTop = true
                     }
@@ -50,7 +52,12 @@ fun NavigationGraph(
                     }
                 },
                 onAdminClick = {
-                    navController.navigate(Screen.Admin.route) {
+                    val adminRoute = if (AdminAuthRepository.isLoggedIn.value) {
+                        Screen.Admin.route
+                    } else {
+                        Screen.AdminLogin.route
+                    }
+                    navController.navigate(adminRoute) {
                         launchSingleTop = true
                     }
                 }
@@ -61,6 +68,7 @@ fun NavigationGraph(
             arguments = listOf(navArgument("campusId") { type = NavType.StringType })
         ) { backStackEntry ->
             val campusId = backStackEntry.arguments?.getString("campusId") ?: ""
+            // Scope ViewModels to this navigation destination's backstack entry
             val floorPlanViewModel: FloorPlanViewModel = viewModel(backStackEntry)
             val pdrViewModel: PdrViewModel = viewModel(backStackEntry)
             val navigationViewModel: NavigationViewModel = viewModel(backStackEntry)
@@ -75,23 +83,26 @@ fun NavigationGraph(
                     }
                 },
                 onAdminClick = {
-                    navController.navigate(Screen.Admin.route) {
+                    val adminRoute = if (AdminAuthRepository.isLoggedIn.value) {
+                        Screen.Admin.route
+                    } else {
+                        Screen.AdminLogin.route
+                    }
+                    navController.navigate(adminRoute) {
                         launchSingleTop = true
                     }
                 }
             )
         }
         composable(Screen.Settings.route) {
-            SettingsScreen(
-                onAdminLogin = {
-                    navController.navigate(Screen.AdminLogin.route)
-                }
-            )
+            SettingsScreen(onBack = { navController.popBackStack() })
         }
         composable(Screen.AdminLogin.route) {
             AdminLoginScreen(
                 onLoginSuccess = {
-                    navController.popBackStack()
+                    navController.navigate(Screen.Admin.route) {
+                        popUpTo(Screen.AdminLogin.route) { inclusive = true }
+                    }
                 },
                 onBack = {
                     navController.popBackStack()
@@ -99,7 +110,16 @@ fun NavigationGraph(
             )
         }
         composable(Screen.Admin.route) {
-            AdminScreen()
+            AdminScreen(
+                onBack = {
+                    navController.popBackStack()
+                },
+                onLogout = {
+                    navController.navigate(Screen.AdminLogin.route) {
+                        popUpTo(Screen.Admin.route) { inclusive = true }
+                    }
+                }
+            )
         }
     }
 }

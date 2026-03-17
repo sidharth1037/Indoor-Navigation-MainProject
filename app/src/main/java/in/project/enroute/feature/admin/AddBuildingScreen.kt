@@ -49,7 +49,7 @@ fun AddBuildingScreen(
             }
             Text(
                 text = "Add Building",
-                fontSize = 24.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold
             )
         }

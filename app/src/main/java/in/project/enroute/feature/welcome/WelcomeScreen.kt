@@ -64,7 +64,6 @@ import `in`.project.enroute.feature.campussearch.CampusSearchButton
 import `in`.project.enroute.feature.campussearch.CampusSearchOverlay
 import `in`.project.enroute.feature.campussearch.MORPH_DURATION_MS
 import `in`.project.enroute.feature.home.components.OverlayNavButtons
-import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -556,9 +555,7 @@ fun WelcomeScreen(
         }
 
         // ── Settings & Admin overlay buttons (bottom left) ───────
-        val isAdminLoggedIn by AdminAuthRepository.isLoggedIn.collectAsState()
         OverlayNavButtons(
-            isAdminVisible = isAdminLoggedIn,
             onSettingsClick = onSettingsClick,
             onAdminClick = onAdminClick,
             modifier = Modifier
