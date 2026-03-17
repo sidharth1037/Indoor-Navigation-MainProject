@@ -71,6 +71,8 @@ import `in`.project.enroute.feature.settings.data.SettingsRepository
 import android.util.Log
 import kotlin.math.abs
 import kotlinx.coroutines.launch
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 
 /**
  * Dialog for selecting the starting location for PDR tracking.
@@ -106,10 +108,25 @@ fun OriginSelectionDialog(
 
     // ── Single shared player ──────────────────────────────────────────────
     val player = remember {
-        ExoPlayer.Builder(context).build().apply {
-            repeatMode = Player.REPEAT_MODE_ALL
-            volume = 0f
-        }
+        // 1. Memory Management: Limit buffer size to prevent OOM on low-end devices.
+        // 5MB is generally more than enough for short, local UI tutorial videos.
+        val loadControl = DefaultLoadControl.Builder()
+            .setTargetBufferBytes(1024 * 1024 * 5)
+            .build()
+
+        // 2. Decoder Fallback: If the hardware decoder chokes on a video format,
+        // this tells ExoPlayer to try the software decoder instead of immediately crashing.
+        val renderersFactory = DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+
+        ExoPlayer.Builder(context)
+            .setLoadControl(loadControl)
+            .setRenderersFactory(renderersFactory)
+            .build()
+            .apply {
+                repeatMode = Player.REPEAT_MODE_ALL
+                volume = 0f
+            }
     }
     DisposableEffect(Unit) { onDispose { player.release() } }
 
