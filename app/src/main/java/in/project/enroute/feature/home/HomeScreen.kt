@@ -80,6 +80,7 @@ import `in`.project.enroute.feature.home.locationselection.TapLocationConfirmati
 import `in`.project.enroute.feature.home.locationselection.OriginPreviewOverlay
 import `in`.project.enroute.feature.home.locationselection.MapViewportUtils
 import `in`.project.enroute.feature.home.locationselection.WalkingTutorialDialog
+import `in`.project.enroute.feature.home.locationselection.DestinationPromptDialog
 import android.widget.Toast
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -394,6 +395,8 @@ private fun HomeScreenContent(
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var isMorphingToSearch by remember { mutableStateOf(false) }
+    // Track whether search was opened from the destination prompt dialog
+    var searchOpenedFromDialog by remember { mutableStateOf(false) }
     var showOriginDialog by remember { mutableStateOf(false) }
     var aimPressed by remember { mutableStateOf(false) }
     // When true, the AimButton was pressed before origin was set.
@@ -415,6 +418,9 @@ private fun HomeScreenContent(
     // Show walking tutorial after origin is confirmed, delayed for centering animation
     var showWalkingTutorial by remember { mutableStateOf(false) }
     var pendingWalkingTutorial by remember { mutableStateOf(false) }
+
+    // Show destination prompt after walking tutorial is dismissed
+    var showDestinationPrompt by remember { mutableStateOf(false) }
 
     // Stop tracking confirmation dialog
     var showStopTrackingConfirmDialog by remember { mutableStateOf(false) }
@@ -1160,7 +1166,22 @@ private fun HomeScreenContent(
                 // Walking tutorial dialog — shown after origin is confirmed
                 if (showWalkingTutorial) {
                     WalkingTutorialDialog(
-                        onDismiss = { showWalkingTutorial = false }
+                        onDismiss = {
+                            showWalkingTutorial = false
+                            showDestinationPrompt = true
+                        }
+                    )
+                }
+
+                // Destination prompt dialog — shown after walking tutorial
+                if (showDestinationPrompt) {
+                    DestinationPromptDialog(
+                        onSearchDestination = {
+                            showDestinationPrompt = false
+                            searchOpenedFromDialog = true
+                            isMorphingToSearch = true
+                        },
+                        onLater = { showDestinationPrompt = false }
                     )
                 }
                 
@@ -1278,6 +1299,11 @@ private fun HomeScreenContent(
                         onBack = { 
                             showSearch = false 
                             isMorphingToSearch = false
+                            // Only show destination prompt if search was opened from the dialog
+                            if (searchOpenedFromDialog) {
+                                showDestinationPrompt = true
+                                searchOpenedFromDialog = false
+                            }
                         },
                         onCenterView = onCenterView,
                         onRoomTap = { room -> requestRoomSelection(room) }
