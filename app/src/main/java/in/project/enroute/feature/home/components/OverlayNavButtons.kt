@@ -45,29 +45,28 @@ fun OverlayNavButtons(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Admin button (above settings)
-        Column {
-            Box(
-                modifier = Modifier
-                    .size(buttonSize)
-                    .shadow(elevation = 4.dp, shape = CircleShape)
-                    .background(color = primaryColor, shape = CircleShape)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { onAdminClick() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.AccountCircle,
-                    contentDescription = "Admin",
-                    tint = onPrimaryColor,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
+        Box(
+            modifier = Modifier
+                .size(buttonSize)
+                .shadow(elevation = 4.dp, shape = CircleShape)
+                .background(color = primaryColor, shape = CircleShape)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { onAdminClick() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.AccountCircle,
+                contentDescription = "Admin",
+                tint = onPrimaryColor,
+                modifier = Modifier.size(28.dp)
+            )
         }
 
-        // Settings button (always visible)
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Settings button (same size as Admin button)
         Box(
             modifier = Modifier
                 .size(buttonSize)
