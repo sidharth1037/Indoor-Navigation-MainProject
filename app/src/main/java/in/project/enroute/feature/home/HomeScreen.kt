@@ -82,6 +82,7 @@ import `in`.project.enroute.feature.home.locationselection.MapViewportUtils
 import `in`.project.enroute.feature.home.locationselection.WalkingTutorialDialog
 import `in`.project.enroute.feature.home.locationselection.DestinationPromptDialog
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.geometry.Offset
@@ -488,6 +489,54 @@ private fun HomeScreenContent(
     
     // Track if the pin is at an entrance (for rendering without vertical offset)
     val isPinAtEntrance = navUiState.hasPath && navUiState.targetEntrance != null
+
+    // ── Back button handling ─────────────────────────────────────────────────
+    // Intercept back press to dismiss overlays before navigating away
+    val hasActiveOverlay = showSearch ||
+            showLocationSearch ||
+            showOriginDialog ||
+            showDestinationPrompt ||
+            showStopTrackingConfirmDialog ||
+            showWalkingTutorial ||
+            locationCorridorPoints.isNotEmpty() ||
+            pdrUiState.isSelectingOrigin ||
+            overlayPinnedRoom != null ||
+            activePinnedRoom != null
+
+    BackHandler(enabled = hasActiveOverlay) {
+        when {
+            // Full-screen overlays first (highest priority)
+            showSearch -> {
+                showSearch = false
+                isMorphingToSearch = false
+            }
+            showLocationSearch -> {
+                showLocationSearch = false
+                isMorphingToSearch = false
+            }
+            // Dialogs
+            showOriginDialog -> showOriginDialog = false
+            showDestinationPrompt -> showDestinationPrompt = false
+            showStopTrackingConfirmDialog -> showStopTrackingConfirmDialog = false
+            showWalkingTutorial -> showWalkingTutorial = false
+            // Bottom panels
+            locationCorridorPoints.isNotEmpty() -> {
+                locationCorridorPoints = emptyList()
+                selectedEntranceIndex = null
+            }
+            pdrUiState.isSelectingOrigin -> {
+                pdrViewModel?.cancelOriginSelection()
+                pendingOriginLocation = null
+            }
+            // Room info panels
+            overlayPinnedRoom != null -> {
+                overlayPinnedRoom = null
+            }
+            activePinnedRoom != null -> {
+                onExitNavigation()
+            }
+        }
+    }
 
     // Animate bottom button offset when room info panel is visible
     val panelVisible = activePinnedRoom != null
