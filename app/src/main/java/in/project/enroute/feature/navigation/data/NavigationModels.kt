@@ -3,6 +3,28 @@ package `in`.project.enroute.feature.navigation.data
 import androidx.compose.ui.geometry.Offset
 import `in`.project.enroute.data.model.Entrance
 
+enum class TransitionDirection {
+    UP,
+    DOWN
+}
+
+/**
+ * Explicit floor transition metadata between two consecutive floor segments.
+ *
+ * Stores the chosen stair entry and exit anchors so turn-by-turn guidance
+ * can produce stable upstairs/downstairs prompts without re-inferring stair context.
+ */
+data class PathTransition(
+    val fromSegmentIndex: Int,
+    val toSegmentIndex: Int,
+    val fromFloorId: String,
+    val toFloorId: String,
+    val direction: TransitionDirection,
+    val entryPoint: Offset,
+    val exitPoint: Offset,
+    val buildingId: String
+)
+
 /**
  * A single segment of a multi-floor navigation path.
  *
@@ -34,6 +56,7 @@ data class FloorPathSegment(
  */
 data class MultiFloorPath(
     val segments: List<FloorPathSegment> = emptyList(),
+    val transitions: List<PathTransition> = emptyList(),
     val totalFloors: Int = 0,
     val isMultiFloor: Boolean = false
 ) {

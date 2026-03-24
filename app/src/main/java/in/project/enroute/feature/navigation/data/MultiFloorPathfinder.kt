@@ -4,6 +4,8 @@ import android.util.Log
 import androidx.compose.ui.geometry.Offset
 import `in`.project.enroute.data.model.Wall
 import `in`.project.enroute.feature.navigation.NavigationRepository
+import `in`.project.enroute.feature.navigation.data.PathTransition
+import `in`.project.enroute.feature.navigation.data.TransitionDirection
 import kotlin.math.sqrt
 
 /**
@@ -76,6 +78,7 @@ class MultiFloorPathfinder {
             )
             return MultiFloorPath(
                 segments = listOf(segment),
+                transitions = emptyList(),
                 totalFloors = 1,
                 isMultiFloor = false
             )
@@ -279,6 +282,7 @@ class MultiFloorPathfinder {
         precalculatedGrids: Map<String, PrecalculatedFloorGrid>
     ): MultiFloorPath {
         val segments = mutableListOf<FloorPathSegment>()
+        val transitions = mutableListOf<PathTransition>()
         val visitedFloors = mutableSetOf<String>()
 
         var currentPosition = start
@@ -319,6 +323,20 @@ class MultiFloorPathfinder {
                     points = path
                 ))
 
+                val fromSegmentIndex = segments.lastIndex
+                transitions.add(
+                    PathTransition(
+                        fromSegmentIndex = fromSegmentIndex,
+                        toSegmentIndex = fromSegmentIndex + 1,
+                        fromFloorId = floorId,
+                        toFloorId = if (goingUp) currentConnection.topFloorId else currentConnection.bottomFloorId,
+                        direction = if (goingUp) TransitionDirection.UP else TransitionDirection.DOWN,
+                        entryPoint = directionalEntryPoint(currentConnection, goingUp),
+                        exitPoint = nextFloorStart,
+                        buildingId = currentConnection.buildingId
+                    )
+                )
+
                 // Exit midpoint is the start position on the next floor
                 // (campus-wide coordinates are shared, so it's already valid)
                 currentPosition = nextFloorStart
@@ -346,6 +364,7 @@ class MultiFloorPathfinder {
 
         return MultiFloorPath(
             segments = segments,
+            transitions = transitions,
             totalFloors = visitedFloors.size,
             isMultiFloor = visitedFloors.size > 1
         )

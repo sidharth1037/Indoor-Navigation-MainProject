@@ -46,19 +46,19 @@ class StairwellTransitionAnimator(
     /** Maximum estimated steps (caps long staircases). */
     private val maxEstimatedSteps: Int = 20,
     /** Minimum progress before any arrival/cancel check fires. */
-    private val minProgressForArrival: Float = 0.3f,
+    private var minProgressForArrival: Float = 0.3f,
     /** Consecutive "walking" labels needed for arrival. */
-    private val walkingArrivalCount: Int = 2,
+    private var walkingArrivalCount: Int = 2,
     /** Consecutive opposite-direction labels needed for cancel. */
-    private val oppositeDirectionCancelCount: Int = 3,
+    private var oppositeDirectionCancelCount: Int = 3,
     /** Minimum total steps before cancellation is allowed. */
-    private val minStepsBeforeCancel: Int = 3,
+    private var minStepsBeforeCancel: Int = 3,
     /** Max heading deviation from opposite axis (radians) for arrival. */
-    private val arrivalHeadingThreshold: Float = 0.785f,   // 45°
+    private var arrivalHeadingThreshold: Float = 0.785f,   // 45°
     /** Min heading deviation from stair axis (radians) for return. */
-    private val returnHeadingThreshold: Float = 2.094f,     // 120°
+    private var returnHeadingThreshold: Float = 2.094f,     // 120°
     /** Consecutive "idle" labels to mark a pause. */
-    private val idleThreshold: Int = 5
+    private var idleThreshold: Int = 5
 ) {
 
     companion object {
@@ -120,12 +120,46 @@ class StairwellTransitionAnimator(
     // ── Lifecycle ───────────────────────────────────────────────────────
 
     /**
+     * Hot-updates stair arrival/return heuristics.
+     */
+    fun updateSettings(
+        minProgressForArrival: Float? = null,
+        walkingArrivalCount: Int? = null,
+        oppositeDirectionCancelCount: Int? = null,
+        minStepsBeforeCancel: Int? = null,
+        arrivalHeadingThreshold: Float? = null,
+        returnHeadingThreshold: Float? = null,
+        idleThreshold: Int? = null
+    ) {
+        if (minProgressForArrival != null) {
+            this.minProgressForArrival = minProgressForArrival.coerceIn(0f, 1f)
+        }
+        if (walkingArrivalCount != null) {
+            this.walkingArrivalCount = walkingArrivalCount.coerceAtLeast(1)
+        }
+        if (oppositeDirectionCancelCount != null) {
+            this.oppositeDirectionCancelCount = oppositeDirectionCancelCount.coerceAtLeast(1)
+        }
+        if (minStepsBeforeCancel != null) {
+            this.minStepsBeforeCancel = minStepsBeforeCancel.coerceAtLeast(0)
+        }
+        if (arrivalHeadingThreshold != null) {
+            this.arrivalHeadingThreshold = arrivalHeadingThreshold
+        }
+        if (returnHeadingThreshold != null) {
+            this.returnHeadingThreshold = returnHeadingThreshold
+        }
+        if (idleThreshold != null) {
+            this.idleThreshold = idleThreshold.coerceAtLeast(1)
+        }
+    }
+
+    /**
      * Begins a stairwell transition animation.
      *
-     * @param event   The transition event from the detector.
-     * @param heading Current user heading at the moment of entry.
+    * @param event   The transition event from the detector.
      */
-    fun startTransition(event: StairTransitionEvent, heading: Float) {
+    fun startTransition(event: StairTransitionEvent) {
         activeEvent = event
         startPosition = event.startPosition
         endPosition = event.endPosition

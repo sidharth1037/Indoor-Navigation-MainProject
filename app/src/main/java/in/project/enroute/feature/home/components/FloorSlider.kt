@@ -2,6 +2,7 @@ package `in`.project.enroute.feature.home.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -44,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -53,13 +56,19 @@ fun FloorSlider(
     availableFloors: List<Float>,
     currentFloor: Float,
     onFloorChange: (Float) -> Unit,
+    instructionText: String = "",
+    isNavigationActive: Boolean = false,
+    hideControlsForNavigation: Boolean = false,
+    showCurrentFloorLabelOnly: Boolean = false,
+    currentFloorLabel: String = "",
+    navigationExpandedHeight: Dp = 136.dp,
     modifier: Modifier = Modifier,
     isVisible: Boolean = true,
     disabled: Boolean = false,
     onHeightMeasured: (Int) -> Unit = {}
 ) {
     AnimatedVisibility(
-        visible = isVisible && availableFloors.isNotEmpty(),
+        visible = isVisible,
         enter = fadeIn() + slideInHorizontally { -it },
         exit = fadeOut() + slideOutHorizontally { -it },
         modifier = modifier
@@ -69,6 +78,12 @@ fun FloorSlider(
             availableFloors = availableFloors,
             currentFloor = currentFloor,
             onFloorChange = onFloorChange,
+            instructionText = instructionText,
+            isNavigationActive = isNavigationActive,
+            hideControlsForNavigation = hideControlsForNavigation,
+            showCurrentFloorLabelOnly = showCurrentFloorLabelOnly,
+            currentFloorLabel = currentFloorLabel,
+            navigationExpandedHeight = navigationExpandedHeight,
             disabled = disabled,
             onHeightMeasured = onHeightMeasured
         )
@@ -81,6 +96,12 @@ private fun FloorSliderContent(
     availableFloors: List<Float>,
     currentFloor: Float,
     onFloorChange: (Float) -> Unit,
+    instructionText: String,
+    isNavigationActive: Boolean,
+    hideControlsForNavigation: Boolean,
+    showCurrentFloorLabelOnly: Boolean,
+    currentFloorLabel: String,
+    navigationExpandedHeight: Dp,
     disabled: Boolean = false,
     onHeightMeasured: (Int) -> Unit = {}
 ) {
@@ -95,62 +116,105 @@ private fun FloorSliderContent(
     }
 
     val safeFloors = lastValidFloors.sorted()
-    val safeCurrentFloor = if (lastValidFloors.contains(currentFloor)) currentFloor else safeFloors.firstOrNull() ?: 0f
+    val safeCurrentFloor = if (lastValidFloors.contains(currentFloor)) currentFloor else safeFloors.firstOrNull() ?: currentFloor
     val currentIndex = safeFloors.indexOf(safeCurrentFloor).coerceAtLeast(0)
     val prevFloor = if (currentIndex > 0) safeFloors[currentIndex - 1] else null
     val nextFloor = if (currentIndex < safeFloors.size - 1) safeFloors[currentIndex + 1] else null
+    val showTopContent = !hideControlsForNavigation
+
+    val minHeight by animateDpAsState(
+        targetValue = if (isNavigationActive) navigationExpandedHeight else 0.dp,
+        animationSpec = tween(durationMillis = 300),
+        label = "floorSliderMinHeight"
+    )
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = minHeight)
             .onSizeChanged { onHeightMeasured(it.height) }
             .background(
                 color = MaterialTheme.colorScheme.primaryContainer,
                 shape = RoundedCornerShape(28.dp)
             )
             .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = if (hideControlsForNavigation) Arrangement.Center else Arrangement.spacedBy(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        AnimatedContent(
-            targetState = lastValidBuildingName,
-            transitionSpec = {
-                val duration = 240
-                val exit = slideOutHorizontally(
-                    targetOffsetX = { -it },
-                    animationSpec = tween(durationMillis = duration)
-                ) + fadeOut(animationSpec = tween(durationMillis = duration))
+        AnimatedVisibility(
+            visible = showTopContent,
+            enter = fadeIn(tween(220)),
+            exit = fadeOut(tween(180))
+        ) {
+            Column(
+                modifier = Modifier,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                AnimatedContent(
+                    targetState = lastValidBuildingName,
+                    transitionSpec = {
+                        val duration = 240
+                        val exit = slideOutHorizontally(
+                            targetOffsetX = { -it },
+                            animationSpec = tween(durationMillis = duration)
+                        ) + fadeOut(animationSpec = tween(durationMillis = duration))
 
-                val enter = slideInHorizontally(
-                    initialOffsetX = { it },
-                    animationSpec = tween(durationMillis = duration, delayMillis = duration)
-                ) + fadeIn(animationSpec = tween(durationMillis = duration, delayMillis = duration))
+                        val enter = slideInHorizontally(
+                            initialOffsetX = { it },
+                            animationSpec = tween(durationMillis = duration, delayMillis = duration)
+                        ) + fadeIn(animationSpec = tween(durationMillis = duration, delayMillis = duration))
 
-                enter.togetherWith(exit)
-            },
-            label = "buildingNameTransition"
-        ) { name ->
-            if (name.isNotEmpty()) {
-                Text(
-                    text = name,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    textAlign = TextAlign.Center,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
+                        enter.togetherWith(exit)
+                    },
+                    label = "buildingNameTransition"
+                ) { name ->
+                    if (name.isNotEmpty()) {
+                        Text(
+                            text = name,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            textAlign = TextAlign.Center,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                FloorControls(
+                    currentFloor = safeCurrentFloor,
+                    availableFloors = safeFloors,
+                    prevFloor = prevFloor,
+                    nextFloor = nextFloor,
+                    onFloorChange = onFloorChange,
+                    disabled = disabled
                 )
             }
         }
 
-        FloorControls(
-            currentFloor = safeCurrentFloor,
-            availableFloors = safeFloors,
-            prevFloor = prevFloor,
-            nextFloor = nextFloor,
-            onFloorChange = onFloorChange,
-            disabled = disabled
-        )
+        if (showCurrentFloorLabelOnly && currentFloorLabel.isNotBlank()) {
+            Text(
+                text = currentFloorLabel,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                textAlign = TextAlign.Center
+            )
+        }
+
+        if (isNavigationActive && instructionText.isNotBlank()) {
+            Text(
+                text = instructionText,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                textAlign = TextAlign.Center,
+                maxLines = if (hideControlsForNavigation) 4 else 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
 }
 

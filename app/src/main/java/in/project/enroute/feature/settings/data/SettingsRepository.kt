@@ -29,9 +29,18 @@ class SettingsRepository(private val context: Context) {
         // Stair detection / model
         val ML_MODEL          = stringPreferencesKey("ml_model")
         val STAIR_ENTRY_THRESHOLD  = intPreferencesKey("stair_entry_threshold")
+        val STAIR_MIN_CONFIDENCE   = floatPreferencesKey("stair_min_confidence")
         val STAIR_PROXIMITY_RADIUS = floatPreferencesKey("stair_proximity_radius")
         val STAIR_LOOKBACK         = intPreferencesKey("stair_lookback")
         val STAIR_REPLAY_COUNT     = intPreferencesKey("stair_replay_count")
+        val STAIR_ARRIVAL_LOOKBACK = intPreferencesKey("stair_arrival_lookback")
+        val STAIR_MIN_PROGRESS_FOR_ARRIVAL = floatPreferencesKey("stair_min_progress_for_arrival")
+        val STAIR_WALKING_ARRIVAL_COUNT = intPreferencesKey("stair_walking_arrival_count")
+        val STAIR_OPPOSITE_CANCEL_COUNT = intPreferencesKey("stair_opposite_cancel_count")
+        val STAIR_MIN_STEPS_BEFORE_CANCEL = intPreferencesKey("stair_min_steps_before_cancel")
+        val STAIR_ARRIVAL_HEADING_DEG = floatPreferencesKey("stair_arrival_heading_deg")
+        val STAIR_RETURN_HEADING_DEG = floatPreferencesKey("stair_return_heading_deg")
+        val STAIR_IDLE_THRESHOLD = intPreferencesKey("stair_idle_threshold")
         // Stride tuning — height & turn
         val HEIGHT_K_INFLUENCE = floatPreferencesKey("height_k_influence")
         val TURN_WINDOW        = intPreferencesKey("turn_window")
@@ -134,6 +143,10 @@ class SettingsRepository(private val context: Context) {
     val stairEntryThreshold: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_ENTRY_THRESHOLD] }
     suspend fun saveStairEntryThreshold(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_ENTRY_THRESHOLD] = v }
 
+    /** Minimum confidence to accept upstairs/downstairs labels. Null = default 0.45. */
+    val stairMinConfidence: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_MIN_CONFIDENCE] }
+    suspend fun saveStairMinConfidence(v: Float) = context.dataStore.edit { it[PreferencesKeys.STAIR_MIN_CONFIDENCE] = v }
+
     /** Max distance (campus units) from a stairwell edge to trigger proximity detection. Null = default 150. */
     val stairProximityRadius: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_PROXIMITY_RADIUS] }
     suspend fun saveStairProximityRadius(v: Float) = context.dataStore.edit { it[PreferencesKeys.STAIR_PROXIMITY_RADIUS] = v }
@@ -145,6 +158,38 @@ class SettingsRepository(private val context: Context) {
     /** How many buffered steps to replay on the new floor. Null = default 3. */
     val stairReplayCount: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_REPLAY_COUNT] }
     suspend fun saveStairReplayCount(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_REPLAY_COUNT] = v }
+
+    /** Steps back from current stair position used to estimate destination-floor exit point. Null = default 3. */
+    val stairArrivalLookback: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_ARRIVAL_LOOKBACK] }
+    suspend fun saveStairArrivalLookback(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_ARRIVAL_LOOKBACK] = v }
+
+    /** Minimum climb progress before arrival/cancel checks are allowed. Null = default 0.30. */
+    val stairMinProgressForArrival: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_MIN_PROGRESS_FOR_ARRIVAL] }
+    suspend fun saveStairMinProgressForArrival(v: Float) = context.dataStore.edit { it[PreferencesKeys.STAIR_MIN_PROGRESS_FOR_ARRIVAL] = v }
+
+    /** Walking labels required to confirm arrival on the destination floor. Null = default 2. */
+    val stairWalkingArrivalCount: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_WALKING_ARRIVAL_COUNT] }
+    suspend fun saveStairWalkingArrivalCount(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_WALKING_ARRIVAL_COUNT] = v }
+
+    /** Opposite-direction stair labels required to cancel as a U-turn. Null = default 3. */
+    val stairOppositeCancelCount: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_OPPOSITE_CANCEL_COUNT] }
+    suspend fun saveStairOppositeCancelCount(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_OPPOSITE_CANCEL_COUNT] = v }
+
+    /** Minimum stair steps before cancellation logic is allowed. Null = default 3. */
+    val stairMinStepsBeforeCancel: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_MIN_STEPS_BEFORE_CANCEL] }
+    suspend fun saveStairMinStepsBeforeCancel(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_MIN_STEPS_BEFORE_CANCEL] = v }
+
+    /** Heading window around opposite stair axis used for arrival turn detection (degrees). Null = default 45. */
+    val stairArrivalHeadingDeg: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_ARRIVAL_HEADING_DEG] }
+    suspend fun saveStairArrivalHeadingDeg(v: Float) = context.dataStore.edit { it[PreferencesKeys.STAIR_ARRIVAL_HEADING_DEG] = v }
+
+    /** Heading difference from stair axis required for return/cancel detection (degrees). Null = default 120. */
+    val stairReturnHeadingDeg: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_RETURN_HEADING_DEG] }
+    suspend fun saveStairReturnHeadingDeg(v: Float) = context.dataStore.edit { it[PreferencesKeys.STAIR_RETURN_HEADING_DEG] = v }
+
+    /** Consecutive idle labels that count as stair pause before walk-based arrival. Null = default 5. */
+    val stairIdleThreshold: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STAIR_IDLE_THRESHOLD] }
+    suspend fun saveStairIdleThreshold(v: Int) = context.dataStore.edit { it[PreferencesKeys.STAIR_IDLE_THRESHOLD] = v }
 
     // ── Stride tuning ─ height & turn ─────────────────────────────────────
 

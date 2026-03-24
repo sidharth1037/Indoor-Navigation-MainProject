@@ -4,6 +4,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Handler
+import android.os.HandlerThread
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +29,8 @@ class HeadingDetector(private val sensorManager: SensorManager) : SensorEventLis
     private var isRunning = false
     private var isTrackingMode = false
     private var hasEmittedSinceStart = false
+    private var sensorThread: HandlerThread? = null
+    private var sensorHandler: Handler? = null
 
     // Reusable arrays to avoid allocation in onSensorChanged
     private val rotationMatrix = FloatArray(9)
@@ -61,12 +65,17 @@ class HeadingDetector(private val sensorManager: SensorManager) : SensorEventLis
         isTrackingMode = trackingMode
         hasEmittedSinceStart = false
 
+        if (sensorThread == null) {
+            sensorThread = HandlerThread("HeadingDetectorThread").apply { start() }
+            sensorHandler = Handler(sensorThread!!.looper)
+        }
+
         val rate = if (trackingMode) SensorManager.SENSOR_DELAY_GAME
                    else SensorManager.SENSOR_DELAY_UI
 
         val rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         rotationSensor?.let {
-            sensorManager.registerListener(this, it, rate)
+            sensorManager.registerListener(this, it, rate, sensorHandler)
             isRunning = true
         }
     }
@@ -79,6 +88,9 @@ class HeadingDetector(private val sensorManager: SensorManager) : SensorEventLis
         
         sensorManager.unregisterListener(this)
         isRunning = false
+        sensorThread?.quitSafely()
+        sensorThread = null
+        sensorHandler = null
     }
 
     /**

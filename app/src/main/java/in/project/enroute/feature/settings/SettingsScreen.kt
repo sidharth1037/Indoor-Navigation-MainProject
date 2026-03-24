@@ -259,6 +259,11 @@ fun SettingsScreen(
         Slider(value = uiState.stairEntryThreshold.toFloat(), onValueChange = { viewModel.updateStairEntryThreshold(it.toInt()) }, valueRange = 1f..5f, steps = 3, modifier = Modifier.fillMaxWidth())
         Text("Consecutive stair labels needed before triggering transition. Default 2.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
 
+        // Label confidence
+        Text("Label confidence: ${"%.2f".format(uiState.stairMinConfidence)}", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairMinConfidence, onValueChange = { viewModel.updateStairMinConfidence(it) }, valueRange = 0.20f..0.90f, steps = 13, modifier = Modifier.fillMaxWidth())
+        Text("Minimum confidence for upstairs/downstairs labels. Lower = faster but noisier. Default 0.45.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
         // Edge proximity radius
         Text("Edge proximity: ${uiState.stairProximityRadius.toInt()} units", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         Slider(value = uiState.stairProximityRadius, onValueChange = { viewModel.updateStairProximityRadius(it) }, valueRange = 50f..400f, steps = 13, modifier = Modifier.fillMaxWidth())
@@ -273,6 +278,44 @@ fun SettingsScreen(
         Text("Replay count: ${uiState.stairReplayCount} steps", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         Slider(value = uiState.stairReplayCount.toFloat(), onValueChange = { viewModel.updateStairReplayCount(it.toInt()) }, valueRange = 0f..8f, steps = 7, modifier = Modifier.fillMaxWidth())
         Text("How many buffered steps to replay on the new floor. Default 3.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        // Arrival lookback
+        Text("Arrival lookback: ${uiState.stairArrivalLookback} steps", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairArrivalLookback.toFloat(), onValueChange = { viewModel.updateStairArrivalLookback(it.toInt()) }, valueRange = 1f..8f, steps = 6, modifier = Modifier.fillMaxWidth())
+        Text("Steps back used to estimate destination-floor exit position. Default 3.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        Spacer(Modifier.height(8.dp))
+
+        // ── Stair Exit Logic subsection ────────────────────────────────
+        SubsectionHeader("Stair Exit Logic")
+
+        Text("Min progress for exit checks: ${"%.2f".format(uiState.stairMinProgressForArrival)}", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairMinProgressForArrival, onValueChange = { viewModel.updateStairMinProgressForArrival(it) }, valueRange = 0.05f..0.80f, steps = 14, modifier = Modifier.fillMaxWidth())
+        Text("No arrival/cancel checks before this fraction of stair progress. Default 0.30.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        Text("Walking labels for arrival: ${uiState.stairWalkingArrivalCount}", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairWalkingArrivalCount.toFloat(), onValueChange = { viewModel.updateStairWalkingArrivalCount(it.toInt()) }, valueRange = 1f..5f, steps = 3, modifier = Modifier.fillMaxWidth())
+        Text("Consecutive walking labels needed to confirm destination-floor arrival. Default 2.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        Text("Opposite labels for cancel: ${uiState.stairOppositeCancelCount}", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairOppositeCancelCount.toFloat(), onValueChange = { viewModel.updateStairOppositeCancelCount(it.toInt()) }, valueRange = 1f..6f, steps = 4, modifier = Modifier.fillMaxWidth())
+        Text("Consecutive opposite stair labels needed to treat movement as return/cancel. Default 3.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        Text("Min steps before cancel: ${uiState.stairMinStepsBeforeCancel}", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairMinStepsBeforeCancel.toFloat(), onValueChange = { viewModel.updateStairMinStepsBeforeCancel(it.toInt()) }, valueRange = 0f..8f, steps = 8, modifier = Modifier.fillMaxWidth())
+        Text("Prevents very early accidental cancellation. Default 3.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        Text("Arrival heading window: ${"%.0f".format(uiState.stairArrivalHeadingDeg)}°", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairArrivalHeadingDeg, onValueChange = { viewModel.updateStairArrivalHeadingDeg(it) }, valueRange = 10f..90f, steps = 15, modifier = Modifier.fillMaxWidth())
+        Text("Heading window around opposite stair axis used for turn-and-walk arrival. Default 45°.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        Text("Return heading threshold: ${"%.0f".format(uiState.stairReturnHeadingDeg)}°", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairReturnHeadingDeg, onValueChange = { viewModel.updateStairReturnHeadingDeg(it) }, valueRange = 60f..170f, steps = 21, modifier = Modifier.fillMaxWidth())
+        Text("Heading difference from stair axis required to flag return/cancel. Default 120°.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        Text("Idle labels for pause: ${uiState.stairIdleThreshold}", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(value = uiState.stairIdleThreshold.toFloat(), onValueChange = { viewModel.updateStairIdleThreshold(it.toInt()) }, valueRange = 1f..10f, steps = 8, modifier = Modifier.fillMaxWidth())
+        Text("Idle streak that marks pause-on-stairs before walk-based arrival. Default 5.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
 
         Spacer(Modifier.height(24.dp))
     }

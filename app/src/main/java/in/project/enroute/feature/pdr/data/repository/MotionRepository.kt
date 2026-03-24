@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlin.math.abs
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.sqrt
 
 /**
@@ -34,6 +34,7 @@ class MotionRepository(private val appContext: Context) {
     // Dedup: avoid emitting identical / near-identical events
     private var lastLabel: String? = null
     private var lastConfidence = 0f
+    private val inferenceInFlight = AtomicBoolean(false)
 
     /**
      * Lazily initializes the classifier and resets buffers.
@@ -48,6 +49,7 @@ class MotionRepository(private val appContext: Context) {
         sensorBuffer.clear()
         lastLabel = null
         lastConfidence = 0f
+        inferenceInFlight.set(false)
         _motionEvent.value = null
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     }
@@ -67,6 +69,7 @@ class MotionRepository(private val appContext: Context) {
         classifier?.close()
         classifier = null
         sensorBuffer.clear()
+        inferenceInFlight.set(false)
         _motionEvent.value = null
     }
 
@@ -82,17 +85,25 @@ class MotionRepository(private val appContext: Context) {
         if (sensorBuffer.size >= cls.meta.windowSize) {
             val window = sensorBuffer.toTypedArray()
 
-            scope?.launch {
-                val probs = cls.predict(window)
-                val bestIdx = probs.indices.maxByOrNull { probs[it] } ?: return@launch
-                val label = cls.meta.classNames[bestIdx].lowercase()
-                val conf = probs[bestIdx]
+            // Keep only one active inference; drop stale windows under load
+            // so labels stay near real-time (important for stair transitions).
+            val acquired = inferenceInFlight.compareAndSet(false, true)
+            if (acquired) {
+                scope?.launch {
+                    try {
+                        val probs = cls.predict(window)
+                        val bestIdx = probs.indices.maxByOrNull { probs[it] } ?: return@launch
+                        val label = cls.meta.classNames[bestIdx].lowercase()
+                        val conf = probs[bestIdx]
 
-                // Only emit on meaningful change to reduce UI recompositions
-                if (label != lastLabel || abs(conf - lastConfidence) > 0.05f) {
-                    lastLabel = label
-                    lastConfidence = conf
-                    _motionEvent.value = MotionEvent(label, conf)
+                        // Emit every inference so stair transition logic receives
+                        // the full temporal sequence of labels.
+                        lastLabel = label
+                        lastConfidence = conf
+                        _motionEvent.value = MotionEvent(label, conf)
+                    } finally {
+                        inferenceInFlight.set(false)
+                    }
                 }
             }
 

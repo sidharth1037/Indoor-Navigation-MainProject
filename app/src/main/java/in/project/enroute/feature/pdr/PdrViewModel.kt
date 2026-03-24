@@ -212,6 +212,11 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
+            settingsRepository.stairMinConfidence.collect { v ->
+                if (v != null) repository.updateStairSettings(minConfidence = v)
+            }
+        }
+        viewModelScope.launch {
             settingsRepository.stairLookback.collect { v ->
                 if (v != null) repository.updateStairSettings(lookback = v)
             }
@@ -224,6 +229,46 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             settingsRepository.stairProximityRadius.collect { v ->
                 if (v != null) repository.updateStairSettings(proximityRadius = v)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.stairArrivalLookback.collect { v ->
+                if (v != null) repository.updateStairSettings(arrivalLookback = v)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.stairMinProgressForArrival.collect { v ->
+                if (v != null) repository.updateStairSettings(minProgressForArrival = v)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.stairWalkingArrivalCount.collect { v ->
+                if (v != null) repository.updateStairSettings(walkingArrivalCount = v)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.stairOppositeCancelCount.collect { v ->
+                if (v != null) repository.updateStairSettings(oppositeDirectionCancelCount = v)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.stairMinStepsBeforeCancel.collect { v ->
+                if (v != null) repository.updateStairSettings(minStepsBeforeCancel = v)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.stairArrivalHeadingDeg.collect { v ->
+                if (v != null) repository.updateStairSettings(arrivalHeadingThresholdDeg = v)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.stairReturnHeadingDeg.collect { v ->
+                if (v != null) repository.updateStairSettings(returnHeadingThresholdDeg = v)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.stairIdleThreshold.collect { v ->
+                if (v != null) repository.updateStairSettings(idleThreshold = v)
             }
         }
 

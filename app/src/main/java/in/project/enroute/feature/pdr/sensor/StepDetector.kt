@@ -4,6 +4,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Handler
+import android.os.HandlerThread
 import `in`.project.enroute.feature.pdr.data.model.StepDetectionConfig
 import kotlin.math.abs
 
@@ -28,6 +30,8 @@ class StepDetector(private val sensorManager: SensorManager) : SensorEventListen
 
     private var config = StepDetectionConfig()
     private var isRunning = false
+    private var sensorThread: HandlerThread? = null
+    private var sensorHandler: Handler? = null
 
     // ── High-pass filter state ──────────────────────────────────────────────
     private var prevRawZ = 0f
@@ -45,9 +49,13 @@ class StepDetector(private val sensorManager: SensorManager) : SensorEventListen
 
     fun start() {
         if (isRunning) return
+        if (sensorThread == null) {
+            sensorThread = HandlerThread("StepDetectorThread").apply { start() }
+            sensorHandler = Handler(sensorThread!!.looper)
+        }
         val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         accelerometer?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME, sensorHandler)
             isRunning = true
             resetState()
         }
@@ -58,6 +66,9 @@ class StepDetector(private val sensorManager: SensorManager) : SensorEventListen
         sensorManager.unregisterListener(this)
         isRunning = false
         resetState()
+        sensorThread?.quitSafely()
+        sensorThread = null
+        sensorHandler = null
     }
 
     private fun resetState() {

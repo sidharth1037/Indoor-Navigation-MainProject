@@ -22,6 +22,7 @@ import `in`.project.enroute.feature.pdr.data.model.StrideConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -209,17 +210,45 @@ class PdrRepository {
     fun updateStairSettings(
         entryThreshold: Int? = null,
         proximityRadius: Float? = null,
+        minConfidence: Float? = null,
         lookback: Int? = null,
-        replayCount: Int? = null
+        replayCount: Int? = null,
+        arrivalLookback: Int? = null,
+        minProgressForArrival: Float? = null,
+        walkingArrivalCount: Int? = null,
+        oppositeDirectionCancelCount: Int? = null,
+        minStepsBeforeCancel: Int? = null,
+        arrivalHeadingThresholdDeg: Float? = null,
+        returnHeadingThresholdDeg: Float? = null,
+        idleThreshold: Int? = null
     ) {
-        if (entryThreshold != null || proximityRadius != null) {
+        if (entryThreshold != null || proximityRadius != null || minConfidence != null) {
             stairDetector.updateSettings(
                 entryThreshold = entryThreshold,
-                proximityRadius = proximityRadius
+                proximityRadius = proximityRadius,
+                minConfidence = minConfidence
             )
         }
         if (lookback != null)    stairLookback    = lookback
         if (replayCount != null) stairReplayCount = replayCount
+        if (arrivalLookback != null) stairArrivalLookback = arrivalLookback
+
+        val arrivalRad = arrivalHeadingThresholdDeg?.let {
+            (it.coerceIn(5f, 180f) / 180f * PI).toFloat()
+        }
+        val returnRad = returnHeadingThresholdDeg?.let {
+            (it.coerceIn(10f, 180f) / 180f * PI).toFloat()
+        }
+
+        stairAnimator.updateSettings(
+            minProgressForArrival = minProgressForArrival,
+            walkingArrivalCount = walkingArrivalCount,
+            oppositeDirectionCancelCount = oppositeDirectionCancelCount,
+            minStepsBeforeCancel = minStepsBeforeCancel,
+            arrivalHeadingThreshold = arrivalRad,
+            returnHeadingThreshold = returnRad,
+            idleThreshold = idleThreshold
+        )
     }
 
     /**
@@ -566,7 +595,7 @@ class PdrRepository {
 
         // Transition confirmed — start the animation
         stairStepBuffer.clear()
-        stairAnimator.startTransition(event, heading)
+        stairAnimator.startTransition(event)
         stairDetector.reset()
 
         // Flush the correction engine buffer before entering stairs

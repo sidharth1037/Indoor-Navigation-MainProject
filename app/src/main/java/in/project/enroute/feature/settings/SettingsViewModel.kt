@@ -33,9 +33,18 @@ data class SettingsUiState(
     // ML model & stair detection
     val mlModel: String = "v6",
     val stairEntryThreshold: Int = 2,
+    val stairMinConfidence: Float = 0.45f,
     val stairProximityRadius: Float = 150f,
     val stairLookback: Int = 3,
-    val stairReplayCount: Int = 3
+    val stairReplayCount: Int = 3,
+    val stairArrivalLookback: Int = 3,
+    val stairMinProgressForArrival: Float = 0.3f,
+    val stairWalkingArrivalCount: Int = 2,
+    val stairOppositeCancelCount: Int = 3,
+    val stairMinStepsBeforeCancel: Int = 3,
+    val stairArrivalHeadingDeg: Float = 45f,
+    val stairReturnHeadingDeg: Float = 120f,
+    val stairIdleThreshold: Int = 5
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -97,9 +106,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         // Load ML model & stair detection settings
         viewModelScope.launch { repository.mlModel.collect             { if (it != null) _uiState.update { s -> s.copy(mlModel = it) } } }
         viewModelScope.launch { repository.stairEntryThreshold.collect { if (it != null) _uiState.update { s -> s.copy(stairEntryThreshold = it) } } }
+        viewModelScope.launch { repository.stairMinConfidence.collect  { if (it != null) _uiState.update { s -> s.copy(stairMinConfidence = it) } } }
         viewModelScope.launch { repository.stairProximityRadius.collect { if (it != null) _uiState.update { s -> s.copy(stairProximityRadius = it) } } }
         viewModelScope.launch { repository.stairLookback.collect       { if (it != null) _uiState.update { s -> s.copy(stairLookback = it) } } }
         viewModelScope.launch { repository.stairReplayCount.collect    { if (it != null) _uiState.update { s -> s.copy(stairReplayCount = it) } } }
+        viewModelScope.launch { repository.stairArrivalLookback.collect { if (it != null) _uiState.update { s -> s.copy(stairArrivalLookback = it) } } }
+        viewModelScope.launch { repository.stairMinProgressForArrival.collect { if (it != null) _uiState.update { s -> s.copy(stairMinProgressForArrival = it) } } }
+        viewModelScope.launch { repository.stairWalkingArrivalCount.collect { if (it != null) _uiState.update { s -> s.copy(stairWalkingArrivalCount = it) } } }
+        viewModelScope.launch { repository.stairOppositeCancelCount.collect { if (it != null) _uiState.update { s -> s.copy(stairOppositeCancelCount = it) } } }
+        viewModelScope.launch { repository.stairMinStepsBeforeCancel.collect { if (it != null) _uiState.update { s -> s.copy(stairMinStepsBeforeCancel = it) } } }
+        viewModelScope.launch { repository.stairArrivalHeadingDeg.collect { if (it != null) _uiState.update { s -> s.copy(stairArrivalHeadingDeg = it) } } }
+        viewModelScope.launch { repository.stairReturnHeadingDeg.collect { if (it != null) _uiState.update { s -> s.copy(stairReturnHeadingDeg = it) } } }
+        viewModelScope.launch { repository.stairIdleThreshold.collect { if (it != null) _uiState.update { s -> s.copy(stairIdleThreshold = it) } } }
 
         // Load stride tuning — height & turn
         viewModelScope.launch { repository.heightKInfluence.collect  { if (it != null) _uiState.update { s -> s.copy(heightKInfluence = it) } } }
@@ -205,9 +223,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun updateMlModel(v: String)             { _uiState.update { it.copy(mlModel = v) };             viewModelScope.launch { repository.saveMlModel(v) } }
     fun updateStairEntryThreshold(v: Int)    { _uiState.update { it.copy(stairEntryThreshold = v) };  viewModelScope.launch { repository.saveStairEntryThreshold(v) } }
+    fun updateStairMinConfidence(v: Float)   { _uiState.update { it.copy(stairMinConfidence = v) };   viewModelScope.launch { repository.saveStairMinConfidence(v) } }
     fun updateStairProximityRadius(v: Float)  { _uiState.update { it.copy(stairProximityRadius = v) }; viewModelScope.launch { repository.saveStairProximityRadius(v) } }
     fun updateStairLookback(v: Int)           { _uiState.update { it.copy(stairLookback = v) };       viewModelScope.launch { repository.saveStairLookback(v) } }
     fun updateStairReplayCount(v: Int)        { _uiState.update { it.copy(stairReplayCount = v) };    viewModelScope.launch { repository.saveStairReplayCount(v) } }
+    fun updateStairArrivalLookback(v: Int)    { _uiState.update { it.copy(stairArrivalLookback = v) }; viewModelScope.launch { repository.saveStairArrivalLookback(v) } }
+    fun updateStairMinProgressForArrival(v: Float) { _uiState.update { it.copy(stairMinProgressForArrival = v) }; viewModelScope.launch { repository.saveStairMinProgressForArrival(v) } }
+    fun updateStairWalkingArrivalCount(v: Int) { _uiState.update { it.copy(stairWalkingArrivalCount = v) }; viewModelScope.launch { repository.saveStairWalkingArrivalCount(v) } }
+    fun updateStairOppositeCancelCount(v: Int) { _uiState.update { it.copy(stairOppositeCancelCount = v) }; viewModelScope.launch { repository.saveStairOppositeCancelCount(v) } }
+    fun updateStairMinStepsBeforeCancel(v: Int) { _uiState.update { it.copy(stairMinStepsBeforeCancel = v) }; viewModelScope.launch { repository.saveStairMinStepsBeforeCancel(v) } }
+    fun updateStairArrivalHeadingDeg(v: Float) { _uiState.update { it.copy(stairArrivalHeadingDeg = v) }; viewModelScope.launch { repository.saveStairArrivalHeadingDeg(v) } }
+    fun updateStairReturnHeadingDeg(v: Float)  { _uiState.update { it.copy(stairReturnHeadingDeg = v) }; viewModelScope.launch { repository.saveStairReturnHeadingDeg(v) } }
+    fun updateStairIdleThreshold(v: Int)       { _uiState.update { it.copy(stairIdleThreshold = v) }; viewModelScope.launch { repository.saveStairIdleThreshold(v) } }
 
     fun updateHeightKInfluence(v: Float)  { _uiState.update { it.copy(heightKInfluence = v) };  viewModelScope.launch { repository.saveHeightKInfluence(v) } }
     fun updateTurnWindow(v: Int)          { _uiState.update { it.copy(turnWindow = v) };        viewModelScope.launch { repository.saveTurnWindow(v) } }

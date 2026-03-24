@@ -14,8 +14,14 @@ import `in`.project.enroute.feature.navigation.data.CoordinateTransform
 import `in`.project.enroute.feature.navigation.data.FloorPathSegment
 import `in`.project.enroute.feature.navigation.data.MultiFloorPath
 import `in`.project.enroute.feature.navigation.data.MultiFloorPathfinder
+import `in`.project.enroute.feature.navigation.data.PathTransition
 import `in`.project.enroute.feature.navigation.data.PrecalculatedFloorGrid
 import `in`.project.enroute.feature.navigation.data.StairwellConnection
+import `in`.project.enroute.feature.navigation.data.TransitionDirection
+import `in`.project.enroute.feature.navigation.guidance.GuidanceConfig
+import `in`.project.enroute.feature.navigation.guidance.GuidanceType
+import `in`.project.enroute.feature.navigation.guidance.GuidanceInput
+import `in`.project.enroute.feature.navigation.guidance.TurnByTurnGuidanceEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,6 +52,8 @@ data class NavigationUiState(
     val displayPath: MultiFloorPath = MultiFloorPath.EMPTY,
     val isCalculating: Boolean = false,
     val isNavigationStarted: Boolean = false,
+    val turnByTurnInstruction: String = "",
+    val turnByTurnInstructionType: GuidanceType = GuidanceType.IDLE,
     val targetRoom: Room? = null,
     val targetEntrance: Entrance? = null,
     val error: String? = null
@@ -88,6 +96,7 @@ class NavigationViewModel : ViewModel() {
          * 3 meters = 300cm = 150 units.
          */
         private const val REROUTE_DISTANCE_THRESHOLD = 150f
+        private const val REROUTE_COOLDOWN_MS = 1800L
 
         /**
          * Maximum distance between consecutive path points (campus-wide units).
@@ -99,6 +108,13 @@ class NavigationViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(NavigationUiState())
     val uiState: StateFlow<NavigationUiState> = _uiState.asStateFlow()
+
+    private val guidanceConfig = GuidanceConfig()
+    private val guidanceEngine = TurnByTurnGuidanceEngine(guidanceConfig)
+    private var lastGuidanceText: String = ""
+    private var lastGuidanceUpdateMs: Long = 0L
+    private var pendingRerouteAnnouncement: Boolean = false
+    private var lastRerouteAtMs: Long = 0L
 
     /** Multi-floor pathfinding engine. */
     private val multiFloorPathfinder = MultiFloorPathfinder()
@@ -274,6 +290,8 @@ class NavigationViewModel : ViewModel() {
             it.copy(
                 isCalculating = true,
                 isNavigationStarted = false,
+                turnByTurnInstruction = "",
+                turnByTurnInstructionType = GuidanceType.IDLE,
                 error = null,
                 targetRoom = room,
                 targetEntrance = campusEntrance.original,
@@ -298,6 +316,8 @@ class NavigationViewModel : ViewModel() {
                     it.copy(
                         isCalculating = false,
                         isNavigationStarted = false,
+                        turnByTurnInstruction = "",
+                        turnByTurnInstructionType = GuidanceType.IDLE,
                         multiFloorPath = subdivided,
                         displayPath = subdivided
                     )
@@ -312,7 +332,50 @@ class NavigationViewModel : ViewModel() {
     fun startNavigation() {
         val state = _uiState.value
         if (!state.hasPath) return
-        _uiState.update { it.copy(isNavigationStarted = true) }
+        _uiState.update {
+            it.copy(
+                isNavigationStarted = true,
+                turnByTurnInstruction = "Align with the highlighted route.",
+                turnByTurnInstructionType = GuidanceType.ALIGN
+            )
+        }
+    }
+
+    /**
+     * Updates turn-by-turn guidance text from the current position and heading.
+     * Updates are throttled to keep text stable while the user is walking.
+     */
+    fun updateTurnByTurn(userPosition: Offset, currentFloor: String, headingRadians: Float) {
+        val state = _uiState.value
+        if (!state.isNavigationStarted || !state.hasPath) return
+
+        val now = System.currentTimeMillis()
+        val forceReroute = pendingRerouteAnnouncement
+        val guidance = guidanceEngine.compute(
+            GuidanceInput(
+                path = state.displayPath,
+                userPosition = userPosition,
+                headingRadians = headingRadians,
+                currentFloorId = currentFloor,
+                nowMs = now,
+                forceRerouteMessage = forceReroute
+            )
+        )
+
+        val isThrottled = (now - lastGuidanceUpdateMs) < guidanceConfig.throttleMs
+        val textChanged = guidance.text != lastGuidanceText
+        val shouldPublish = forceReroute || (!isThrottled && textChanged)
+        if (!shouldPublish) return
+
+        lastGuidanceText = guidance.text
+        lastGuidanceUpdateMs = now
+        pendingRerouteAnnouncement = false
+        _uiState.update {
+            it.copy(
+                turnByTurnInstruction = guidance.text,
+                turnByTurnInstructionType = guidance.type
+            )
+        }
     }
 
     /**
@@ -321,6 +384,10 @@ class NavigationViewModel : ViewModel() {
     fun clearPath() {
         pathfindingJob?.cancel()
         rerouteJob?.cancel()
+        lastGuidanceText = ""
+        lastGuidanceUpdateMs = 0L
+        pendingRerouteAnnouncement = false
+        lastRerouteAtMs = 0L
         _uiState.update { NavigationUiState() }
     }
 
@@ -439,9 +506,26 @@ class NavigationViewModel : ViewModel() {
 
         return MultiFloorPath(
             segments = newSegments,
+            transitions = trimTransitions(fullPath.transitions, trimSegIdx),
             totalFloors = newSegments.map { it.floorId }.distinct().size,
             isMultiFloor = newSegments.map { it.floorId }.distinct().size > 1
         )
+    }
+
+    private fun trimTransitions(
+        transitions: List<PathTransition>,
+        trimmedSegmentStart: Int
+    ): List<PathTransition> {
+        return transitions.mapNotNull { t ->
+            if (t.toSegmentIndex < trimmedSegmentStart) {
+                null
+            } else {
+                t.copy(
+                    fromSegmentIndex = (t.fromSegmentIndex - trimmedSegmentStart).coerceAtLeast(0),
+                    toSegmentIndex = (t.toSegmentIndex - trimmedSegmentStart).coerceAtLeast(0)
+                )
+            }
+        }
     }
 
     /**
@@ -491,6 +575,10 @@ class NavigationViewModel : ViewModel() {
         // Don't stack reroutes — cancel any previous reroute in progress
         if (rerouteJob?.isActive == true) return
 
+        val now = System.currentTimeMillis()
+        if (now - lastRerouteAtMs < REROUTE_COOLDOWN_MS) return
+        lastRerouteAtMs = now
+
         val state = _uiState.value
         val goalEntrance = findEntranceForRoom(state.targetRoom ?: return) ?: return
 
@@ -514,6 +602,7 @@ class NavigationViewModel : ViewModel() {
                         displayPath = subdivided
                     )
                 }
+                pendingRerouteAnnouncement = true
             } else {
                 Log.w(TAG, "Reroute failed — keeping existing path")
             }
@@ -593,13 +682,35 @@ class NavigationViewModel : ViewModel() {
     private fun reverseRoute(path: MultiFloorPath): MultiFloorPath {
         if (path.isEmpty) return MultiFloorPath.EMPTY
 
+        val oldSize = path.segments.size
         val reversedSegments = path.segments
             .asReversed()
             .map { seg -> seg.copy(points = seg.points.asReversed()) }
 
+        val reversedTransitions = path.transitions
+            .asReversed()
+            .map { t ->
+                val newFrom = (oldSize - 1) - t.toSegmentIndex
+                val newTo = (oldSize - 1) - t.fromSegmentIndex
+                t.copy(
+                    fromSegmentIndex = newFrom,
+                    toSegmentIndex = newTo,
+                    fromFloorId = t.toFloorId,
+                    toFloorId = t.fromFloorId,
+                    direction = if (t.direction == TransitionDirection.UP) {
+                        TransitionDirection.DOWN
+                    } else {
+                        TransitionDirection.UP
+                    },
+                    entryPoint = t.exitPoint,
+                    exitPoint = t.entryPoint
+                )
+            }
+
         val distinctFloors = reversedSegments.map { it.floorId }.distinct().size
         return MultiFloorPath(
             segments = reversedSegments,
+            transitions = reversedTransitions,
             totalFloors = distinctFloors,
             isMultiFloor = distinctFloors > 1
         )

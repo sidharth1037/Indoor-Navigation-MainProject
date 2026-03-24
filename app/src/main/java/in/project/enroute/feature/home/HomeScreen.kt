@@ -167,11 +167,30 @@ fun HomeScreen(
     }
 
     // Feed user position into NavigationViewModel for progressive path consumption
-    // and auto-rerouting. Triggers on every PDR step when a navigation path exists.
+    // and auto-rerouting. This is intentionally limited to started navigation
+    // and step-position updates (not heading ticks) to avoid compute flooding.
     val pdrCurrentPosition = pdrUiState.pdrState.currentPosition
-    LaunchedEffect(pdrCurrentPosition, pdrCurrentFloor) {
-        if (pdrCurrentPosition != null && pdrCurrentFloor != null && navUiState.hasPath) {
+    LaunchedEffect(pdrCurrentPosition, pdrCurrentFloor, navUiState.hasPath, navUiState.isNavigationStarted) {
+        if (
+            pdrCurrentPosition != null &&
+            pdrCurrentFloor != null &&
+            navUiState.hasPath &&
+            navUiState.isNavigationStarted
+        ) {
             navigationViewModel.updateUserPosition(pdrCurrentPosition, pdrCurrentFloor)
+        }
+    }
+
+    // Turn-by-turn guidance depends on heading, so this pipeline updates on
+    // heading ticks, but remains gated behind started navigation.
+    LaunchedEffect(pdrCurrentPosition, pdrCurrentFloor, heading, navUiState.hasPath, navUiState.isNavigationStarted) {
+        if (
+            pdrCurrentPosition != null &&
+            pdrCurrentFloor != null &&
+            navUiState.hasPath &&
+            navUiState.isNavigationStarted
+        ) {
+            navigationViewModel.updateTurnByTurn(pdrCurrentPosition, pdrCurrentFloor, heading)
         }
     }
 
@@ -442,6 +461,8 @@ private fun HomeScreenContent(
     var overlayRequestedDirections by remember { mutableStateOf(false) }
 
     val density = LocalDensity.current
+    val sliderAnchorHeight = 77.dp
+    val navigationSliderExpandedHeight = sliderAnchorHeight + 59.dp
     var sliderHeightDp by remember { mutableStateOf(77.dp) }
 
     // North-reset animation: animates canvas rotation so north points up
@@ -821,6 +842,11 @@ private fun HomeScreenContent(
                                 onDismissOriginError()
                                 onFloorChange(it) 
                             },
+                            instructionText = "",
+                            isNavigationActive = false,
+                            hideControlsForNavigation = false,
+                            showCurrentFloorLabelOnly = false,
+                            currentFloorLabel = "",
                             isVisible = true,
                             disabled = locationCorridorPoints.isNotEmpty(),
                             onHeightMeasured = { px ->
@@ -831,7 +857,15 @@ private fun HomeScreenContent(
                 } else {
                     // Floor slider and search button positioned at top, layered over canvas
                     // Hidden during origin selection mode
-                    val isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch
+                    val turnByTurnActive = navUiState.isNavigationStarted && navUiState.hasPath
+                    val isZoomedSliderVisible = uiState.showFloorSlider
+                    val isSliderVisible = (isZoomedSliderVisible || turnByTurnActive) && !isMorphingToSearch && !showSearch
+                    val hideSliderControlsForNavigation = turnByTurnActive && !isZoomedSliderVisible
+                    val floorLabel = pdrUiState.pdrState.currentFloor
+                        ?.removePrefix("floor_")
+                        ?.let { "Floor $it" }
+                        ?: ""
+
                     val motionLabelTopPadding by animateDpAsState(
                         targetValue = if (isSliderVisible) sliderHeightDp + 11.dp else 52.dp,
                         animationSpec = dpTween(durationMillis = 300),
@@ -845,7 +879,7 @@ private fun HomeScreenContent(
                             .padding(top = 6.dp, end = 8.dp, start = 8.dp)
                     ) {
                         AnimatedVisibility(
-                            visible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
+                            visible = isSliderVisible,
                             enter = fadeIn(tween(300)) + slideInHorizontally(tween(300)) { -it },
                             exit = fadeOut(tween(300)) + slideOutHorizontally(tween(300)) { -it },
                             modifier = Modifier
@@ -861,6 +895,12 @@ private fun HomeScreenContent(
                                     onDismissOriginError()
                                     onFloorChange(it)
                                 },
+                                instructionText = navUiState.turnByTurnInstruction,
+                                isNavigationActive = turnByTurnActive,
+                                hideControlsForNavigation = hideSliderControlsForNavigation,
+                                showCurrentFloorLabelOnly = hideSliderControlsForNavigation,
+                                currentFloorLabel = floorLabel,
+                                navigationExpandedHeight = navigationSliderExpandedHeight,
                                 isVisible = true,
                                 disabled = locationCorridorPoints.isNotEmpty(),
                                 onHeightMeasured = { px ->
@@ -870,10 +910,10 @@ private fun HomeScreenContent(
                         }
 
                         SearchButton(
-                            isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
+                            isSliderVisible = isSliderVisible,
                             isSearching = isMorphingToSearch,
                             containerWidth = maxWidth - 16.dp,
-                            sliderHeightDp = sliderHeightDp,
+                            sliderHeightDp = sliderAnchorHeight,
                             modifier = Modifier.align(Alignment.TopEnd),
                             onClick = { isMorphingToSearch = true },
                             onAnimationFinished = { showSearch = true }
@@ -893,7 +933,7 @@ private fun HomeScreenContent(
                             },
                             isSliderVisible = isSliderVisible,
                             isSearching = isMorphingToSearch,
-                            sliderHeightDp = sliderHeightDp,
+                            sliderHeightDp = sliderAnchorHeight,
                             modifier = Modifier.align(Alignment.TopEnd)
                         )
 
@@ -911,7 +951,9 @@ private fun HomeScreenContent(
                 }
 
                 // Origin location error snackbar shown below floor slider.
-                val sliderVisible = pdrUiState.isSelectingOrigin || (uiState.showFloorSlider && !isMorphingToSearch && !showSearch)
+                val sliderVisible = pdrUiState.isSelectingOrigin ||
+                        (((uiState.showFloorSlider || (navUiState.isNavigationStarted && navUiState.hasPath))
+                                && !isMorphingToSearch && !showSearch))
                 val originErrorTopPadding by animateDpAsState(
                     targetValue = if (sliderVisible) sliderHeightDp + 14.dp else 52.dp,
                     animationSpec = dpTween(durationMillis = 250),
@@ -969,7 +1011,9 @@ private fun HomeScreenContent(
                 // Shows when origin is set and not selecting origin
                 if (pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin) {
                     StopTrackingButton(
-                        isSliderVisible = uiState.showFloorSlider && !isMorphingToSearch && !showSearch,
+                        isSliderVisible =
+                            ((uiState.showFloorSlider || (navUiState.isNavigationStarted && navUiState.hasPath))
+                                && !isMorphingToSearch && !showSearch),
                         onClick = { showStopTrackingConfirmDialog = true },
                         modifier = Modifier
                             .align(Alignment.BottomStart)

@@ -41,7 +41,7 @@ class StairwellTransitionDetector(
     /** Consecutive same-direction stair labels needed to trigger. */
     private var entryThreshold: Int = 2,
     /** Minimum ML confidence to accept a label. */
-    private val minConfidence: Float = 0.45f,
+    private var minConfidence: Float = 0.45f,
     /**
      * Maximum distance (campus units) from a stairwell top/bottom edge
      * to trigger proximity-based detection (Mode 2).  Uses edge line
@@ -80,9 +80,14 @@ class StairwellTransitionDetector(
 
     // ── Settings ────────────────────────────────────────────────────────
 
-    fun updateSettings(entryThreshold: Int? = null, proximityRadius: Float? = null) {
+    fun updateSettings(
+        entryThreshold: Int? = null,
+        proximityRadius: Float? = null,
+        minConfidence: Float? = null
+    ) {
         if (entryThreshold != null) this.entryThreshold = entryThreshold
         if (proximityRadius != null) this.proximityRadius = proximityRadius
+        if (minConfidence != null) this.minConfidence = minConfidence
     }
 
     // ── Label feed ──────────────────────────────────────────────────────

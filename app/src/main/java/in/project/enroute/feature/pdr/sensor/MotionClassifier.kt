@@ -26,7 +26,11 @@ class MotionClassifier(
 
     init {
         val modelBuffer = loadModelFile(context, modelFileName)
-        interpreter = Interpreter(modelBuffer)
+        val cpuThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+        val options = Interpreter.Options().apply {
+            setNumThreads(cpuThreads)
+        }
+        interpreter = Interpreter(modelBuffer, options)
     }
 
     private fun loadModelFile(context: Context, fileName: String): ByteBuffer {
