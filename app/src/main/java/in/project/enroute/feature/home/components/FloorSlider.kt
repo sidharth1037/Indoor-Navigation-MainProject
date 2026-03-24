@@ -1,5 +1,7 @@
 package `in`.project.enroute.feature.home.components
 
+import `in`.project.enroute.R
+import `in`.project.enroute.feature.navigation.guidance.GuidanceType
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateDpAsState
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBackIos
 import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.ui.res.painterResource
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +60,7 @@ fun FloorSlider(
     currentFloor: Float,
     onFloorChange: (Float) -> Unit,
     instructionText: String = "",
+    instructionType: GuidanceType = GuidanceType.IDLE,
     isNavigationActive: Boolean = false,
     hideControlsForNavigation: Boolean = false,
     showCurrentFloorLabelOnly: Boolean = false,
@@ -68,7 +72,7 @@ fun FloorSlider(
     onHeightMeasured: (Int) -> Unit = {}
 ) {
     AnimatedVisibility(
-        visible = isVisible,
+        visible = isVisible && availableFloors.isNotEmpty(),
         enter = fadeIn() + slideInHorizontally { -it },
         exit = fadeOut() + slideOutHorizontally { -it },
         modifier = modifier
@@ -79,6 +83,7 @@ fun FloorSlider(
             currentFloor = currentFloor,
             onFloorChange = onFloorChange,
             instructionText = instructionText,
+            instructionType = instructionType,
             isNavigationActive = isNavigationActive,
             hideControlsForNavigation = hideControlsForNavigation,
             showCurrentFloorLabelOnly = showCurrentFloorLabelOnly,
@@ -97,6 +102,7 @@ private fun FloorSliderContent(
     currentFloor: Float,
     onFloorChange: (Float) -> Unit,
     instructionText: String,
+    instructionType: GuidanceType,
     isNavigationActive: Boolean,
     hideControlsForNavigation: Boolean,
     showCurrentFloorLabelOnly: Boolean,
@@ -116,7 +122,7 @@ private fun FloorSliderContent(
     }
 
     val safeFloors = lastValidFloors.sorted()
-    val safeCurrentFloor = if (lastValidFloors.contains(currentFloor)) currentFloor else safeFloors.firstOrNull() ?: currentFloor
+    val safeCurrentFloor = if (lastValidFloors.contains(currentFloor)) currentFloor else safeFloors.firstOrNull() ?: 0f
     val currentIndex = safeFloors.indexOf(safeCurrentFloor).coerceAtLeast(0)
     val prevFloor = if (currentIndex > 0) safeFloors[currentIndex - 1] else null
     val nextFloor = if (currentIndex < safeFloors.size - 1) safeFloors[currentIndex + 1] else null
@@ -138,7 +144,7 @@ private fun FloorSliderContent(
                 shape = RoundedCornerShape(28.dp)
             )
             .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 12.dp),
-        verticalArrangement = if (hideControlsForNavigation) Arrangement.Center else Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         AnimatedVisibility(
@@ -147,7 +153,6 @@ private fun FloorSliderContent(
             exit = fadeOut(tween(180))
         ) {
             Column(
-                modifier = Modifier,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -204,16 +209,68 @@ private fun FloorSliderContent(
         }
 
         if (isNavigationActive && instructionText.isNotBlank()) {
-            Text(
-                text = instructionText,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                textAlign = TextAlign.Center,
-                maxLines = if (hideControlsForNavigation) 4 else 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 0.dp)
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.22f))
             )
+
+            val normalizedInstruction = instructionText.trim().removeSuffix(".")
+            val isStraightInstruction = instructionType == GuidanceType.STRAIGHT &&
+                instructionText.startsWith("Walk straight for around")
+            val guidanceIconRes = when {
+                isStraightInstruction -> R.drawable.straight
+                normalizedInstruction == "Turn slightly left" -> R.drawable.turn_slight_left
+                normalizedInstruction == "Turn slightly right" -> R.drawable.turn_slight_right
+                normalizedInstruction == "Turn left" -> R.drawable.turn_left
+                normalizedInstruction == "Turn right" -> R.drawable.turn_right
+                normalizedInstruction == "Turn around" -> R.drawable.u_turn_right
+                else -> null
+            }
+
+            if (guidanceIconRes != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = if (isStraightInstruction) 0.dp else 1.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        painter = painterResource(id = guidanceIconRes),
+                        contentDescription = instructionText,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(36.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = instructionText,
+                        fontSize = 15.sp,
+                        lineHeight = if (isStraightInstruction) 16.sp else 18.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        textAlign = TextAlign.Center,
+                        maxLines = if (isStraightInstruction) 1 else if (hideControlsForNavigation) 4 else 2,
+                        overflow = TextOverflow.Ellipsis,
+                        softWrap = !isStraightInstruction
+                    )
+                }
+            } else {
+                Text(
+                    text = instructionText,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    textAlign = TextAlign.Center,
+                    maxLines = if (hideControlsForNavigation) 4 else 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                )
+            }
         }
     }
 }

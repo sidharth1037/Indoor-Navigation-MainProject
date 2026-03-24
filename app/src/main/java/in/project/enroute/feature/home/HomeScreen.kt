@@ -896,6 +896,7 @@ private fun HomeScreenContent(
                                     onFloorChange(it)
                                 },
                                 instructionText = navUiState.turnByTurnInstruction,
+                                instructionType = navUiState.turnByTurnInstructionType,
                                 isNavigationActive = turnByTurnActive,
                                 hideControlsForNavigation = hideSliderControlsForNavigation,
                                 showCurrentFloorLabelOnly = hideSliderControlsForNavigation,

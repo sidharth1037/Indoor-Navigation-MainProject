@@ -69,7 +69,6 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.core.net.toUri
 import `in`.project.enroute.feature.settings.data.SettingsRepository
 import android.util.Log
-import androidx.compose.material.icons.rounded.Directions
 import kotlin.math.abs
 import kotlinx.coroutines.launch
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -492,7 +491,6 @@ fun OriginLocationErrorSnackbar(
                 modifier = Modifier.size(24.dp)
             ) {
                 Icon(
-                    Icons.Rounded.Direction
                     imageVector = Icons.Rounded.Close,
                     contentDescription = "Dismiss",
                     tint = MaterialTheme.colorScheme.onErrorContainer,
