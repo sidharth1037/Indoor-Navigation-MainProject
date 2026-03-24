@@ -1039,6 +1039,10 @@ private fun HomeScreenContent(
                 // Room info panel slides up from bottom when a room label is tapped
                 RoomInfoPanel(
                     room = activePinnedRoom,
+                    buildingName = activePinnedRoom?.buildingId?.let { bid ->
+                        uiState.buildingStates[bid]?.building?.buildingName
+                    },
+                    distanceMeters = navUiState.remainingDistanceMeters,
                     isCalculatingPath = navUiState.isCalculating,
                     hasPath = navUiState.hasPath,
                     isNavigationStarted = navUiState.isNavigationStarted,
@@ -1126,6 +1130,10 @@ private fun HomeScreenContent(
                 // in-place to show Start / Show full route once the path is computed.
                 RoomInfoPanel(
                     room = overlayPinnedRoom,
+                    buildingName = overlayPinnedRoom?.buildingId?.let { bid ->
+                        uiState.buildingStates[bid]?.building?.buildingName
+                    },
+                    distanceMeters = if (overlayRequestedDirections) navUiState.remainingDistanceMeters else null,
                     isCalculatingPath = if (overlayRequestedDirections) navUiState.isCalculating else false,
                     hasPath = if (overlayRequestedDirections) navUiState.hasPath else false,
                     isNavigationStarted = if (overlayRequestedDirections) navUiState.isNavigationStarted else false,

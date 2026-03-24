@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -52,6 +53,7 @@ data class NavigationUiState(
     val displayPath: MultiFloorPath = MultiFloorPath.EMPTY,
     val isCalculating: Boolean = false,
     val isNavigationStarted: Boolean = false,
+    val remainingDistanceMeters: Int? = null,
     val turnByTurnInstruction: String = "",
     val turnByTurnInstructionType: GuidanceType = GuidanceType.IDLE,
     val targetRoom: Room? = null,
@@ -290,6 +292,7 @@ class NavigationViewModel : ViewModel() {
             it.copy(
                 isCalculating = true,
                 isNavigationStarted = false,
+                remainingDistanceMeters = null,
                 turnByTurnInstruction = "",
                 turnByTurnInstructionType = GuidanceType.IDLE,
                 error = null,
@@ -316,6 +319,7 @@ class NavigationViewModel : ViewModel() {
                     it.copy(
                         isCalculating = false,
                         isNavigationStarted = false,
+                        remainingDistanceMeters = computeRemainingDistanceMeters(subdivided),
                         turnByTurnInstruction = "",
                         turnByTurnInstructionType = GuidanceType.IDLE,
                         multiFloorPath = subdivided,
@@ -422,7 +426,12 @@ class NavigationViewModel : ViewModel() {
             // and within that segment remove points before the nearest point.
             val trimmed = trimPath(state.multiFloorPath, nearestSegIdx, nearestPtIdx)
             if (trimmed != null) {
-                _uiState.update { it.copy(displayPath = trimmed) }
+                _uiState.update {
+                    it.copy(
+                        displayPath = trimmed,
+                        remainingDistanceMeters = computeRemainingDistanceMeters(trimmed)
+                    )
+                }
             }
         }
     }
@@ -567,6 +576,28 @@ class NavigationViewModel : ViewModel() {
     }
 
     /**
+     * Computes remaining path distance in meters from the currently displayed path.
+     * 1 campus unit = 2 cm, so meters = units * 0.02.
+     */
+    private fun computeRemainingDistanceMeters(path: MultiFloorPath): Int? {
+        if (path.isEmpty) return null
+
+        var units = 0f
+        for (segment in path.segments) {
+            for (i in 1 until segment.points.size) {
+                val from = segment.points[i - 1]
+                val to = segment.points[i]
+                val dx = to.x - from.x
+                val dy = to.y - from.y
+                units += sqrt(dx * dx + dy * dy)
+            }
+        }
+
+        val meters = (units * 0.02f).coerceAtLeast(0f)
+        return meters.roundToInt().coerceAtLeast(1)
+    }
+
+    /**
      * Silently recalculates the path from the user's current position to the
      * original destination. The UI continues showing the old path until the
      * new one is ready, then swaps seamlessly.
@@ -599,7 +630,8 @@ class NavigationViewModel : ViewModel() {
                 _uiState.update {
                     it.copy(
                         multiFloorPath = subdivided,
-                        displayPath = subdivided
+                        displayPath = subdivided,
+                        remainingDistanceMeters = computeRemainingDistanceMeters(subdivided)
                     )
                 }
                 pendingRerouteAnnouncement = true

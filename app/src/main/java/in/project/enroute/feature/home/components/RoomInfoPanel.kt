@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.rounded.Directions
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.Navigation
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
@@ -42,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import `in`.project.enroute.data.model.Room
@@ -61,6 +64,8 @@ import `in`.project.enroute.data.model.Room
 fun RoomInfoPanel(
     modifier: Modifier = Modifier,
     room: Room?,
+    buildingName: String? = null,
+    distanceMeters: Int? = null,
     isCalculatingPath: Boolean = false,
     hasPath: Boolean = false,
     isNavigationStarted: Boolean = false,
@@ -77,12 +82,16 @@ fun RoomInfoPanel(
     var lastHasPath by remember { mutableStateOf(hasPath) }
     var lastIsNavigationStarted by remember { mutableStateOf(isNavigationStarted) }
     var lastShowOnMapButton by remember { mutableStateOf(showShowOnMapButton) }
+    var lastBuildingName by remember { mutableStateOf(buildingName) }
+    var lastDistanceMeters by remember { mutableStateOf(distanceMeters) }
     if (room != null) {
         lastRoom = room
         lastIsCalculating = isCalculatingPath
         lastHasPath = hasPath
         lastIsNavigationStarted = isNavigationStarted
         lastShowOnMapButton = showShowOnMapButton
+        lastBuildingName = buildingName
+        lastDistanceMeters = distanceMeters
     }
 
     AnimatedVisibility(
@@ -99,6 +108,8 @@ fun RoomInfoPanel(
     ) {
         RoomInfoPanelContent(
             room = lastRoom!!,
+            buildingName = lastBuildingName,
+            distanceMeters = lastDistanceMeters,
             isCalculatingPath = lastIsCalculating,
             hasPath = lastHasPath,
             isNavigationStarted = lastIsNavigationStarted,
@@ -115,6 +126,8 @@ fun RoomInfoPanel(
 @Composable
 private fun RoomInfoPanelContent(
     room: Room,
+    buildingName: String?,
+    distanceMeters: Int?,
     isCalculatingPath: Boolean,
     hasPath: Boolean,
     isNavigationStarted: Boolean,
@@ -130,7 +143,7 @@ private fun RoomInfoPanelContent(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (isNavigationStarted) Modifier.heightIn(min = 64.dp) else Modifier.height(110.dp))
+            .then(if (isNavigationStarted) Modifier.heightIn(min = 64.dp) else Modifier.heightIn(min = 130.dp))
             .clip(shape)
             .background(MaterialTheme.colorScheme.primaryContainer)
             .clickable(
@@ -145,85 +158,134 @@ private fun RoomInfoPanelContent(
                 .wrapContentHeight()
                 .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)
         ) {
-            // Room label with dismiss button
+            val trailingColumnWidth = 64.dp
+            val secondaryInfoFontSize = 13.sp
+            val secondaryInfoWeight = FontWeight.Medium
+
+            // Room + building are stacked one below another on the left.
             Row(
-                modifier = Modifier
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
             ) {
-                // Room label: "number: name" or just name
-                val label = if (room.number != null && room.name != null) {
-                    "${room.number}: ${room.name}"
-                } else {
-                    room.name ?: room.number?.toString() ?: ""
+                Column(modifier = Modifier.weight(1f)) {
+                    val label = if (room.number != null && room.name != null) {
+                        "${room.number}: ${room.name}"
+                    } else {
+                        room.name ?: room.number?.toString() ?: ""
+                    }
+                    Text(
+                        text = label,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 18.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            text = buildingName.orEmpty(),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            fontSize = secondaryInfoFontSize,
+                            fontWeight = secondaryInfoWeight,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+
+                        if (hasPath && distanceMeters != null) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "|  ${distanceMeters}m",
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontSize = secondaryInfoFontSize,
+                                fontWeight = secondaryInfoWeight,
+                                maxLines = 1
+                            )
+                        }
+                    }
                 }
 
-                Text(
-                    text = label,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 18.sp,
-                    maxLines = if (isNavigationStarted) 6 else 2,
-                    modifier = Modifier.weight(1f)
-                )
-
-                if (isNavigationStarted) {
-                    TextButton(onClick = onExitClick) {
-                        Text(
-                            text = "Exit",
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            fontWeight = FontWeight.SemiBold
+                Box(
+                    modifier = Modifier.width(trailingColumnWidth),
+                    contentAlignment = Alignment.TopEnd
+                ) {
+                    if (isNavigationStarted) {
+                        TextButton(
+                            onClick = onExitClick,
+                            modifier = Modifier.height(46.dp),
+                            shape = RoundedCornerShape(50),
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+                            colors = ButtonDefaults.textButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.background
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = "Exit",
+                                tint = MaterialTheme.colorScheme.background,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    } else {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Dismiss",
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = onDismiss
+                                )
+                                .padding(4.dp)
                         )
                     }
-                } else {
-                    Icon(
-                        imageVector = Icons.Rounded.Close,
-                        contentDescription = "Dismiss",
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = onDismiss
-                            )
-                            .padding(4.dp)
-                    )
                 }
             }
 
             if (isNavigationStarted) return@Column
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(14.dp))
+
+            val pillShape = RoundedCornerShape(50)
+            val primaryPillColors = ButtonDefaults.textButtonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.background
+            )
+            val mapPillColors = ButtonDefaults.textButtonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onSecondary
+            )
+            val actionButtonHeight = 37.dp
+            val actionButtonPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp)
 
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier
-                        .height(40.dp)
-                        .background(
-                            color = MaterialTheme.colorScheme.primary,
-                            shape = RoundedCornerShape(50)
-                        )
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            enabled = if (hasPath) true else !isCalculatingPath,
-                            onClick = {
-                                if (hasPath) onStartClick() else onDirectionsClick(room)
-                            }
-                        )
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                TextButton(
+                    onClick = {
+                        if (hasPath) onStartClick() else onDirectionsClick(room)
+                    },
+                    enabled = if (hasPath) true else !isCalculatingPath,
+                    modifier = Modifier.height(actionButtonHeight),
+                    shape = pillShape,
+                    contentPadding = actionButtonPadding,
+                    colors = primaryPillColors
                 ) {
                     Text(
                         text = if (hasPath) "Start" else "Directions",
                         color = MaterialTheme.colorScheme.background,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     if (!hasPath && isCalculatingPath) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
@@ -235,7 +297,7 @@ private fun RoomInfoPanelContent(
                             imageVector = if (hasPath) Icons.Rounded.Navigation else Icons.Rounded.Directions,
                             contentDescription = if (hasPath) "Start" else "Directions",
                             tint = MaterialTheme.colorScheme.background,
-                            modifier = Modifier.width(18.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -245,28 +307,22 @@ private fun RoomInfoPanelContent(
                     enter = scaleIn(animationSpec = tween(220)) + fadeIn(animationSpec = tween(220)),
                     exit = scaleOut(animationSpec = tween(180)) + fadeOut(animationSpec = tween(180))
                 ) {
-                    Row(
+                    TextButton(
+                        onClick = { onShowOnMapClick(room) },
+                        shape = pillShape,
+                        colors = mapPillColors,
                         modifier = Modifier
                             .padding(start = 10.dp)
-                            .height(40.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.primary,
-                                shape = RoundedCornerShape(50)
-                            )
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = { onShowOnMapClick(room) }
-                            )
-                            .padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .height(actionButtonHeight),
+                        contentPadding = actionButtonPadding
                     ) {
                         Text(
                             text = if (hasPath) "Show full route" else "Show on map",
                             color = MaterialTheme.colorScheme.onSecondary,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Icon(
                             imageVector = Icons.Rounded.Map,
                             contentDescription = if (hasPath) "Show full route" else "Show on map",
