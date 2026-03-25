@@ -1408,7 +1408,12 @@ private fun HomeScreenContent(
                             }
                         },
                         onCenterView = onCenterView,
-                        onRoomTap = { room -> requestRoomSelection(room) }
+                        onRoomTap = { room -> requestRoomSelection(room) },
+                        onResultSelected = {
+                            // A destination was chosen from search, so don't reopen the prompt.
+                            searchOpenedFromDialog = false
+                            showDestinationPrompt = false
+                        }
                     )
                 }
 

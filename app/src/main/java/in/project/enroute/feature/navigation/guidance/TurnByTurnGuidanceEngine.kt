@@ -96,7 +96,7 @@ class TurnByTurnGuidanceEngine(
 
         val meters = roundedMeters(straightDistanceUnits)
         return TurnByTurnInstruction(
-            text = "Walk straight for around $metersm.",
+            text = "Walk straight for around $meters m.",
             type = GuidanceType.STRAIGHT,
             distanceMeters = meters,
             updatedAtMs = input.nowMs

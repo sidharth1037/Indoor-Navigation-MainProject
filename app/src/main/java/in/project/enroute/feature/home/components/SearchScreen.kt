@@ -56,7 +56,8 @@ fun SearchScreen(
     buildingStates: Map<String, BuildingState>,
     onBack: () -> Unit,
     onCenterView: (x: Float, y: Float, scale: Float, buildingId: String?) -> Unit = { _, _, _, _ -> },
-    onRoomTap: (Room) -> Unit = { _ -> }
+    onRoomTap: (Room) -> Unit = { _ -> },
+    onResultSelected: () -> Unit = {}
 ) {
     val query = remember { mutableStateOf("") }
     val searchResults = remember { mutableStateOf<List<SearchResult>>(emptyList()) }
@@ -209,6 +210,7 @@ fun SearchScreen(
                         onNavigate = { x, y ->
                             // Pin the room first
                             onRoomTap(result.room)
+                            onResultSelected()
                             // Hide keyboard immediately
                             focusManager.clearFocus()
                             // Schedule navigation after keyboard hide animation completes
