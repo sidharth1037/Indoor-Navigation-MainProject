@@ -1,8 +1,9 @@
 package `in`.project.enroute.feature.navigation
 
+import android.app.Application
 import android.util.Log
 import androidx.compose.ui.geometry.Offset
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import `in`.project.enroute.data.model.Entrance
 import `in`.project.enroute.data.model.FloorPlanData
@@ -21,12 +22,15 @@ import `in`.project.enroute.feature.navigation.data.TransitionDirection
 import `in`.project.enroute.feature.navigation.guidance.GuidanceConfig
 import `in`.project.enroute.feature.navigation.guidance.GuidanceType
 import `in`.project.enroute.feature.navigation.guidance.GuidanceInput
+import `in`.project.enroute.feature.navigation.guidance.TripEtaEstimator
 import `in`.project.enroute.feature.navigation.guidance.TurnByTurnGuidanceEngine
+import `in`.project.enroute.feature.settings.data.SettingsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,6 +58,7 @@ data class NavigationUiState(
     val isCalculating: Boolean = false,
     val isNavigationStarted: Boolean = false,
     val remainingDistanceMeters: Int? = null,
+    val estimatedTimeText: String? = null,
     val turnByTurnInstruction: String = "",
     val turnByTurnInstructionType: GuidanceType = GuidanceType.IDLE,
     val targetRoom: Room? = null,
@@ -89,7 +94,7 @@ data class NavigationUiState(
  *  3. Path emitted via [uiState] as a [MultiFloorPath]
  *  4. [clearPath] resets
  */
-class NavigationViewModel : ViewModel() {
+class NavigationViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val TAG = "NavigationVM"
@@ -106,10 +111,15 @@ class NavigationViewModel : ViewModel() {
          * disappears smoothly as the user walks along it.
          */
         private const val SUBDIVISION_INTERVAL = 30f
+        private const val USER_SPEED_MIN_DISTANCE_M = 12f
+        private const val USER_SPEED_MIN_STEP_DISTANCE_M = 0.35f
+        private const val USER_SPEED_PERSIST_STEP_DISTANCE_M = 8f
     }
 
     private val _uiState = MutableStateFlow(NavigationUiState())
     val uiState: StateFlow<NavigationUiState> = _uiState.asStateFlow()
+
+    private val settingsRepository = SettingsRepository(application.applicationContext)
 
     private val guidanceConfig = GuidanceConfig()
     private val guidanceEngine = TurnByTurnGuidanceEngine(guidanceConfig)
@@ -117,6 +127,15 @@ class NavigationViewModel : ViewModel() {
     private var lastGuidanceUpdateMs: Long = 0L
     private var pendingRerouteAnnouncement: Boolean = false
     private var lastRerouteAtMs: Long = 0L
+
+    private var longTermSpeedMps: Float = TripEtaEstimator.DEFAULT_WALK_SPEED_MPS
+    private var sessionDistanceM: Float = 0f
+    private var sessionActiveTimeS: Float = 0f
+    private var lastPersistedDistanceM: Float = 0f
+    private var persistedSessionDistanceM: Float = 0f
+    private var persistedSessionActiveTimeS: Float = 0f
+    private var lastObservedPosition: Offset? = null
+    private var lastObservedTimestampMs: Long? = null
 
     /** Multi-floor pathfinding engine. */
     private val multiFloorPathfinder = MultiFloorPathfinder()
@@ -168,6 +187,13 @@ class NavigationViewModel : ViewModel() {
 
     /** Running reroute job — cancelled if a new reroute or path request comes in. */
     private var rerouteJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            longTermSpeedMps = settingsRepository.navUserSpeedLongTermMps.first()
+                ?: TripEtaEstimator.DEFAULT_WALK_SPEED_MPS
+        }
+    }
 
     // ──────────────────────────────────────────────
     // Public API
@@ -293,6 +319,7 @@ class NavigationViewModel : ViewModel() {
                 isCalculating = true,
                 isNavigationStarted = false,
                 remainingDistanceMeters = null,
+                estimatedTimeText = null,
                 turnByTurnInstruction = "",
                 turnByTurnInstructionType = GuidanceType.IDLE,
                 error = null,
@@ -316,10 +343,15 @@ class NavigationViewModel : ViewModel() {
                     it.copy(isCalculating = false, error = "Could not find a path")
                 } else {
                     val subdivided = subdividePath(result)
+                    val remainingMeters = computeRemainingDistanceMeters(subdivided)
+                    val etaText = TripEtaEstimator.formatEta(
+                        TripEtaEstimator.estimateEtaSeconds(remainingMeters, effectiveSpeedMps())
+                    )
                     it.copy(
                         isCalculating = false,
                         isNavigationStarted = false,
-                        remainingDistanceMeters = computeRemainingDistanceMeters(subdivided),
+                        remainingDistanceMeters = remainingMeters,
+                        estimatedTimeText = etaText,
                         turnByTurnInstruction = "",
                         turnByTurnInstructionType = GuidanceType.IDLE,
                         multiFloorPath = subdivided,
@@ -392,6 +424,14 @@ class NavigationViewModel : ViewModel() {
         lastGuidanceUpdateMs = 0L
         pendingRerouteAnnouncement = false
         lastRerouteAtMs = 0L
+        persistSessionSpeedIfAvailable()
+        lastObservedPosition = null
+        lastObservedTimestampMs = null
+        sessionDistanceM = 0f
+        sessionActiveTimeS = 0f
+        lastPersistedDistanceM = 0f
+        persistedSessionDistanceM = 0f
+        persistedSessionActiveTimeS = 0f
         _uiState.update { NavigationUiState() }
     }
 
@@ -411,6 +451,8 @@ class NavigationViewModel : ViewModel() {
         val state = _uiState.value
         if (!state.hasPath) return
 
+        updateUserSpeedProfile(userPosition)
+
         // Find the nearest point across all segments of the full path
         val (nearestSegIdx, nearestPtIdx, distSq) = findNearestPointOnPath(
             state.multiFloorPath, userPosition, currentFloor
@@ -426,10 +468,15 @@ class NavigationViewModel : ViewModel() {
             // and within that segment remove points before the nearest point.
             val trimmed = trimPath(state.multiFloorPath, nearestSegIdx, nearestPtIdx)
             if (trimmed != null) {
+                val remainingMeters = computeRemainingDistanceMeters(trimmed)
+                val etaText = TripEtaEstimator.formatEta(
+                    TripEtaEstimator.estimateEtaSeconds(remainingMeters, effectiveSpeedMps())
+                )
                 _uiState.update {
                     it.copy(
                         displayPath = trimmed,
-                        remainingDistanceMeters = computeRemainingDistanceMeters(trimmed)
+                        remainingDistanceMeters = remainingMeters,
+                        estimatedTimeText = etaText
                     )
                 }
             }
@@ -628,10 +675,15 @@ class NavigationViewModel : ViewModel() {
                 val subdivided = subdividePath(result)
                 Log.d(TAG, "Reroute complete: ${subdivided.allPoints.size} waypoints")
                 _uiState.update {
+                    val remainingMeters = computeRemainingDistanceMeters(subdivided)
+                    val etaText = TripEtaEstimator.formatEta(
+                        TripEtaEstimator.estimateEtaSeconds(remainingMeters, effectiveSpeedMps())
+                    )
                     it.copy(
                         multiFloorPath = subdivided,
                         displayPath = subdivided,
-                        remainingDistanceMeters = computeRemainingDistanceMeters(subdivided)
+                        remainingDistanceMeters = remainingMeters,
+                        estimatedTimeText = etaText
                     )
                 }
                 pendingRerouteAnnouncement = true
@@ -790,7 +842,75 @@ class NavigationViewModel : ViewModel() {
     ): Pair<Float, Float> = CoordinateTransform.rawToCampus(x, y, scale, rotationDegrees, offsetX, offsetY)
 
     override fun onCleared() {
+        persistSessionSpeedIfAvailable()
         super.onCleared()
         pathfindingJob?.cancel()
+    }
+
+    private fun effectiveSpeedMps(): Float {
+        val sessionSpeed = if (sessionDistanceM >= USER_SPEED_MIN_DISTANCE_M && sessionActiveTimeS > 0f) {
+            sessionDistanceM / sessionActiveTimeS
+        } else {
+            null
+        }
+        return (sessionSpeed ?: longTermSpeedMps)
+            .coerceIn(0.6f, 2.2f)
+    }
+
+    private fun updateUserSpeedProfile(currentPosition: Offset) {
+        val now = System.currentTimeMillis()
+        val previousPos = lastObservedPosition
+        val previousTs = lastObservedTimestampMs
+
+        lastObservedPosition = currentPosition
+        lastObservedTimestampMs = now
+
+        if (previousPos == null || previousTs == null) return
+
+        val dtS = ((now - previousTs).coerceAtLeast(1L)) / 1000f
+        if (dtS <= 0f || dtS > 8f) return
+
+        val dx = currentPosition.x - previousPos.x
+        val dy = currentPosition.y - previousPos.y
+        val movedUnits = sqrt(dx * dx + dy * dy)
+        val movedM = movedUnits * 0.02f
+        if (movedM < USER_SPEED_MIN_STEP_DISTANCE_M) return
+
+        sessionDistanceM += movedM
+        sessionActiveTimeS += dtS
+
+        // Update long-term speed gradually once we have enough active movement.
+        if (sessionDistanceM >= USER_SPEED_MIN_DISTANCE_M) {
+            val sessionSpeed = (sessionDistanceM / sessionActiveTimeS).coerceIn(0.6f, 2.2f)
+            longTermSpeedMps = (0.85f * longTermSpeedMps + 0.15f * sessionSpeed)
+        }
+
+        if (sessionDistanceM - lastPersistedDistanceM >= USER_SPEED_PERSIST_STEP_DISTANCE_M) {
+            lastPersistedDistanceM = sessionDistanceM
+            persistSessionSpeedIfAvailable()
+        }
+    }
+
+    private fun persistSessionSpeedIfAvailable() {
+        if (sessionActiveTimeS <= 0f || sessionDistanceM <= 0f) return
+        val sessionSpeed = (sessionDistanceM / sessionActiveTimeS).coerceIn(0.6f, 2.2f)
+        val longTerm = longTermSpeedMps.coerceIn(0.6f, 2.2f)
+        val deltaDistance = (sessionDistanceM - persistedSessionDistanceM).coerceAtLeast(0f)
+        val deltaTime = (sessionActiveTimeS - persistedSessionActiveTimeS).coerceAtLeast(0f)
+        if (deltaDistance <= 0f || deltaTime <= 0f) return
+
+        persistedSessionDistanceM = sessionDistanceM
+        persistedSessionActiveTimeS = sessionActiveTimeS
+
+        viewModelScope.launch {
+            val existingDistance = settingsRepository.navUserSpeedTotalDistanceM.first()
+            val existingTime = settingsRepository.navUserSpeedTotalActiveTimeS.first()
+            settingsRepository.saveNavUserSpeedLastSessionMps(sessionSpeed)
+            settingsRepository.saveNavUserSpeedLongTermMps(longTerm)
+            settingsRepository.saveNavUserSpeedTotals(
+                distanceM = existingDistance + deltaDistance,
+                activeTimeS = existingTime + deltaTime
+            )
+        }
     }
 }

@@ -67,6 +67,7 @@ fun RoomInfoPanel(
     room: Room?,
     buildingName: String? = null,
     distanceMeters: Int? = null,
+    etaText: String? = null,
     isCalculatingPath: Boolean = false,
     hasPath: Boolean = false,
     isNavigationStarted: Boolean = false,
@@ -86,6 +87,7 @@ fun RoomInfoPanel(
     var lastShowOnMapButton by remember { mutableStateOf(showShowOnMapButton) }
     var lastBuildingName by remember { mutableStateOf(buildingName) }
     var lastDistanceMeters by remember { mutableStateOf(distanceMeters) }
+    var lastEtaText by remember { mutableStateOf(etaText) }
     if (room != null) {
         lastRoom = room
         lastIsCalculating = isCalculatingPath
@@ -94,6 +96,7 @@ fun RoomInfoPanel(
         lastShowOnMapButton = showShowOnMapButton
         lastBuildingName = buildingName
         lastDistanceMeters = distanceMeters
+        lastEtaText = etaText
     }
 
     AnimatedVisibility(
@@ -112,6 +115,7 @@ fun RoomInfoPanel(
             room = lastRoom!!,
             buildingName = lastBuildingName,
             distanceMeters = lastDistanceMeters,
+            etaText = lastEtaText,
             isCalculatingPath = lastIsCalculating,
             hasPath = lastHasPath,
             isNavigationStarted = lastIsNavigationStarted,
@@ -131,6 +135,7 @@ private fun RoomInfoPanelContent(
     room: Room,
     buildingName: String?,
     distanceMeters: Int?,
+    etaText: String?,
     isCalculatingPath: Boolean,
     hasPath: Boolean,
     isNavigationStarted: Boolean,
@@ -147,7 +152,7 @@ private fun RoomInfoPanelContent(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (isNavigationStarted) Modifier.heightIn(min = 64.dp) else Modifier.heightIn(min = 130.dp))
+            .then(if (isNavigationStarted) Modifier.heightIn(min = 70.dp) else Modifier.heightIn(min = 138.dp))
             .onSizeChanged { onHeightMeasured(it.height) }
             .clip(shape)
             .background(MaterialTheme.colorScheme.primaryContainer)
@@ -161,11 +166,13 @@ private fun RoomInfoPanelContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .wrapContentHeight()
-                .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)
+                .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 18.dp)
         ) {
             val trailingColumnWidth = 64.dp
-            val secondaryInfoFontSize = 13.sp
-            val secondaryInfoWeight = FontWeight.Medium
+            val secondaryInfoFontSize = 14.sp
+            val secondaryInfoWeight = FontWeight.SemiBold
+            val metricsFontSize = 18.sp
+            val metricsWeight = FontWeight.SemiBold
 
             // Room + building are stacked one below another on the left.
             Row(
@@ -188,30 +195,36 @@ private fun RoomInfoPanelContent(
                         overflow = TextOverflow.Ellipsis
                     )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.Top
-                    ) {
+//                    Spacer(modifier = Modifier.height(4.dp))
+
+                    if (!buildingName.isNullOrBlank()) {
                         Text(
-                            text = buildingName.orEmpty(),
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            text = buildingName,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
                             fontSize = secondaryInfoFontSize,
                             fontWeight = secondaryInfoWeight,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
+                            lineHeight = 18.sp
                         )
+                    }
 
-                        if (hasPath && distanceMeters != null) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "|  ${distanceMeters}m",
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                fontSize = secondaryInfoFontSize,
-                                fontWeight = secondaryInfoWeight,
-                                maxLines = 1
-                            )
-                        }
+                    val metricsParts = buildList {
+                        if (hasPath && distanceMeters != null) add("$distanceMeters m")
+                        if (hasPath && !etaText.isNullOrBlank()) add(etaText)
+                    }
+                    val metricsText = metricsParts.joinToString("  •  ")
+                    if (metricsText.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = metricsText,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = metricsFontSize,
+                            fontWeight = metricsWeight,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            lineHeight = 20.sp
+                        )
                     }
                 }
 
@@ -257,7 +270,7 @@ private fun RoomInfoPanelContent(
 
             if (isNavigationStarted) return@Column
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             val pillShape = RoundedCornerShape(50)
             val primaryPillColors = ButtonDefaults.textButtonColors(

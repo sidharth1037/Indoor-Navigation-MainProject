@@ -1054,6 +1054,7 @@ private fun HomeScreenContent(
                         uiState.buildingStates[bid]?.building?.buildingName
                     },
                     distanceMeters = navUiState.remainingDistanceMeters,
+                    etaText = navUiState.estimatedTimeText,
                     isCalculatingPath = navUiState.isCalculating,
                     hasPath = navUiState.hasPath,
                     isNavigationStarted = navUiState.isNavigationStarted,
@@ -1148,6 +1149,7 @@ private fun HomeScreenContent(
                         uiState.buildingStates[bid]?.building?.buildingName
                     },
                     distanceMeters = if (overlayRequestedDirections) navUiState.remainingDistanceMeters else null,
+                    etaText = if (overlayRequestedDirections) navUiState.estimatedTimeText else null,
                     isCalculatingPath = if (overlayRequestedDirections) navUiState.isCalculating else false,
                     hasPath = if (overlayRequestedDirections) navUiState.hasPath else false,
                     isNavigationStarted = if (overlayRequestedDirections) navUiState.isNavigationStarted else false,

@@ -47,6 +47,12 @@ class SettingsRepository(private val context: Context) {
         val TURN_THRESHOLD     = floatPreferencesKey("turn_threshold")
         val TURN_SENSITIVITY   = floatPreferencesKey("turn_sensitivity")
         val SHOW_ORIGIN_INSTRUCTIONS = booleanPreferencesKey("show_origin_instructions")
+
+        // Navigation ETA personalization
+        val NAV_USER_SPEED_LONG_TERM_MPS = floatPreferencesKey("nav_user_speed_long_term_mps")
+        val NAV_USER_SPEED_LAST_SESSION_MPS = floatPreferencesKey("nav_user_speed_last_session_mps")
+        val NAV_USER_SPEED_TOTAL_DISTANCE_M = floatPreferencesKey("nav_user_speed_total_distance_m")
+        val NAV_USER_SPEED_TOTAL_ACTIVE_TIME_S = floatPreferencesKey("nav_user_speed_total_active_time_s")
     }
     
     /**
@@ -214,5 +220,42 @@ class SettingsRepository(private val context: Context) {
     /** Whether to show instructions expanded in the origin selection dialog. Defaults to true for first-time users. */
     val showOriginInstructions: Flow<Boolean> = context.dataStore.data.map { it[PreferencesKeys.SHOW_ORIGIN_INSTRUCTIONS] ?: true }
     suspend fun saveShowOriginInstructions(v: Boolean) = context.dataStore.edit { it[PreferencesKeys.SHOW_ORIGIN_INSTRUCTIONS] = v }
+
+    // ── Navigation ETA personalization ───────────────────────────────────
+
+    /** Long-term learned walking speed (m/s). Null = use default baseline. */
+    val navUserSpeedLongTermMps: Flow<Float?> = context.dataStore.data.map {
+        it[PreferencesKeys.NAV_USER_SPEED_LONG_TERM_MPS]
+    }
+
+    /** Last-session learned walking speed (m/s). */
+    val navUserSpeedLastSessionMps: Flow<Float?> = context.dataStore.data.map {
+        it[PreferencesKeys.NAV_USER_SPEED_LAST_SESSION_MPS]
+    }
+
+    /** Aggregated active walking distance used to build long-term average (meters). */
+    val navUserSpeedTotalDistanceM: Flow<Float> = context.dataStore.data.map {
+        it[PreferencesKeys.NAV_USER_SPEED_TOTAL_DISTANCE_M] ?: 0f
+    }
+
+    /** Aggregated active walking time used to build long-term average (seconds). */
+    val navUserSpeedTotalActiveTimeS: Flow<Float> = context.dataStore.data.map {
+        it[PreferencesKeys.NAV_USER_SPEED_TOTAL_ACTIVE_TIME_S] ?: 0f
+    }
+
+    suspend fun saveNavUserSpeedLongTermMps(v: Float) {
+        context.dataStore.edit { it[PreferencesKeys.NAV_USER_SPEED_LONG_TERM_MPS] = v }
+    }
+
+    suspend fun saveNavUserSpeedLastSessionMps(v: Float) {
+        context.dataStore.edit { it[PreferencesKeys.NAV_USER_SPEED_LAST_SESSION_MPS] = v }
+    }
+
+    suspend fun saveNavUserSpeedTotals(distanceM: Float, activeTimeS: Float) {
+        context.dataStore.edit {
+            it[PreferencesKeys.NAV_USER_SPEED_TOTAL_DISTANCE_M] = distanceM
+            it[PreferencesKeys.NAV_USER_SPEED_TOTAL_ACTIVE_TIME_S] = activeTimeS
+        }
+    }
 
 }
