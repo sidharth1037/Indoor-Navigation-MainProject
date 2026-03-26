@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
@@ -74,7 +75,8 @@ fun RoomInfoPanel(
     onDirectionsClick: (Room) -> Unit = {},
     onShowOnMapClick: (Room) -> Unit = {},
     onStartClick: () -> Unit = {},
-    onExitClick: () -> Unit = {}
+    onExitClick: () -> Unit = {},
+    onHeightMeasured: (Int) -> Unit = {}
 ) {
     // Keep last non-null room so exit animation can display it
     var lastRoom by remember { mutableStateOf(room) }
@@ -118,7 +120,8 @@ fun RoomInfoPanel(
             onDirectionsClick = onDirectionsClick,
             onShowOnMapClick = onShowOnMapClick,
             onStartClick = onStartClick,
-            onExitClick = onExitClick
+            onExitClick = onExitClick,
+            onHeightMeasured = onHeightMeasured
         )
     }
 }
@@ -136,7 +139,8 @@ private fun RoomInfoPanelContent(
     onDirectionsClick: (Room) -> Unit,
     onShowOnMapClick: (Room) -> Unit,
     onStartClick: () -> Unit,
-    onExitClick: () -> Unit
+    onExitClick: () -> Unit,
+    onHeightMeasured: (Int) -> Unit
 ) {
     val shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
 
@@ -144,6 +148,7 @@ private fun RoomInfoPanelContent(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (isNavigationStarted) Modifier.heightIn(min = 64.dp) else Modifier.heightIn(min = 130.dp))
+            .onSizeChanged { onHeightMeasured(it.height) }
             .clip(shape)
             .background(MaterialTheme.colorScheme.primaryContainer)
             .clickable(
@@ -271,9 +276,11 @@ private fun RoomInfoPanelContent(
             ) {
                 TextButton(
                     onClick = {
-                        if (hasPath) onStartClick() else onDirectionsClick(room)
+                        // Keep visual style constant while preventing repeat requests.
+                        if (hasPath || !isCalculatingPath) {
+                            if (hasPath) onStartClick() else onDirectionsClick(room)
+                        }
                     },
-                    enabled = if (hasPath) true else !isCalculatingPath,
                     modifier = Modifier.height(actionButtonHeight),
                     shape = pillShape,
                     contentPadding = actionButtonPadding,

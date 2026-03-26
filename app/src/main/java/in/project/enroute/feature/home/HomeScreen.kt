@@ -167,15 +167,14 @@ fun HomeScreen(
     }
 
     // Feed user position into NavigationViewModel for progressive path consumption
-    // and auto-rerouting. This is intentionally limited to started navigation
-    // and step-position updates (not heading ticks) to avoid compute flooding.
+    // as soon as directions are available (even before Start), so remaining
+    // distance updates live in the room panel.
     val pdrCurrentPosition = pdrUiState.pdrState.currentPosition
-    LaunchedEffect(pdrCurrentPosition, pdrCurrentFloor, navUiState.hasPath, navUiState.isNavigationStarted) {
+    LaunchedEffect(pdrCurrentPosition, pdrCurrentFloor, navUiState.hasPath) {
         if (
             pdrCurrentPosition != null &&
             pdrCurrentFloor != null &&
-            navUiState.hasPath &&
-            navUiState.isNavigationStarted
+            navUiState.hasPath
         ) {
             navigationViewModel.updateUserPosition(pdrCurrentPosition, pdrCurrentFloor)
         }
@@ -462,8 +461,11 @@ private fun HomeScreenContent(
 
     val density = LocalDensity.current
     val sliderAnchorHeight = 77.dp
+    // Match CompassButton bottom edge when slider is visible:
+    // compass top = sliderAnchorHeight + 8.dp, compass size = 51.dp.
     val navigationSliderExpandedHeight = sliderAnchorHeight + 59.dp
     var sliderHeightDp by remember { mutableStateOf(77.dp) }
+    var roomInfoPanelHeightDp by remember { mutableStateOf(0.dp) }
 
     // North-reset animation: animates canvas rotation so north points up
     var northResetId by remember { mutableIntStateOf(0) }
@@ -560,10 +562,12 @@ private fun HomeScreenContent(
     }
 
     // Animate bottom button offset when room info panel is visible
-    val panelVisible = activePinnedRoom != null
+    val panelVisible = activePinnedRoom != null || overlayPinnedRoom != null
     val bottomButtonPadding by animateDpAsState(
         targetValue = if (panelVisible) {
-            if (navUiState.isNavigationStarted) 16.dp + 74.dp else 16.dp + 110.dp
+            val fallbackPanelHeight = if (navUiState.isNavigationStarted) 74.dp else 110.dp
+            val effectivePanelHeight = if (roomInfoPanelHeightDp > 0.dp) roomInfoPanelHeightDp else fallbackPanelHeight
+            16.dp + effectivePanelHeight
         } else {
             16.dp
         },
@@ -847,6 +851,10 @@ private fun HomeScreenContent(
                             hideControlsForNavigation = false,
                             showCurrentFloorLabelOnly = false,
                             currentFloorLabel = "",
+                            guidanceLocationBuildingName = pdrUiState.pdrState.currentBuilding?.let { buildingId ->
+                                uiState.buildingStates[buildingId]?.building?.buildingName ?: buildingId
+                            },
+                            guidanceLocationFloorId = pdrUiState.pdrState.currentFloor,
                             isVisible = true,
                             disabled = locationCorridorPoints.isNotEmpty(),
                             onHeightMeasured = { px ->
@@ -860,11 +868,9 @@ private fun HomeScreenContent(
                     val turnByTurnActive = navUiState.isNavigationStarted && navUiState.hasPath
                     val isZoomedSliderVisible = uiState.showFloorSlider
                     val isSliderVisible = (isZoomedSliderVisible || turnByTurnActive) && !isMorphingToSearch && !showSearch
+                    // Zoomed in: show building + floor controls + separator + guidance.
+                    // Zoomed out during navigation: hide controls and show guidance-only mode.
                     val hideSliderControlsForNavigation = turnByTurnActive && !isZoomedSliderVisible
-                    val floorLabel = pdrUiState.pdrState.currentFloor
-                        ?.removePrefix("floor_")
-                        ?.let { "Floor $it" }
-                        ?: ""
 
                     val motionLabelTopPadding by animateDpAsState(
                         targetValue = if (isSliderVisible) sliderHeightDp + 11.dp else 52.dp,
@@ -899,8 +905,12 @@ private fun HomeScreenContent(
                                 instructionType = navUiState.turnByTurnInstructionType,
                                 isNavigationActive = turnByTurnActive,
                                 hideControlsForNavigation = hideSliderControlsForNavigation,
-                                showCurrentFloorLabelOnly = hideSliderControlsForNavigation,
-                                currentFloorLabel = floorLabel,
+                                showCurrentFloorLabelOnly = false,
+                                currentFloorLabel = "",
+                                guidanceLocationBuildingName = pdrUiState.pdrState.currentBuilding?.let { buildingId ->
+                                    uiState.buildingStates[buildingId]?.building?.buildingName ?: buildingId
+                                },
+                                guidanceLocationFloorId = pdrUiState.pdrState.currentFloor,
                                 navigationExpandedHeight = navigationSliderExpandedHeight,
                                 isVisible = true,
                                 disabled = locationCorridorPoints.isNotEmpty(),
@@ -1122,6 +1132,9 @@ private fun HomeScreenContent(
                         overlayPinnedRoom = null
                         onExitNavigation()
                     },
+                    onHeightMeasured = { px ->
+                        roomInfoPanelHeightDp = with(density) { px.toDp() }
+                    },
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
 
@@ -1235,6 +1248,9 @@ private fun HomeScreenContent(
                     onExitClick = {
                         overlayPinnedRoom = null
                         onExitNavigation()
+                    },
+                    onHeightMeasured = { px ->
+                        roomInfoPanelHeightDp = with(density) { px.toDp() }
                     },
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )

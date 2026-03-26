@@ -418,7 +418,7 @@ class NavigationViewModel : ViewModel() {
 
         val distance = sqrt(distSq)
 
-        if (distance > REROUTE_DISTANCE_THRESHOLD) {
+        if (state.isNavigationStarted && distance > REROUTE_DISTANCE_THRESHOLD) {
             // User is too far from the path — reroute silently
             triggerSilentReroute(userPosition, currentFloor)
         } else {
