@@ -424,6 +424,8 @@ private fun HomeScreenContent(
     // When non-null, the Directions button was pressed before origin was set.
     // Once origin is set, auto-request directions to this room.
     var pendingDirectionsRoom by remember { mutableStateOf<Room?>(null) }
+    // When true, the origin was set as part of the Directions flow — skip destination prompt
+    var originSetViaDirections by remember { mutableStateOf(false) }
 
     // Location selection flow: set origin by selecting a room entrance
     var showLocationSearch by remember { mutableStateOf(false) }
@@ -561,8 +563,13 @@ private fun HomeScreenContent(
         }
     }
 
-    // Animate bottom button offset when room info panel is visible
-    val panelVisible = activePinnedRoom != null || overlayPinnedRoom != null
+    // True when any non-primary bottom panel is showing — hides the primary RoomInfoPanel
+    val anotherBottomPanelActive = overlayPinnedRoom != null
+            || pdrUiState.isSelectingOrigin
+            || locationCorridorPoints.isNotEmpty()
+
+    // Animate bottom button offset when any bottom panel is visible
+    val panelVisible = activePinnedRoom != null || anotherBottomPanelActive
     val bottomButtonPadding by animateDpAsState(
         targetValue = if (panelVisible) {
             val fallbackPanelHeight = if (navUiState.isNavigationStarted) 74.dp else 110.dp
@@ -992,7 +999,7 @@ private fun HomeScreenContent(
                 // Hidden during origin selection mode or when following is enabled
                 // Shows origin dialog if origin not set, otherwise enables following mode
                 AimButton(
-                    isVisible = !pdrUiState.isSelectingOrigin && !uiState.isFollowingMode && !aimPressed,
+                    isVisible = !pdrUiState.isSelectingOrigin && !uiState.isFollowingMode && !aimPressed && locationCorridorPoints.isEmpty(),
                     isPdrActive = pdrUiState.pdrState.origin != null,
                     onClick = {
                         if (pdrUiState.pdrState.origin == null) {
@@ -1020,7 +1027,7 @@ private fun HomeScreenContent(
                 
                 // Stop Tracking button positioned at bottom left
                 // Shows when origin is set and not selecting origin
-                if (pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin) {
+                if (pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin && locationCorridorPoints.isEmpty()) {
                     StopTrackingButton(
                         isSliderVisible =
                             ((uiState.showFloorSlider || (navUiState.isNavigationStarted && navUiState.hasPath))
@@ -1034,9 +1041,9 @@ private fun HomeScreenContent(
                 }
 
                 // Settings & Admin overlay buttons — bottom left, above StopTrackingButton
-                val stopTrackingVisible = pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin
+                val stopTrackingVisible = pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin && locationCorridorPoints.isEmpty()
                 val navButtonsBottomPadding = bottomButtonPadding + if (stopTrackingVisible) 59.dp else 0.dp
-                if (!pdrUiState.isSelectingOrigin) {
+                if (!pdrUiState.isSelectingOrigin && locationCorridorPoints.isEmpty()) {
                     OverlayNavButtons(
                         onSettingsClick = onSettingsClick,
                         onAdminClick = onAdminClick,
@@ -1049,7 +1056,7 @@ private fun HomeScreenContent(
 
                 // Room info panel slides up from bottom when a room label is tapped
                 RoomInfoPanel(
-                    room = activePinnedRoom,
+                    room = if (anotherBottomPanelActive) null else activePinnedRoom,
                     buildingName = activePinnedRoom?.buildingId?.let { bid ->
                         uiState.buildingStates[bid]?.building?.buildingName
                     },
@@ -1064,8 +1071,8 @@ private fun HomeScreenContent(
                     },
                     onDirectionsClick = { room ->
                         if (pdrUiState.pdrState.origin == null) {
-                            // Origin not set → show dialog, remember room for later
                             pendingDirectionsRoom = room
+                            originSetViaDirections = true
                             showOriginDialog = true
                         } else {
                             onDirectionsClick(room)
@@ -1188,6 +1195,7 @@ private fun HomeScreenContent(
                         onRoomTap(room)
                         if (pdrUiState.pdrState.origin == null) {
                             pendingDirectionsRoom = room
+                            originSetViaDirections = true
                             showOriginDialog = true
                         } else {
                             onDirectionsClick(room)
@@ -1288,7 +1296,10 @@ private fun HomeScreenContent(
                     WalkingTutorialDialog(
                         onDismiss = {
                             showWalkingTutorial = false
-                            showDestinationPrompt = true
+                            if (!originSetViaDirections) {
+                                showDestinationPrompt = true
+                            }
+                            originSetViaDirections = false
                         }
                     )
                 }
