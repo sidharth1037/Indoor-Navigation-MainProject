@@ -13,6 +13,7 @@ import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import `in`.project.enroute.feature.admin.auth.AdminLoginScreen
 import `in`.project.enroute.feature.floorplan.FloorPlanViewModel
 import `in`.project.enroute.feature.home.HomeScreen
+import `in`.project.enroute.feature.home.elevator.ElevatorViewModel
 import `in`.project.enroute.feature.navigation.NavigationViewModel
 import `in`.project.enroute.feature.pdr.PdrViewModel
 import `in`.project.enroute.feature.settings.SettingsScreen
@@ -72,11 +73,13 @@ fun NavigationGraph(
             val floorPlanViewModel: FloorPlanViewModel = viewModel(backStackEntry)
             val pdrViewModel: PdrViewModel = viewModel(backStackEntry)
             val navigationViewModel: NavigationViewModel = viewModel(backStackEntry)
+            val elevatorViewModel: ElevatorViewModel = viewModel(backStackEntry)
             HomeScreen(
                 campusId = campusId,
                 floorPlanViewModel = floorPlanViewModel,
                 pdrViewModel = pdrViewModel,
                 navigationViewModel = navigationViewModel,
+                elevatorViewModel = elevatorViewModel,
                 onSettingsClick = {
                     navController.navigate(Screen.Settings.route) {
                         launchSingleTop = true

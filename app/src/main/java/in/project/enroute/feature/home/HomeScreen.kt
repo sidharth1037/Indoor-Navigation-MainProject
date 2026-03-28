@@ -86,7 +86,15 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.geometry.Offset
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import `in`.project.enroute.feature.home.elevator.ElevatorDetector
+import `in`.project.enroute.feature.home.elevator.ElevatorViewModel
+import `in`.project.enroute.feature.home.elevator.ElevatorModeBar
+import `in`.project.enroute.feature.home.elevator.ElevatorPhase
+import `in`.project.enroute.feature.home.elevator.ElevatorPromptDialog
+import kotlin.math.sqrt
 
 @Composable
 fun HomeScreen(
@@ -94,6 +102,7 @@ fun HomeScreen(
     floorPlanViewModel: FloorPlanViewModel = viewModel(),
     pdrViewModel: PdrViewModel = viewModel(),
     navigationViewModel: NavigationViewModel = viewModel(),
+    elevatorViewModel: ElevatorViewModel = viewModel(),
     settingsViewModel: SettingsViewModel = viewModel(),
     onSettingsClick: () -> Unit = {},
     onAdminClick: () -> Unit = {}
@@ -154,6 +163,11 @@ fun HomeScreen(
 
             val allFloorData = floorPlanViewModel.getAllFloorConstraintData()
             pdrViewModel.loadAllFloorConstraintData(allFloorData)
+
+            // Pre-compute elevator data on a background thread
+            withContext(Dispatchers.Default) {
+                ElevatorDetector.loadElevatorData(uiState.buildingStates)
+            }
         }
     }
 
@@ -310,6 +324,7 @@ fun HomeScreen(
                 // Commit current following position before clearing PDR
                 pdrViewModel.setHeadingTrackingMode(false)
                 floorPlanViewModel.disableFollowingMode(effectiveCanvasState)
+                elevatorViewModel.resetState()
                 pdrViewModel.clearAndStop()
                 navigationViewModel.clearPath()
             },
@@ -369,6 +384,8 @@ fun HomeScreen(
             onOriginError = { errorType -> originErrorType = errorType },
             floorPlanViewModel = floorPlanViewModel,
             pdrViewModel = pdrViewModel,
+            elevatorViewModel = elevatorViewModel,
+            onClearNavigationPath = { navigationViewModel.clearPath() },
             onSettingsClick = onSettingsClick,
             onAdminClick = onAdminClick
         )
@@ -409,6 +426,8 @@ private fun HomeScreenContent(
     onOriginError: (FloorPlanViewModel.OriginErrorType) -> Unit = {},
     floorPlanViewModel: FloorPlanViewModel? = null,
     pdrViewModel: PdrViewModel? = null,
+    elevatorViewModel: ElevatorViewModel,
+    onClearNavigationPath: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
     onAdminClick: () -> Unit = {}
 ) {
@@ -445,6 +464,11 @@ private fun HomeScreenContent(
 
     // Stop tracking confirmation dialog
     var showStopTrackingConfirmDialog by remember { mutableStateOf(false) }
+
+    // ── Elevator mode state (owned by ElevatorViewModel) ────────────────
+    val elevatorUiState by elevatorViewModel.uiState.collectAsState()
+    val pdrCurrentPosition = pdrUiState.pdrState.currentPosition
+    val pdrCurrentFloor = pdrUiState.pdrState.currentFloor
 
     LaunchedEffect(pendingWalkingTutorial) {
         if (pendingWalkingTutorial) {
@@ -523,6 +547,7 @@ private fun HomeScreenContent(
             showDestinationPrompt ||
             showStopTrackingConfirmDialog ||
             showWalkingTutorial ||
+            elevatorUiState.showPromptDialog ||
             locationCorridorPoints.isNotEmpty() ||
             pdrUiState.isSelectingOrigin ||
             overlayPinnedRoom != null ||
@@ -543,6 +568,7 @@ private fun HomeScreenContent(
             showOriginDialog -> showOriginDialog = false
             showDestinationPrompt -> showDestinationPrompt = false
             showStopTrackingConfirmDialog -> showStopTrackingConfirmDialog = false
+            elevatorUiState.showPromptDialog -> elevatorViewModel.dismissPrompt(trackDismissal = true)
             showWalkingTutorial -> showWalkingTutorial = false
             // Bottom panels
             locationCorridorPoints.isNotEmpty() -> {
@@ -581,6 +607,81 @@ private fun HomeScreenContent(
         animationSpec = dpTween(durationMillis = 350),
         label = "bottomButtonPadding"
     )
+
+    // ── Elevator proximity detection (background thread) ─────────────────
+    LaunchedEffect(pdrCurrentPosition, pdrCurrentFloor, elevatorUiState.modeState.isActive, elevatorUiState.showPromptDialog) {
+        if (
+            pdrCurrentPosition != null &&
+            pdrCurrentFloor != null &&
+            pdrUiState.pdrState.isTracking &&
+            !elevatorUiState.modeState.isActive &&
+            !elevatorUiState.showPromptDialog
+        ) {
+            val info = withContext(Dispatchers.Default) {
+                ElevatorDetector.findNearbyElevator(
+                    position = pdrCurrentPosition,
+                    currentFloorId = pdrCurrentFloor,
+                    thresholdPx = 75f // 1.5m ≈ 150cm × 0.5 px/cm
+                )
+            }
+            if (info != null) {
+                val floors = withContext(Dispatchers.Default) {
+                    ElevatorDetector.getElevatorFloors(
+                        buildingId = info.buildingId,
+                        excludeFloorId = pdrCurrentFloor,
+                        buildingStates = uiState.buildingStates
+                    )
+                }
+                elevatorViewModel.onNearbyElevatorDetected(info, floors, pdrCurrentPosition)
+            } else {
+                elevatorViewModel.onNoElevatorNearby(pdrCurrentPosition)
+            }
+        }
+    }
+
+    // ── Elevator exit detection (background thread) ──────────────────────
+    LaunchedEffect(pdrCurrentPosition, heading, elevatorUiState.modeState) {
+        val modeState = elevatorUiState.modeState
+        if (
+            pdrCurrentPosition != null &&
+            modeState.isActive &&
+            modeState.phase == ElevatorPhase.ACTIVE
+        ) {
+            val targetFloor = modeState.targetFloor ?: return@LaunchedEffect
+            val originInfo = modeState.elevatorInfo ?: return@LaunchedEffect
+
+            // Get exit direction on the target floor (or use origin floor's)
+            val exitDir = withContext(Dispatchers.Default) {
+                ElevatorDetector.getElevatorInfoOnFloor(
+                    buildingId = originInfo.buildingId,
+                    targetFloorId = targetFloor.floorId
+                )?.exitDirection ?: originInfo.exitDirection
+            }
+
+            // Check if user heading aligns with exit direction (dot product > 0 ≈ within 90°)
+            val headingDirX = sin(heading)
+            val headingDirY = -cos(heading)
+            val dot = headingDirX * exitDir.x + headingDirY * exitDir.y
+
+            // Also check that the user has moved away from the elevator center
+            val elevatorCenter = withContext(Dispatchers.Default) {
+                ElevatorDetector.getElevatorPositionOnFloor(
+                    buildingId = originInfo.buildingId,
+                    targetFloorId = targetFloor.floorId,
+                    buildingStates = uiState.buildingStates
+                )
+            } ?: originInfo.roomLabelPosition
+
+            val dx = pdrCurrentPosition.x - elevatorCenter.x
+            val dy = pdrCurrentPosition.y - elevatorCenter.y
+            val distFromCenter = sqrt(dx * dx + dy * dy)
+
+            // Exit condition: heading roughly matches exit direction AND far enough from center
+            if (dot > 0.3f && distFromCenter > 40f) {
+                elevatorViewModel.triggerCompletion()
+            }
+        }
+    }
 
     var hasUserMovedCanvasAfterPathFound by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
@@ -1024,6 +1125,34 @@ private fun HomeScreenContent(
                         .navigationBarsPadding()
                         .padding(bottom = bottomButtonPadding, end = 8.dp)
                 )
+
+                // ── Elevator Mode Bar ─────────────────────────────────────
+                // Full-width bar between left and right button columns
+                ElevatorModeBar(
+                    state = elevatorUiState.modeState,
+                    onChangeFloor = {
+                        // Re-open the floor picker dialog to let the user change target floor
+                        val modeState = elevatorUiState.modeState
+                        val info = modeState.elevatorInfo ?: return@ElevatorModeBar
+                        val currentFloorId = modeState.targetFloor?.floorId
+                            ?: pdrCurrentFloor ?: return@ElevatorModeBar
+                        val floors = ElevatorDetector.getElevatorFloors(
+                            buildingId = info.buildingId,
+                            excludeFloorId = currentFloorId,
+                            buildingStates = uiState.buildingStates
+                        )
+                        elevatorViewModel.openFloorPrompt(floors)
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        // Horizontal padding: leave space for circular buttons (51dp + 8dp padding)
+                        .padding(
+                            start = 67.dp,
+                            end = 67.dp,
+                            bottom = bottomButtonPadding
+                        )
+                )
                 
                 // Stop Tracking button positioned at bottom left
                 // Shows when origin is set and not selecting origin
@@ -1313,6 +1442,48 @@ private fun HomeScreenContent(
                             isMorphingToSearch = true
                         },
                         onLater = { showDestinationPrompt = false }
+                    )
+                }
+
+                // Elevator prompt dialog — shown when user is near an elevator entrance
+                if (elevatorUiState.showPromptDialog) {
+                    ElevatorPromptDialog(
+                        floors = elevatorUiState.availableFloors,
+                        onFloorSelected = { selectedFloor ->
+                            elevatorViewModel.dismissPrompt(trackDismissal = false)
+                            val modeState = elevatorUiState.modeState
+                            val info = modeState.elevatorInfo
+                                ?: elevatorUiState.nearbyElevatorInfo
+                                ?: return@ElevatorPromptDialog
+
+                            val targetPos = ElevatorDetector.getElevatorPositionOnFloor(
+                                buildingId = info.buildingId,
+                                targetFloorId = selectedFloor.floorId,
+                                buildingStates = uiState.buildingStates
+                            ) ?: info.roomLabelPosition
+
+                            // Reset any active route before teleporting floors.
+                            if (navUiState.hasPath) {
+                                onClearNavigationPath()
+                            }
+
+                            val constraintData = floorPlanViewModel?.getFloorConstraintData(targetPos)
+                            pdrViewModel?.resetPositionForElevator(
+                                position = targetPos,
+                                floorId = selectedFloor.floorId,
+                                floorConstraintData = constraintData
+                            )
+                            onSwitchToFloorById(selectedFloor.floorId)
+
+                            if (modeState.isActive) {
+                                elevatorViewModel.updateTargetFloor(selectedFloor)
+                            } else {
+                                elevatorViewModel.activateMode(info, selectedFloor)
+                            }
+                        },
+                        onDismiss = {
+                            elevatorViewModel.dismissPrompt(trackDismissal = true)
+                        }
                     )
                 }
                 

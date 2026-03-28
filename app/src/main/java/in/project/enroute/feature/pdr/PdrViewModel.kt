@@ -462,6 +462,18 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Re-anchors active tracking at a new position/floor for elevator transitions.
+     * Tracking remains enabled and the visible path restarts from [position].
+     */
+    fun resetPositionForElevator(
+        position: Offset,
+        floorId: String,
+        floorConstraintData: FloorConstraintData?
+    ) {
+        repository.resetPositionForElevator(position, floorId, floorConstraintData)
+    }
+
+    /**
      * Clears the PDR path and stops all tracking and sensor activity.
      * Resets everything to initial state.
      */

@@ -310,6 +310,57 @@ class PdrRepository {
     }
 
     /**
+     * Re-anchors active tracking at [position] on [floorId] for elevator transitions.
+     * Tracking stays active and the path is reset to a single arrival point.
+     */
+    fun resetPositionForElevator(
+        position: Offset,
+        floorId: String,
+        floorConstraintData: FloorConstraintData?
+    ) {
+        floorConstraintData?.let { data ->
+            setFloorConstraints(data)
+        }
+
+        currentFloorNumber = floorId.removePrefix("floor_").toFloatOrNull() ?: currentFloorNumber
+
+        // Keep detector floor in sync so the next step does not back-switch floors.
+        val buildingId = if (buildingDetector.isLoaded()) {
+            buildingDetector.detect(position)
+            buildingDetector.currentBuildingId
+        } else {
+            null
+        }
+        buildingDetector.setInitial(buildingId, floorId)
+
+        // Re-anchor correction engine to the elevator arrival point.
+        correctionEngine?.setOrigin(position, _heading.value)
+
+        currentX = position.x
+        currentY = position.y
+
+        stairDetector.reset()
+        stairAnimator.reset()
+        stairStepBuffer.clear()
+        recentHeadings.clear()
+
+        val currentState = _pdrState.value
+        val arrivalPoint = PathPoint(position = position, heading = _heading.value)
+        _pdrState.value = currentState.copy(
+            isTracking = true,
+            currentPosition = position,
+            path = listOf(arrivalPoint),
+            currentFloor = floorId,
+            currentBuilding = buildingId,
+            isOnStairs = false,
+            stairTransitionProgress = 0f,
+            stairDestinationFloor = null,
+            stairBottomPosition = null,
+            stairTopPosition = null
+        )
+    }
+
+    /**
      * Processes a detected step and calculates the new position.
      * Only works if tracking is active (origin has been set).
      *
