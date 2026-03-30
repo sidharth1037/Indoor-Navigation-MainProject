@@ -1,6 +1,7 @@
 package `in`.project.enroute.feature.home.elevator
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -20,17 +21,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Elevator
 import androidx.compose.material.icons.rounded.SwapVert
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -56,10 +61,19 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun ElevatorModeBar(
     state: ElevatorModeState,
+    isNearElevator: Boolean,
+    onUseElevator: () -> Unit,
     onChangeFloor: () -> Unit,
+    onExitMode: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isVisible = state.phase == ElevatorPhase.ACTIVE || state.phase == ElevatorPhase.COMPLETING
+    val contentState = when {
+        state.phase == ElevatorPhase.COMPLETING -> ElevatorBarContentState.COMPLETING
+        state.phase == ElevatorPhase.ACTIVE -> ElevatorBarContentState.ACTIVE
+        isNearElevator -> ElevatorBarContentState.NEAR
+        else -> ElevatorBarContentState.HIDDEN
+    }
+    val isVisible = contentState != ElevatorBarContentState.HIDDEN
 
     AnimatedVisibility(
         visible = isVisible,
@@ -94,22 +108,105 @@ fun ElevatorModeBar(
                 .padding(horizontal = 16.dp),
             contentAlignment = Alignment.Center
         ) {
-            when (state.phase) {
-                ElevatorPhase.COMPLETING -> {
-                    // ── Completion message ─────────────────────────────────
-                    CompletionContent(
-                        floorLabel = state.targetFloor?.displayLabel ?: "unknown floor"
-                    )
-                }
+            Crossfade(
+                targetState = contentState,
+                animationSpec = tween(durationMillis = 220),
+                label = "elevatorBarContent"
+            ) { targetState ->
+                when (targetState) {
+                    ElevatorBarContentState.COMPLETING -> {
+                        CompletionContent(
+                            floorLabel = state.targetFloor?.displayLabel ?: "unknown floor"
+                        )
+                    }
 
-                else -> {
-                    // ── Active elevator mode content ──────────────────────
-                    ActiveContent(
-                        floorLabel = state.targetFloor?.displayLabel ?: "unknown floor",
-                        onChangeFloor = onChangeFloor
-                    )
+                    ElevatorBarContentState.ACTIVE -> {
+                        ActiveContent(
+                            floorLabel = state.targetFloor?.displayLabel ?: "unknown floor",
+                            onChangeFloor = onChangeFloor,
+                            onExitMode = onExitMode
+                        )
+                    }
+
+                    ElevatorBarContentState.NEAR -> {
+                        NearElevatorContent(onUseElevator = onUseElevator)
+                    }
+
+                    ElevatorBarContentState.HIDDEN -> Unit
                 }
             }
+        }
+    }
+}
+
+private enum class ElevatorBarContentState {
+    HIDDEN,
+    NEAR,
+    ACTIVE,
+    COMPLETING
+}
+
+@Composable
+private fun NearElevatorContent(
+    onUseElevator: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Elevator,
+                contentDescription = "Elevator nearby",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(32.dp)
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column {
+                Text(
+                    text = "Using elevator?",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 16.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Text(
+                    text = "Open floor picker",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        TextButton(
+            onClick = onUseElevator,
+            shape = RoundedCornerShape(50),
+            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
+            colors = ButtonDefaults.textButtonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.background
+            )
+        ) {
+            Text(
+                text = "Yes",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.background,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp
+            )
         }
     }
 }
@@ -120,7 +217,8 @@ fun ElevatorModeBar(
 @Composable
 private fun ActiveContent(
     floorLabel: String,
-    onChangeFloor: () -> Unit
+    onChangeFloor: () -> Unit,
+    onExitMode: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -136,10 +234,10 @@ private fun ActiveContent(
                 imageVector = Icons.Rounded.Elevator,
                 contentDescription = "Elevator",
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(24.dp)
             )
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
             Column {
                 Text(
@@ -147,7 +245,7 @@ private fun ActiveContent(
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp,
+                    fontSize = 14.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -157,44 +255,74 @@ private fun ActiveContent(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp,
+                    fontSize = 12.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
         }
 
-        // Right: change floor button
-        Row(
-            modifier = Modifier
-                .background(
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                    shape = RoundedCornerShape(16.dp)
-                )
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onChangeFloor
-                )
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+        // Right: stacked actions
+        Column(
+            modifier = Modifier.padding(end = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+            horizontalAlignment = Alignment.End
         ) {
-            Icon(
-                imageVector = Icons.Rounded.SwapVert,
-                contentDescription = "Change floor",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp)
-            )
+            TextButton(
+                onClick = onChangeFloor,
+                modifier = Modifier.width(96.dp),
+                shape = RoundedCornerShape(50),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp),
+                colors = ButtonDefaults.textButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.background
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.SwapVert,
+                    contentDescription = "Change floor",
+                    tint = MaterialTheme.colorScheme.background,
+                    modifier = Modifier.size(14.dp)
+                )
 
-            Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(4.dp))
 
-            Text(
-                text = "Change",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp
-            )
+                Text(
+                    text = "Change",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.background,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp
+                )
+            }
+
+            TextButton(
+                onClick = onExitMode,
+                modifier = Modifier.width(96.dp),
+                shape = RoundedCornerShape(50),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp),
+                colors = ButtonDefaults.textButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.Logout,
+                    contentDescription = "Exit elevator mode",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(14.dp)
+                )
+
+                Spacer(modifier = Modifier.width(4.dp))
+
+                Text(
+                    text = "Exit",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp
+                )
+            }
         }
     }
 }

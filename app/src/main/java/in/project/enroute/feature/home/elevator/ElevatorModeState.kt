@@ -46,12 +46,16 @@ data class ElevatorFloor(
  *                 the elevator mode button and walking out on the target floor)
  * @param targetFloor The floor the user selected as their destination
  * @param elevatorInfo Info about the elevator room on the origin floor
+ * @param activationPosition User position when elevator mode was first activated
+ * @param activationFloorId User floor when elevator mode was first activated
  * @param phase Current visual phase of the elevator mode lifecycle
  */
 data class ElevatorModeState(
     val isActive: Boolean = false,
     val targetFloor: ElevatorFloor? = null,
     val elevatorInfo: ElevatorInfo? = null,
+    val activationPosition: Offset? = null,
+    val activationFloorId: String? = null,
     val phase: ElevatorPhase = ElevatorPhase.IDLE
 )
 

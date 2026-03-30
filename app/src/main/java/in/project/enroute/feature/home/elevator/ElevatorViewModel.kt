@@ -26,37 +26,34 @@ class ElevatorViewModel : ViewModel() {
     fun onNearbyElevatorDetected(
         info: ElevatorInfo,
         availableFloors: List<ElevatorFloor>,
-        userPosition: Offset
+        _userPosition: Offset
     ) {
         if (availableFloors.isEmpty()) return
-
-        val dismissed = _uiState.value.dismissedEntrancePosition
-        val tooCloseToDismissed = if (dismissed != null) {
-            val dx = userPosition.x - dismissed.x
-            val dy = userPosition.y - dismissed.y
-            sqrt(dx * dx + dy * dy) < DISMISS_RESHOW_DISTANCE_PX
-        } else {
-            false
-        }
-
-        if (tooCloseToDismissed) return
 
         _uiState.update {
             it.copy(
                 nearbyElevatorInfo = info,
                 availableFloors = availableFloors,
-                showPromptDialog = true
+                showPromptDialog = false
             )
         }
     }
 
     fun onNoElevatorNearby(userPosition: Offset) {
-        val dismissed = _uiState.value.dismissedEntrancePosition ?: return
-        val dx = userPosition.x - dismissed.x
-        val dy = userPosition.y - dismissed.y
-        val movedAway = sqrt(dx * dx + dy * dy) > DISMISS_RESHOW_DISTANCE_PX
-        if (movedAway) {
-            _uiState.update { it.copy(dismissedEntrancePosition = null) }
+        val dismissed = _uiState.value.dismissedEntrancePosition
+        val movedAway = if (dismissed != null) {
+            val dx = userPosition.x - dismissed.x
+            val dy = userPosition.y - dismissed.y
+            sqrt(dx * dx + dy * dy) > DISMISS_RESHOW_DISTANCE_PX
+        } else {
+            false
+        }
+        _uiState.update {
+            it.copy(
+                nearbyElevatorInfo = null,
+                availableFloors = emptyList(),
+                dismissedEntrancePosition = if (movedAway) null else it.dismissedEntrancePosition
+            )
         }
     }
 
@@ -64,6 +61,8 @@ class ElevatorViewModel : ViewModel() {
         _uiState.update { state ->
             state.copy(
                 showPromptDialog = false,
+                nearbyElevatorInfo = state.nearbyElevatorInfo,
+                availableFloors = state.availableFloors,
                 dismissedEntrancePosition = if (trackDismissal) {
                     state.nearbyElevatorInfo?.entrancePosition
                 } else {
@@ -84,7 +83,12 @@ class ElevatorViewModel : ViewModel() {
         }
     }
 
-    fun activateMode(info: ElevatorInfo, selectedFloor: ElevatorFloor) {
+    fun activateMode(
+        info: ElevatorInfo,
+        selectedFloor: ElevatorFloor,
+        activationPosition: Offset,
+        activationFloorId: String
+    ) {
         completionJob?.cancel()
         _uiState.update {
             it.copy(
@@ -92,6 +96,8 @@ class ElevatorViewModel : ViewModel() {
                     isActive = true,
                     targetFloor = selectedFloor,
                     elevatorInfo = info,
+                    activationPosition = activationPosition,
+                    activationFloorId = activationFloorId,
                     phase = ElevatorPhase.ACTIVE
                 ),
                 showPromptDialog = false,
@@ -110,6 +116,16 @@ class ElevatorViewModel : ViewModel() {
                 ),
                 showPromptDialog = false,
                 dismissedEntrancePosition = null
+            )
+        }
+    }
+
+    fun cancelMode() {
+        completionJob?.cancel()
+        _uiState.update {
+            it.copy(
+                modeState = ElevatorModeState(),
+                showPromptDialog = false
             )
         }
     }
