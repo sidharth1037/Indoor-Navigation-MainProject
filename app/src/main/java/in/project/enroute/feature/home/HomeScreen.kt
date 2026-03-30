@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -58,6 +61,7 @@ import `in`.project.enroute.feature.pdr.ui.components.HeightRequiredDialog
 import `in`.project.enroute.feature.pdr.ui.components.MotionLabel
 
 import `in`.project.enroute.feature.home.components.RoomInfoPanel
+import `in`.project.enroute.feature.home.components.RoomInfoHeaderAction
 import `in`.project.enroute.feature.home.components.StopTrackingButton
 import `in`.project.enroute.feature.home.components.StopTrackingConfirmDialog
 import `in`.project.enroute.feature.home.components.OverlayNavButtons
@@ -95,6 +99,12 @@ import `in`.project.enroute.feature.home.elevator.ElevatorModeBar
 import `in`.project.enroute.feature.home.elevator.ElevatorPhase
 import `in`.project.enroute.feature.home.elevator.ElevatorPromptDialog
 import `in`.project.enroute.feature.home.elevator.ElevatorExitConfirmDialog
+import `in`.project.enroute.feature.landmark.LandmarkViewModel
+import `in`.project.enroute.feature.landmark.ui.AddLandmarkButton
+import `in`.project.enroute.feature.landmark.ui.LandmarkDeleteConfirmDialog
+import `in`.project.enroute.feature.landmark.ui.LandmarkOverlay
+import `in`.project.enroute.feature.landmark.ui.LandmarkPlacementPanel
+import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import kotlin.math.sqrt
 
 @Composable
@@ -104,14 +114,17 @@ fun HomeScreen(
     pdrViewModel: PdrViewModel = viewModel(),
     navigationViewModel: NavigationViewModel = viewModel(),
     elevatorViewModel: ElevatorViewModel = viewModel(),
+    landmarkViewModel: LandmarkViewModel = viewModel(),
     settingsViewModel: SettingsViewModel = viewModel(),
     onSettingsClick: () -> Unit = {},
-    onAdminClick: () -> Unit = {}
+    onAdminClick: () -> Unit = {},
+    onNavigateToAddLandmark: () -> Unit = {}
 ) {
     val uiState by floorPlanViewModel.uiState.collectAsState()
     val pdrUiState by pdrViewModel.uiState.collectAsState()
     val navUiState by navigationViewModel.uiState.collectAsState()
     val settingsUiState by settingsViewModel.uiState.collectAsState()
+    val landmarkUiState by landmarkViewModel.uiState.collectAsState()
     // Heading collected separately for PDR — not used for compass (compass uses canvas rotation)
     val heading by pdrViewModel.heading.collectAsState()
     val hasFreshHeadingSinceStart by pdrViewModel.hasFreshHeadingSinceStart.collectAsState()
@@ -120,9 +133,10 @@ fun HomeScreen(
     // State for origin location error snack bar
     var originErrorType by remember { mutableStateOf<FloorPlanViewModel.OriginErrorType?>(null) }
 
-    // Load all buildings on first composition
+    // Load all buildings and landmarks on first composition
     LaunchedEffect(Unit) {
         floorPlanViewModel.loadCampus(campusId)
+        landmarkViewModel.loadLandmarks(campusId)
     }
 
     // Supply loaded floor data to NavigationViewModel whenever it changes
@@ -351,7 +365,20 @@ fun HomeScreen(
                 // works even when zoomed out with no dominant building.
                 val floor = pdrUiState.pdrState.currentFloor ?: uiState.currentFloorId
                 if (currentPosition != null && floor != null) {
-                    navigationViewModel.requestDirections(room, currentPosition, floor)
+                    val selectedLandmark = landmarkUiState.selectedLandmark
+                    val selectedLandmarkRoomId = selectedLandmark?.let { landmarkSyntheticRoomId(it.id) }
+                    if (selectedLandmark != null && room.id == selectedLandmarkRoomId) {
+                        navigationViewModel.requestDirections(
+                            room = room,
+                            userPosition = currentPosition,
+                            currentFloor = floor,
+                            directGoalCampus = Offset(selectedLandmark.campusX, selectedLandmark.campusY),
+                            directGoalFloorId = selectedLandmark.floorId,
+                            directGoalBuildingId = selectedLandmark.buildingId
+                        )
+                    } else {
+                        navigationViewModel.requestDirections(room, currentPosition, floor)
+                    }
                 }
             },
             onStartNavigation = {
@@ -386,11 +413,20 @@ fun HomeScreen(
             floorPlanViewModel = floorPlanViewModel,
             pdrViewModel = pdrViewModel,
             elevatorViewModel = elevatorViewModel,
+            landmarkViewModel = landmarkViewModel,
+            campusCreatedBy = uiState.campusMetadata.createdBy,
             onClearNavigationPath = { navigationViewModel.clearPath() },
             onSettingsClick = onSettingsClick,
-            onAdminClick = onAdminClick
+            onAdminClick = onAdminClick,
+            onNavigateToAddLandmark = onNavigateToAddLandmark
         )
     }
+}
+
+private fun landmarkSyntheticRoomId(landmarkId: String): Int {
+    val hash = landmarkId.hashCode()
+    val safePositive = if (hash == Int.MIN_VALUE) 0 else kotlin.math.abs(hash)
+    return -(safePositive + 1)
 }
 
 @Composable
@@ -428,9 +464,12 @@ private fun HomeScreenContent(
     floorPlanViewModel: FloorPlanViewModel? = null,
     pdrViewModel: PdrViewModel? = null,
     elevatorViewModel: ElevatorViewModel,
+    landmarkViewModel: LandmarkViewModel? = null,
+    campusCreatedBy: String = "",
     onClearNavigationPath: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
-    onAdminClick: () -> Unit = {}
+    onAdminClick: () -> Unit = {},
+    onNavigateToAddLandmark: () -> Unit = {}
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var isMorphingToSearch by remember { mutableStateOf(false) }
@@ -465,6 +504,7 @@ private fun HomeScreenContent(
 
     // Stop tracking confirmation dialog
     var showStopTrackingConfirmDialog by remember { mutableStateOf(false) }
+    var showLandmarkDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showElevatorExitConfirmDialog by remember { mutableStateOf(false) }
 
     // ── Elevator mode state (owned by ElevatorViewModel) ────────────────
@@ -494,6 +534,7 @@ private fun HomeScreenContent(
     val navigationSliderExpandedHeight = sliderAnchorHeight + 59.dp
     var sliderHeightDp by remember { mutableStateOf(77.dp) }
     var roomInfoPanelHeightDp by remember { mutableStateOf(0.dp) }
+    var landmarkPanelHeightDp by remember { mutableStateOf(0.dp) }
 
     // North-reset animation: animates canvas rotation so north points up
     var northResetId by remember { mutableIntStateOf(0) }
@@ -543,6 +584,7 @@ private fun HomeScreenContent(
 
     // ── Back button handling ─────────────────────────────────────────────────
     // Intercept back press to dismiss overlays before navigating away
+    val isAddingLandmarkLocal = landmarkViewModel?.uiState?.collectAsState()?.value?.isAddingLandmark == true
     val hasActiveOverlay = showSearch ||
             showLocationSearch ||
             showOriginDialog ||
@@ -552,6 +594,7 @@ private fun HomeScreenContent(
             elevatorUiState.showPromptDialog ||
             locationCorridorPoints.isNotEmpty() ||
             pdrUiState.isSelectingOrigin ||
+            isAddingLandmarkLocal ||
             overlayPinnedRoom != null ||
             activePinnedRoom != null
 
@@ -573,6 +616,9 @@ private fun HomeScreenContent(
             elevatorUiState.showPromptDialog -> elevatorViewModel.dismissPrompt(trackDismissal = true)
             showWalkingTutorial -> showWalkingTutorial = false
             // Bottom panels
+            isAddingLandmarkLocal -> {
+                landmarkViewModel.cancelAddingLandmark()
+            }
             locationCorridorPoints.isNotEmpty() -> {
                 locationCorridorPoints = emptyList()
                 selectedEntranceIndex = null
@@ -594,14 +640,23 @@ private fun HomeScreenContent(
     // True when any non-primary bottom panel is showing — hides the primary RoomInfoPanel
     val anotherBottomPanelActive = overlayPinnedRoom != null
             || pdrUiState.isSelectingOrigin
+            || isAddingLandmarkLocal
             || locationCorridorPoints.isNotEmpty()
 
     // Animate bottom button offset when any bottom panel is visible
     val panelVisible = activePinnedRoom != null || anotherBottomPanelActive
     val bottomButtonPadding by animateDpAsState(
         targetValue = if (panelVisible) {
-            val fallbackPanelHeight = if (navUiState.isNavigationStarted) 74.dp else 110.dp
-            val effectivePanelHeight = if (roomInfoPanelHeightDp > 0.dp) roomInfoPanelHeightDp else fallbackPanelHeight
+            val fallbackPanelHeight = when {
+                isAddingLandmarkLocal -> 132.dp
+                navUiState.isNavigationStarted -> 74.dp
+                else -> 110.dp
+            }
+            val effectivePanelHeight = when {
+                isAddingLandmarkLocal && landmarkPanelHeightDp > 0.dp -> landmarkPanelHeightDp
+                roomInfoPanelHeightDp > 0.dp -> roomInfoPanelHeightDp
+                else -> fallbackPanelHeight
+            }
             16.dp + effectivePanelHeight
         } else {
             16.dp
@@ -738,6 +793,9 @@ private fun HomeScreenContent(
     val currentOnRoomTap = rememberUpdatedState(onRoomTap)
 
     fun requestRoomSelection(room: Room) {
+        if (room.id >= 0) {
+            landmarkViewModel?.clearSelectedLandmark()
+        }
         if (currentHasPath.value) {
             // Path is active — show overlay pin + panel instead of replacing
             overlayPinnedRoom = room
@@ -841,8 +899,14 @@ private fun HomeScreenContent(
                     },
                     displayConfig = uiState.displayConfig,
                     onRoomTap = { room -> requestRoomSelection(room) },
-                    onBackgroundTap = { /* no-op */ },
-                    isSelectingOrigin = pdrUiState.isSelectingOrigin,
+                    onBackgroundTap = {
+                        // Keep selected landmark while info panel is open so admin actions
+                        // (edit/delete) remain visible until panel dismissal.
+                        if (activePinnedRoom == null && overlayPinnedRoom == null) {
+                            landmarkViewModel?.clearSelectedLandmark()
+                        }
+                    },
+                    isSelectingOrigin = pdrUiState.isSelectingOrigin || isAddingLandmarkLocal,
                     onOriginTap = { origin ->
                         // Store as pending - user must confirm
                         android.util.Log.d("HomeScreen", "Origin tapped at: (${origin.x}, ${origin.y})")
@@ -850,12 +914,34 @@ private fun HomeScreenContent(
                             val validation = vm.validateOriginLocation(origin)
                             android.util.Log.d("HomeScreen", "Validation result: isValid=${validation.isValid}, errorType=${validation.errorType}")
                             if (validation.isValid) {
-                                pendingOriginLocation = origin
+                                if (isAddingLandmarkLocal) {
+                                    // Landmark placement mode: store in LandmarkViewModel
+                                    val floorId = vm.findFloorIdAtPoint(origin)
+                                    val buildingId = vm.findBuildingIdAtPoint(origin)
+                                    landmarkViewModel?.setPendingLocation(origin, floorId, buildingId)
+                                } else {
+                                    pendingOriginLocation = origin
+                                }
                             } else {
                                 // Show error via callback
                                 validation.errorType?.let { onOriginError(it) }
                             }
                         }
+                    },
+                    landmarks = landmarkViewModel?.uiState?.collectAsState()?.value?.landmarks ?: emptyList(),
+                    currentFloorId = uiState.currentFloorId,
+                    onLandmarkTap = { landmark ->
+                        landmarkViewModel?.selectLandmark(landmark)
+                        requestRoomSelection(
+                            Room(
+                                id = landmarkSyntheticRoomId(landmark.id),
+                                x = landmark.x,
+                                y = landmark.y,
+                                name = landmark.name,
+                                floorId = landmark.floorId,
+                                buildingId = landmark.buildingId
+                            )
+                        )
                     },
                     corridorPoints = locationCorridorPoints,
                     onMarkerTap = { markerIndex ->
@@ -892,6 +978,8 @@ private fun HomeScreenContent(
                     buildingStates = uiState.buildingStates,
                     canvasState = effectiveCanvasState,
                     displayConfig = uiState.displayConfig,
+                    landmarks = landmarkViewModel?.uiState?.collectAsState()?.value?.landmarks ?: emptyList(),
+                    currentFloorId = uiState.currentFloorId,
                     pinnedRoom = activePinnedRoom,
                     showPinnedRoomMarker = uiState.showPinnedRoomOnMap,
                     isPinAtEntrance = isPinAtEntrance,
@@ -899,6 +987,13 @@ private fun HomeScreenContent(
                     overlayPinnedRoom = if (overlayRequestedDirections) null else overlayPinnedRoom,
                     pinDrawable = pinDrawable,
                     pinTintColor = primaryColor,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                LandmarkOverlay(
+                    landmarks = landmarkViewModel?.uiState?.collectAsState()?.value?.landmarks ?: emptyList(),
+                    currentFloorId = uiState.currentFloorId,
+                    canvasState = effectiveCanvasState,
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -929,9 +1024,11 @@ private fun HomeScreenContent(
                 }
 
                 // Origin preview overlay — shows blue dot at pending origin location
-                if (pendingOriginLocation != null) {
+                val landmarkPending = landmarkViewModel?.uiState?.collectAsState()?.value?.pendingLandmarkLocation
+                val previewOrigin = pendingOriginLocation ?: landmarkPending
+                if (previewOrigin != null) {
                     OriginPreviewOverlay(
-                        pendingOrigin = pendingOriginLocation,
+                        pendingOrigin = previewOrigin,
                         canvasState = effectiveCanvasState,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -939,7 +1036,7 @@ private fun HomeScreenContent(
 
                 // Floor slider positioned at top, visible during origin selection
                 // Takes full width during origin selection to allow floor switching
-                if (pdrUiState.isSelectingOrigin) {
+                if (pdrUiState.isSelectingOrigin || isAddingLandmarkLocal) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -953,6 +1050,7 @@ private fun HomeScreenContent(
                             onFloorChange = { 
                                 // Clear pending origin choices when floor changes
                                 pendingOriginLocation = null
+                                landmarkViewModel?.clearPendingLocation()
                                 onDismissOriginError()
                                 onFloorChange(it) 
                             },
@@ -1101,10 +1199,18 @@ private fun HomeScreenContent(
                 // Aim button positioned at bottom right
                 // Hidden during origin selection mode or when following is enabled
                 // Shows origin dialog if origin not set, otherwise enables following mode
-                val aimButtonVisible = !pdrUiState.isSelectingOrigin &&
+                val isAdminLoggedIn by AdminAuthRepository.isLoggedIn.collectAsState()
+                val isAdminOfCampus = isAdminLoggedIn &&
+                    campusCreatedBy.isNotBlank() &&
+                    AdminAuthRepository.currentUser?.uid == campusCreatedBy
+
+                val bottomButtonsVisible = !pdrUiState.isSelectingOrigin &&
+                    !isAddingLandmarkLocal &&
+                    locationCorridorPoints.isEmpty()
+
+                val aimButtonVisible = bottomButtonsVisible &&
                         !uiState.isFollowingMode &&
-                        !aimPressed &&
-                        locationCorridorPoints.isEmpty()
+                        !aimPressed
 
                 AimButton(
                     isVisible = aimButtonVisible,
@@ -1133,6 +1239,20 @@ private fun HomeScreenContent(
                         .padding(bottom = bottomButtonPadding, end = 8.dp)
                 )
 
+                // Add Landmark button — positioned above AimButton
+                // Visible only for admins viewing their own campus
+                val addLandmarkButtonBottomPadding = bottomButtonPadding + if (aimButtonVisible) 59.dp else 0.dp
+                val addLandmarkButtonVisible = isAdminOfCampus && bottomButtonsVisible
+
+                AddLandmarkButton(
+                    isVisible = addLandmarkButtonVisible,
+                    onClick = { landmarkViewModel?.startAddingLandmark() },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .navigationBarsPadding()
+                        .padding(bottom = addLandmarkButtonBottomPadding, end = 8.dp)
+                )
+
                 val elevatorBarEndPadding by animateDpAsState(
                     targetValue = if (aimButtonVisible) 67.dp else 8.dp,
                     animationSpec = dpTween(durationMillis = 280),
@@ -1141,43 +1261,45 @@ private fun HomeScreenContent(
 
                 // ── Elevator Mode Bar ─────────────────────────────────────
                 // Full-width bar between left and right button columns
-                ElevatorModeBar(
-                    state = elevatorUiState.modeState,
-                    isNearElevator = elevatorUiState.nearbyElevatorInfo != null &&
-                            elevatorUiState.availableFloors.isNotEmpty(),
-                    onUseElevator = {
-                        elevatorViewModel.openFloorPrompt(elevatorUiState.availableFloors)
-                    },
-                    onChangeFloor = {
-                        // Re-open the floor picker dialog to let the user change target floor
-                        val modeState = elevatorUiState.modeState
-                        val info = modeState.elevatorInfo ?: return@ElevatorModeBar
-                        val currentFloorId = modeState.targetFloor?.floorId
-                            ?: pdrCurrentFloor ?: return@ElevatorModeBar
-                        val floors = ElevatorDetector.getElevatorFloors(
-                            buildingId = info.buildingId,
-                            excludeFloorId = currentFloorId,
-                            buildingStates = uiState.buildingStates
-                        )
-                        elevatorViewModel.openFloorPrompt(floors)
-                    },
-                    onExitMode = {
-                        showElevatorExitConfirmDialog = true
-                    },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .navigationBarsPadding()
-                        // Horizontal padding: leave space for circular buttons (51dp + 8dp padding)
-                        .padding(
-                            start = 67.dp,
-                            end = elevatorBarEndPadding,
-                            bottom = bottomButtonPadding
-                        )
-                )
+                if (!isAddingLandmarkLocal) {
+                    ElevatorModeBar(
+                        state = elevatorUiState.modeState,
+                        isNearElevator = elevatorUiState.nearbyElevatorInfo != null &&
+                                elevatorUiState.availableFloors.isNotEmpty(),
+                        onUseElevator = {
+                            elevatorViewModel.openFloorPrompt(elevatorUiState.availableFloors)
+                        },
+                        onChangeFloor = {
+                            // Re-open the floor picker dialog to let the user change target floor
+                            val modeState = elevatorUiState.modeState
+                            val info = modeState.elevatorInfo ?: return@ElevatorModeBar
+                            val currentFloorId = modeState.targetFloor?.floorId
+                                ?: pdrCurrentFloor ?: return@ElevatorModeBar
+                            val floors = ElevatorDetector.getElevatorFloors(
+                                buildingId = info.buildingId,
+                                excludeFloorId = currentFloorId,
+                                buildingStates = uiState.buildingStates
+                            )
+                            elevatorViewModel.openFloorPrompt(floors)
+                        },
+                        onExitMode = {
+                            showElevatorExitConfirmDialog = true
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            // Horizontal padding: leave space for circular buttons (51dp + 8dp padding)
+                            .padding(
+                                start = 67.dp,
+                                end = elevatorBarEndPadding,
+                                bottom = bottomButtonPadding
+                            )
+                    )
+                }
                 
                 // Stop Tracking button positioned at bottom left
                 // Shows when origin is set and not selecting origin
-                if (pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin && locationCorridorPoints.isEmpty()) {
+                if (pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin && !isAddingLandmarkLocal && locationCorridorPoints.isEmpty()) {
                     StopTrackingButton(
                         isSliderVisible =
                             ((uiState.showFloorSlider || (navUiState.isNavigationStarted && navUiState.hasPath))
@@ -1193,7 +1315,7 @@ private fun HomeScreenContent(
                 // Settings & Admin overlay buttons — bottom left, above StopTrackingButton
                 val stopTrackingVisible = pdrUiState.pdrState.origin != null && !pdrUiState.isSelectingOrigin && locationCorridorPoints.isEmpty()
                 val navButtonsBottomPadding = bottomButtonPadding + if (stopTrackingVisible) 59.dp else 0.dp
-                if (!pdrUiState.isSelectingOrigin && locationCorridorPoints.isEmpty()) {
+                if (!pdrUiState.isSelectingOrigin && !isAddingLandmarkLocal && locationCorridorPoints.isEmpty()) {
                     OverlayNavButtons(
                         onSettingsClick = onSettingsClick,
                         onAdminClick = onAdminClick,
@@ -1205,6 +1327,12 @@ private fun HomeScreenContent(
                 }
 
                 // Room info panel slides up from bottom when a room label is tapped
+                val selectedLandmark = landmarkViewModel?.uiState?.collectAsState()?.value?.selectedLandmark
+                val selectedLandmarkRoomId = selectedLandmark?.let { landmarkSyntheticRoomId(it.id) }
+                val showLandmarkActions = isAdminOfCampus &&
+                    selectedLandmark != null &&
+                    selectedLandmarkRoomId == activePinnedRoom?.id
+
                 RoomInfoPanel(
                     room = if (anotherBottomPanelActive) null else activePinnedRoom,
                     buildingName = activePinnedRoom?.buildingId?.let { bid ->
@@ -1293,6 +1421,22 @@ private fun HomeScreenContent(
                     onExitClick = {
                         overlayPinnedRoom = null
                         onExitNavigation()
+                    },
+                    headerActions = if (showLandmarkActions) {
+                        listOf(
+                            RoomInfoHeaderAction(
+                                icon = Icons.Rounded.Edit,
+                                contentDescription = "Edit landmark",
+                                onClick = { onNavigateToAddLandmark() }
+                            ),
+                            RoomInfoHeaderAction(
+                                icon = Icons.Rounded.Delete,
+                                contentDescription = "Delete landmark",
+                                onClick = { showLandmarkDeleteConfirmDialog = true }
+                            )
+                        )
+                    } else {
+                        emptyList()
                     },
                     onHeightMeasured = { px ->
                         roomInfoPanelHeightDp = with(density) { px.toDp() }
@@ -1413,11 +1557,46 @@ private fun HomeScreenContent(
                         overlayPinnedRoom = null
                         onExitNavigation()
                     },
+                    headerActions = if (
+                        isAdminOfCampus &&
+                        selectedLandmark != null &&
+                        selectedLandmarkRoomId == overlayPinnedRoom?.id
+                    ) {
+                        listOf(
+                            RoomInfoHeaderAction(
+                                icon = Icons.Rounded.Edit,
+                                contentDescription = "Edit landmark",
+                                onClick = { onNavigateToAddLandmark() }
+                            ),
+                            RoomInfoHeaderAction(
+                                icon = Icons.Rounded.Delete,
+                                contentDescription = "Delete landmark",
+                                onClick = { showLandmarkDeleteConfirmDialog = true }
+                            )
+                        )
+                    } else {
+                        emptyList()
+                    },
                     onHeightMeasured = { px ->
                         roomInfoPanelHeightDp = with(density) { px.toDp() }
                     },
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
+
+                if (showLandmarkDeleteConfirmDialog && selectedLandmark != null) {
+                    LandmarkDeleteConfirmDialog(
+                        landmarkName = selectedLandmark.name,
+                        onConfirm = {
+                            landmarkViewModel?.deleteLandmark(selectedLandmark.id)
+                            showLandmarkDeleteConfirmDialog = false
+                            overlayPinnedRoom = null
+                            onExitNavigation()
+                        },
+                        onDismiss = {
+                            showLandmarkDeleteConfirmDialog = false
+                        }
+                    )
+                }
                 
                 // Origin selection dialog
                 if (showOriginDialog) {
@@ -1572,6 +1751,23 @@ private fun HomeScreenContent(
                     onCancel = {
                         pdrViewModel?.cancelOriginSelection()
                         pendingOriginLocation = null
+                    },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+
+                // Landmark placement panel — slides up when admin is adding a landmark
+                LandmarkPlacementPanel(
+                    isVisible = isAddingLandmarkLocal,
+                    hasPendingLocation = landmarkViewModel?.uiState?.collectAsState()?.value?.pendingLandmarkLocation != null,
+                    onConfirm = {
+                        // Navigate to AddLandmarkScreen
+                        onNavigateToAddLandmark()
+                    },
+                    onCancel = {
+                        landmarkViewModel?.cancelAddingLandmark()
+                    },
+                    onHeightMeasured = { px ->
+                        landmarkPanelHeightDp = with(density) { px.toDp() }
                     },
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )

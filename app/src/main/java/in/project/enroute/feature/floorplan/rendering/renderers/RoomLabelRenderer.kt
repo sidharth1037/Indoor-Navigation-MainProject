@@ -20,6 +20,8 @@ private data class LabelLayout(
     val textX: Float,
     val textY: Float,
     val labelText: String,
+    val textScale: Float,
+    val textYOffsetPx: Float,
     var maxChars: Int,
     var lines: List<String>,
     var bounds: RectF
@@ -55,7 +57,9 @@ fun DrawScope.drawRoomLabels(
     canvasRotation: Float,
     textColor: Int = android.graphics.Color.DKGRAY,
     textSize: Float = 30f,
-    minZoomForConstantSize: Float = 0.76f
+    minZoomForConstantSize: Float = 0.76f,
+    textScaleForRoom: ((Room) -> Float)? = null,
+    textYOffsetForRoomPx: ((Room) -> Float)? = null
 ) {
     if (canvasScale < 0.4f) return
 
@@ -82,7 +86,17 @@ fun DrawScope.drawRoomLabels(
     val textSin = sin(textAngleRad)
 
     // ── 1. Layout pass ──────────────────────────────────────────
-    val layouts = buildLayouts(rooms, scale, cosAngle, sinAngle, textCos, textSin, paint)
+    val layouts = buildLayouts(
+        rooms = rooms,
+        scale = scale,
+        cosAngle = cosAngle,
+        sinAngle = sinAngle,
+        textCos = textCos,
+        textSin = textSin,
+        paint = paint,
+        textScaleForRoom = textScaleForRoom,
+        textYOffsetForRoomPx = textYOffsetForRoomPx
+    )
 
     // ── 2. Overlap resolution (multi-pass) ──────────────────────
     resolveOverlaps(layouts, paint)
@@ -101,11 +115,16 @@ fun DrawScope.drawRoomLabels(
         canvas.nativeCanvas.save()
         canvas.nativeCanvas.rotate(-canvasRotation)
 
-        val lineHeight = paint.descent() - paint.ascent()
-
         for (layout in layouts) {
+            val scaledTextSize = effectiveTextSize * layout.textScale
+            paint.textSize = scaledTextSize
+            outlinePaint.textSize = scaledTextSize
+            outlinePaint.strokeWidth = (8f / canvasScale) * layout.textScale.coerceAtLeast(0.75f)
+
+            val lineHeight = paint.descent() - paint.ascent()
             val totalHeight = lineHeight * layout.lines.size
-            val startY = layout.textY - totalHeight / 2
+            val anchoredY = layout.textY + layout.textYOffsetPx
+            val startY = anchoredY - totalHeight / 2
 
             for ((index, line) in layout.lines.withIndex()) {
                 val lineY = startY + index * lineHeight + paint.textSize / 2
@@ -130,7 +149,9 @@ private fun buildLayouts(
     sinAngle: Float,
     textCos: Float,
     textSin: Float,
-    paint: Paint
+    paint: Paint,
+    textScaleForRoom: ((Room) -> Float)?,
+    textYOffsetForRoomPx: ((Room) -> Float)?
 ): MutableList<LabelLayout> {
     val layouts = mutableListOf<LabelLayout>()
 
@@ -145,14 +166,24 @@ private fun buildLayouts(
         val textY = rotatedX * textSin + rotatedY * textCos
 
         val labelText = if (room.number != null) "${room.number}: $name" else name
+        val textScale = (textScaleForRoom?.invoke(room) ?: 1f).coerceAtLeast(0.55f)
+        val textYOffsetPx = textYOffsetForRoomPx?.invoke(room) ?: 0f
         val lines = splitLabel(labelText, DEFAULT_MAX_CHARS)
-        val bounds = measureBounds(textX, textY, lines, paint)
+        val bounds = measureBounds(
+            cx = textX,
+            cy = textY + textYOffsetPx,
+            lines = lines,
+            paint = paint,
+            textScale = textScale
+        )
 
         layouts += LabelLayout(
             room = room,
             textX = textX,
             textY = textY,
             labelText = labelText,
+            textScale = textScale,
+            textYOffsetPx = textYOffsetPx,
             maxChars = DEFAULT_MAX_CHARS,
             lines = lines,
             bounds = bounds
@@ -166,6 +197,19 @@ private fun buildLayouts(
  * centred at ([cx], [cy]).
  */
 private fun measureBounds(cx: Float, cy: Float, lines: List<String>, paint: Paint): RectF {
+    return measureBounds(cx, cy, lines, paint, textScale = 1f)
+}
+
+private fun measureBounds(
+    cx: Float,
+    cy: Float,
+    lines: List<String>,
+    paint: Paint,
+    textScale: Float
+): RectF {
+    val originalSize = paint.textSize
+    paint.textSize = originalSize * textScale
+
     val lineHeight = paint.descent() - paint.ascent()
     val totalHeight = lineHeight * lines.size
     var maxWidth = 0f
@@ -173,6 +217,8 @@ private fun measureBounds(cx: Float, cy: Float, lines: List<String>, paint: Pain
         val w = paint.measureText(line)
         if (w > maxWidth) maxWidth = w
     }
+    paint.textSize = originalSize
+
     val halfW = maxWidth / 2f
     val halfH = totalHeight / 2f
     return RectF(cx - halfW, cy - halfH, cx + halfW, cy + halfH)
@@ -199,7 +245,13 @@ private fun resolveOverlaps(layouts: MutableList<LabelLayout>, paint: Paint) {
 
             layout.maxChars = newMax
             layout.lines = splitLabel(layout.labelText, newMax)
-            layout.bounds = measureBounds(layout.textX, layout.textY, layout.lines, paint)
+            layout.bounds = measureBounds(
+                cx = layout.textX,
+                cy = layout.textY + layout.textYOffsetPx,
+                lines = layout.lines,
+                paint = paint,
+                textScale = layout.textScale
+            )
         }
     }
 }

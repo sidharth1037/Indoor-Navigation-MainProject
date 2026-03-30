@@ -107,3 +107,53 @@ fun DrawScope.drawPin(
         canvas.nativeCanvas.restore()
     }
 }
+
+/**
+ * Renders a pin using campus/world coordinates directly.
+ * Useful for overlays (like landmarks) that are already in campus space and do
+ * not need floor-local scale/rotation transforms.
+ */
+fun DrawScope.drawCampusPin(
+    campusX: Float,
+    campusY: Float,
+    canvasScale: Float,
+    canvasRotation: Float,
+    pinDrawable: VectorDrawable?,
+    tintColor: Int,
+    pinSizeDp: Float = 140f,
+    minZoomForPinSize: Float = 1f,
+    tipOffsetPx: Float = 0f
+) {
+    val textAngleRad = Math.toRadians(canvasRotation.toDouble()).toFloat()
+    val textCos = cos(textAngleRad)
+    val textSin = sin(textAngleRad)
+    val screenX = campusX * textCos - campusY * textSin
+    val screenY = campusX * textSin + campusY * textCos
+
+    val pinSize = if (canvasScale >= minZoomForPinSize) {
+        pinSizeDp
+    } else {
+        pinSizeDp / canvasScale
+    }
+    val adjustedScreenY = screenY - pinSize - tipOffsetPx
+
+    drawIntoCanvas { canvas ->
+        canvas.nativeCanvas.save()
+        canvas.nativeCanvas.rotate(-canvasRotation)
+
+        pinDrawable?.colorFilter = PorterDuffColorFilter(tintColor, PorterDuff.Mode.SRC_IN)
+
+        val bitmapSize = pinSize.toInt().coerceAtLeast(1)
+        val bitmap = createBitmap(bitmapSize, bitmapSize)
+        val bitmapCanvas = Canvas(bitmap)
+        pinDrawable?.setBounds(0, 0, bitmapSize, bitmapSize)
+        pinDrawable?.draw(bitmapCanvas)
+
+        val left = screenX - pinSize / 2f
+        val top = adjustedScreenY
+        canvas.nativeCanvas.drawBitmap(bitmap, left, top, null)
+
+        bitmap.recycle()
+        canvas.nativeCanvas.restore()
+    }
+}

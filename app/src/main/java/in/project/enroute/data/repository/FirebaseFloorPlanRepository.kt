@@ -626,6 +626,100 @@ class FirebaseFloorPlanRepository(
         }
     }
 
+    // ── Landmark operations ────────────────────────────────────
+
+    /**
+     * Saves a new landmark to Firestore under `campuses/{campusId}/landmarks`.
+     * Uses auto-generated document ID.
+     *
+     * @return The generated document ID.
+     */
+    suspend fun saveLandmark(landmark: Landmark): String = withContext(Dispatchers.IO) {
+        val landmarksCol = firestore
+            .collection("campuses").document(campusId)
+            .collection("landmarks")
+
+        val data = mapOf(
+            "name" to landmark.name,
+            "icon" to landmark.icon,
+            "x" to landmark.x,
+            "y" to landmark.y,
+            "floorId" to landmark.floorId,
+            "buildingId" to landmark.buildingId,
+            "campusX" to landmark.campusX,
+            "campusY" to landmark.campusY
+        )
+
+        val docRef = landmarksCol.add(data).await()
+        docRef.id
+    }
+
+    /**
+     * Loads all landmarks for this campus.
+     */
+    suspend fun loadLandmarks(): List<Landmark> = withContext(Dispatchers.IO) {
+        try {
+            val snapshot = firestore
+                .collection("campuses").document(campusId)
+                .collection("landmarks")
+                .get()
+                .await()
+
+            snapshot.documents.mapNotNull { doc ->
+                try {
+                    Landmark(
+                        id = doc.id,
+                        name = doc.getString("name") ?: return@mapNotNull null,
+                        icon = doc.getString("icon") ?: "",
+                        x = doc.getDouble("x")?.toFloat() ?: 0f,
+                        y = doc.getDouble("y")?.toFloat() ?: 0f,
+                        floorId = doc.getString("floorId") ?: "",
+                        buildingId = doc.getString("buildingId") ?: "",
+                        campusX = doc.getDouble("campusX")?.toFloat() ?: 0f,
+                        campusY = doc.getDouble("campusY")?.toFloat() ?: 0f
+                    )
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Updates an existing landmark document in Firestore.
+     */
+    suspend fun updateLandmark(landmark: Landmark) = withContext(Dispatchers.IO) {
+        val data = mapOf(
+            "name" to landmark.name,
+            "icon" to landmark.icon,
+            "x" to landmark.x,
+            "y" to landmark.y,
+            "floorId" to landmark.floorId,
+            "buildingId" to landmark.buildingId,
+            "campusX" to landmark.campusX,
+            "campusY" to landmark.campusY
+        )
+
+        firestore
+            .collection("campuses").document(campusId)
+            .collection("landmarks").document(landmark.id)
+            .set(data)
+            .await()
+    }
+
+    /**
+     * Deletes a landmark document from Firestore.
+     */
+    suspend fun deleteLandmark(landmarkId: String) = withContext(Dispatchers.IO) {
+        firestore
+            .collection("campuses").document(campusId)
+            .collection("landmarks").document(landmarkId)
+            .delete()
+            .await()
+    }
+
     companion object {
         /**
          * In-memory cache of all campus documents. Populated lazily on the

@@ -1,6 +1,7 @@
 package `in`.project.enroute.core.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -14,10 +15,15 @@ import `in`.project.enroute.feature.admin.auth.AdminLoginScreen
 import `in`.project.enroute.feature.floorplan.FloorPlanViewModel
 import `in`.project.enroute.feature.home.HomeScreen
 import `in`.project.enroute.feature.home.elevator.ElevatorViewModel
+import `in`.project.enroute.feature.landmark.LandmarkViewModel
+import `in`.project.enroute.feature.landmark.ui.AddLandmarkScreen
 import `in`.project.enroute.feature.navigation.NavigationViewModel
 import `in`.project.enroute.feature.pdr.PdrViewModel
 import `in`.project.enroute.feature.settings.SettingsScreen
 import `in`.project.enroute.feature.welcome.WelcomeScreen
+import android.widget.Toast
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 
 sealed class Screen(val route: String) {
     data object Welcome : Screen("welcome")
@@ -27,6 +33,9 @@ sealed class Screen(val route: String) {
     data object Settings : Screen("settings")
     data object AdminLogin : Screen("admin_login")
     data object Admin : Screen("admin")
+    data object AddLandmark : Screen("add_landmark/{campusId}") {
+        fun createRoute(campusId: String) = "add_landmark/$campusId"
+    }
 }
 
 @Composable
@@ -74,12 +83,14 @@ fun NavigationGraph(
             val pdrViewModel: PdrViewModel = viewModel(backStackEntry)
             val navigationViewModel: NavigationViewModel = viewModel(backStackEntry)
             val elevatorViewModel: ElevatorViewModel = viewModel(backStackEntry)
+            val landmarkViewModel: LandmarkViewModel = viewModel(backStackEntry)
             HomeScreen(
                 campusId = campusId,
                 floorPlanViewModel = floorPlanViewModel,
                 pdrViewModel = pdrViewModel,
                 navigationViewModel = navigationViewModel,
                 elevatorViewModel = elevatorViewModel,
+                landmarkViewModel = landmarkViewModel,
                 onSettingsClick = {
                     navController.navigate(Screen.Settings.route) {
                         launchSingleTop = true
@@ -92,6 +103,11 @@ fun NavigationGraph(
                         Screen.AdminLogin.route
                     }
                     navController.navigate(adminRoute) {
+                        launchSingleTop = true
+                    }
+                },
+                onNavigateToAddLandmark = {
+                    navController.navigate(Screen.AddLandmark.createRoute(campusId)) {
                         launchSingleTop = true
                     }
                 }
@@ -122,6 +138,59 @@ fun NavigationGraph(
                         popUpTo(Screen.Admin.route) { inclusive = true }
                     }
                 }
+            )
+        }
+        composable(
+            route = Screen.AddLandmark.route,
+            arguments = listOf(navArgument("campusId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val campusId = backStackEntry.arguments?.getString("campusId") ?: ""
+            // Share the LandmarkViewModel from the Home backstack entry
+            val homeEntry = remember(backStackEntry) {
+                navController.getBackStackEntry(Screen.Home.createRoute(campusId))
+            }
+            val landmarkViewModel: LandmarkViewModel = viewModel(homeEntry)
+            val context = LocalContext.current
+            val landmarkUiState = landmarkViewModel.uiState.collectAsState().value
+            val editingLandmark = landmarkUiState.selectedLandmark
+
+            AddLandmarkScreen(
+                isSaving = landmarkUiState.isSaving,
+                initialName = editingLandmark?.name ?: "",
+                initialIconId = editingLandmark?.icon,
+                title = if (editingLandmark != null) "Edit Landmark" else "Add Landmark",
+                saveButtonLabel = if (editingLandmark != null) "Save Changes" else "Save Landmark",
+                onSave = { name, iconId ->
+                    if (editingLandmark != null) {
+                        landmarkViewModel.updateLandmark(
+                            editingLandmark.copy(name = name, icon = iconId),
+                            onResult = { success ->
+                                if (success) {
+                                    Toast.makeText(context, "Landmark updated", Toast.LENGTH_SHORT).show()
+                                    navController.popBackStack()
+                                } else {
+                                    Toast.makeText(context, "Failed to update landmark", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        )
+                    } else {
+                        landmarkViewModel.saveLandmark(
+                            name = name,
+                            icon = iconId,
+                            campusX = landmarkUiState.pendingLandmarkLocation?.x ?: 0f,
+                            campusY = landmarkUiState.pendingLandmarkLocation?.y ?: 0f,
+                            onResult = { success ->
+                                if (success) {
+                                    Toast.makeText(context, "Landmark added", Toast.LENGTH_SHORT).show()
+                                    navController.popBackStack()
+                                } else {
+                                    Toast.makeText(context, "Failed to add landmark", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        )
+                    }
+                },
+                onBack = { navController.popBackStack() }
             )
         }
     }

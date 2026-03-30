@@ -48,7 +48,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.vector.ImageVector
 import `in`.project.enroute.data.model.Room
+
+data class RoomInfoHeaderAction(
+    val icon: ImageVector,
+    val contentDescription: String,
+    val onClick: () -> Unit
+)
 
 /**
  * A bottom panel that slides up when a room label is tapped.
@@ -77,6 +84,7 @@ fun RoomInfoPanel(
     onShowOnMapClick: (Room) -> Unit = {},
     onStartClick: () -> Unit = {},
     onExitClick: () -> Unit = {},
+    headerActions: List<RoomInfoHeaderAction> = emptyList(),
     onHeightMeasured: (Int) -> Unit = {}
 ) {
     // Keep last non-null room so exit animation can display it
@@ -88,6 +96,7 @@ fun RoomInfoPanel(
     var lastBuildingName by remember { mutableStateOf(buildingName) }
     var lastDistanceMeters by remember { mutableStateOf(distanceMeters) }
     var lastEtaText by remember { mutableStateOf(etaText) }
+    var lastHeaderActions by remember { mutableStateOf(headerActions) }
     if (room != null) {
         lastRoom = room
         lastIsCalculating = isCalculatingPath
@@ -97,6 +106,7 @@ fun RoomInfoPanel(
         lastBuildingName = buildingName
         lastDistanceMeters = distanceMeters
         lastEtaText = etaText
+        lastHeaderActions = headerActions
     }
 
     AnimatedVisibility(
@@ -125,6 +135,7 @@ fun RoomInfoPanel(
             onShowOnMapClick = onShowOnMapClick,
             onStartClick = onStartClick,
             onExitClick = onExitClick,
+            headerActions = lastHeaderActions,
             onHeightMeasured = onHeightMeasured
         )
     }
@@ -145,6 +156,7 @@ private fun RoomInfoPanelContent(
     onShowOnMapClick: (Room) -> Unit,
     onStartClick: () -> Unit,
     onExitClick: () -> Unit,
+    headerActions: List<RoomInfoHeaderAction>,
     onHeightMeasured: (Int) -> Unit
 ) {
     val shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
@@ -168,7 +180,7 @@ private fun RoomInfoPanelContent(
                 .wrapContentHeight()
                 .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 18.dp)
         ) {
-            val trailingColumnWidth = 64.dp
+            val trailingColumnWidth = (64 + (headerActions.size * 38)).dp
             val secondaryInfoFontSize = 14.sp
             val secondaryInfoWeight = FontWeight.SemiBold
             val metricsFontSize = 18.sp
@@ -251,19 +263,43 @@ private fun RoomInfoPanelContent(
                             )
                         }
                     } else {
-                        Icon(
-                            imageVector = Icons.Rounded.Close,
-                            contentDescription = "Dismiss",
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = onDismiss
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            for ((index, action) in headerActions.withIndex()) {
+                                Icon(
+                                    imageVector = action.icon,
+                                    contentDescription = action.contentDescription,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null,
+                                            onClick = action.onClick
+                                        )
+                                        .padding(4.dp)
                                 )
-                                .padding(4.dp)
-                        )
+                                if (index != headerActions.lastIndex) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                }
+                            }
+                            if (headerActions.isNotEmpty()) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                            }
+
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = "Dismiss",
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = onDismiss
+                                    )
+                                    .padding(4.dp)
+                            )
+                        }
                     }
                 }
             }

@@ -9,6 +9,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -74,7 +75,7 @@ fun SelectCampusScreen(
                 )
                 IconButton(onClick = { showLogoutDialog = true }) {
                     Icon(
-                        imageVector = Icons.Default.Logout,
+                        imageVector = Icons.AutoMirrored.Filled.Logout,
                         contentDescription = "Logout",
                         tint = MaterialTheme.colorScheme.error
                     )

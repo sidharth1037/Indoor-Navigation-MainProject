@@ -30,6 +30,8 @@ import `in`.project.enroute.feature.floorplan.rendering.renderers.drawStairwells
 import `in`.project.enroute.feature.floorplan.rendering.renderers.drawWalls
 import `in`.project.enroute.feature.floorplan.rendering.renderers.drawCampusBackground
 import androidx.compose.ui.geometry.Offset
+import `in`.project.enroute.data.model.Landmark
+import `in`.project.enroute.feature.floorplan.rendering.renderers.computeLandmarkScreenSizing
 import `in`.project.enroute.feature.floorplan.utils.screenToWorldCoordinates
 import `in`.project.enroute.feature.floorplan.state.BuildingState
 import `in`.project.enroute.feature.floorplan.CampusBounds
@@ -88,6 +90,9 @@ fun FloorPlanCanvas(
     onBackgroundTap: () -> Unit = {},
     isSelectingOrigin: Boolean = false,
     onOriginTap: ((Offset) -> Unit)? = null,
+    landmarks: List<Landmark> = emptyList(),
+    currentFloorId: String? = null,
+    onLandmarkTap: ((Landmark) -> Unit)? = null,
     corridorPoints: List<CorridorPoint> = emptyList(),
     onMarkerTap: ((Int) -> Unit)? = null
 ) {
@@ -100,6 +105,9 @@ fun FloorPlanCanvas(
     val currentCampusBounds = rememberUpdatedState(campusBounds)
     val currentIsSelectingOrigin = rememberUpdatedState(isSelectingOrigin)
     val currentOnOriginTap = rememberUpdatedState(onOriginTap)
+    val currentLandmarks = rememberUpdatedState(landmarks)
+    val currentFloorId = rememberUpdatedState(currentFloorId)
+    val currentOnLandmarkTap = rememberUpdatedState(onLandmarkTap)
     val currentCorridorPoints = rememberUpdatedState(corridorPoints)
     val currentOnMarkerTap = rememberUpdatedState(onMarkerTap)
     val canvasSize = remember { mutableStateOf(IntSize.Zero) }
@@ -132,6 +140,76 @@ fun FloorPlanCanvas(
                     val cs = currentCanvasState.value
                     val size = canvasSize.value
                     if (size.width == 0 || size.height == 0) return@detectTapGestures
+
+                    // Check for landmark marker taps before room-label hit detection.
+                    // Landmark coordinates are already campus-wide.
+                    val onLandmarkTapCallback = currentOnLandmarkTap.value
+                    val activeFloorId = currentFloorId.value
+                    if (onLandmarkTapCallback != null && activeFloorId != null) {
+                        val centerX = size.width / 2f
+                        val centerY = size.height / 2f
+                        val canvasRotRad = Math.toRadians(cs.rotation.toDouble()).toFloat()
+                        val canvasCos = cos(canvasRotRad)
+                        val canvasSin = sin(canvasRotRad)
+
+                        val screenSizing = computeLandmarkScreenSizing(canvasScale = cs.scale)
+                        val markerHitRadiusScreen = screenSizing.markerRadiusPx + 12f
+
+                        // Mirror room-label hit-testing style for landmark names.
+                        val screenTextSize = screenSizing.labelTextPx
+                        val charWidthPx = screenTextSize * 0.5f
+                        val lineHeightPx = screenTextSize * 1.3f
+                        val hitPadX = screenTextSize * 0.3f
+                        val hitPadY = screenTextSize * 0.4f
+                        val maxCharsPerLine = 15
+
+                        var nearest: Landmark? = null
+                        var nearestDist = Float.MAX_VALUE
+
+                        for (landmark in currentLandmarks.value) {
+                            if (landmark.floorId != activeFloorId) continue
+
+                            // Match the same world->screen transform used by map labels.
+                            val worldX = landmark.campusX + centerX
+                            val worldY = landmark.campusY + centerY
+                            val sx = worldX * cs.scale
+                            val sy = worldY * cs.scale
+                            val screenX = sx * canvasCos - sy * canvasSin + cs.offsetX
+                            val screenY = sx * canvasSin + sy * canvasCos + cs.offsetY
+
+                            // Marker-circle hit target
+                            val markerDx = tapOffset.x - screenX
+                            val markerDy = tapOffset.y - screenY
+                            val markerDist = hypot(markerDx, markerDy)
+                            val markerHit = markerDist <= markerHitRadiusScreen
+
+                            // Label hit target (includes wrapped-name bounds)
+                            val label = landmark.name
+                            val numLines = if (label.length <= maxCharsPerLine) 1
+                                else ((label.length + maxCharsPerLine - 1) / maxCharsPerLine)
+                            val maxLineChars = minOf(label.length, maxCharsPerLine)
+                            val halfW = (maxLineChars * charWidthPx) / 2f + hitPadX
+                            val halfH = (numLines * lineHeightPx) / 2f + hitPadY
+
+                            val labelCenterY = screenY + screenSizing.labelCenterOffsetPx
+                            val labelDx = tapOffset.x - screenX
+                            val labelDy = tapOffset.y - labelCenterY
+                            val labelHit = abs(labelDx) <= halfW && abs(labelDy) <= halfH
+
+                            val labelDist = hypot(labelDx, labelDy)
+                            val candidateDist = minOf(markerDist, labelDist)
+
+                            if ((markerHit || labelHit) && candidateDist < nearestDist) {
+                                nearest = landmark
+                                nearestDist = candidateDist
+                            }
+                        }
+
+                        if (nearest != null) {
+                            onLandmarkTapCallback(nearest)
+                            return@detectTapGestures
+                        }
+                    }
 
                     // Check for marker taps first (if corridor points exist)
                     val markersToCheck = currentCorridorPoints.value

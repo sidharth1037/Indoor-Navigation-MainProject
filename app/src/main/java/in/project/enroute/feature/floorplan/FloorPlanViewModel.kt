@@ -712,6 +712,44 @@ class FloorPlanViewModel(
     }
 
     /**
+     * Alias for [findFloorAtPoint] — returns the floor ID at the given campus-wide point.
+     */
+    fun findFloorIdAtPoint(point: Offset): String? = findFloorAtPoint(point)
+
+    /**
+     * Returns the building ID whose boundary contains [point] (campus-wide coordinates),
+     * or the first building ID if the point is outside all boundaries.
+     */
+    fun findBuildingIdAtPoint(point: Offset): String? {
+        val state = _uiState.value
+        for ((buildingId, buildingState) in state.buildingStates) {
+            val building = buildingState.building
+            val relX = building.relativePosition.x
+            val relY = building.relativePosition.y
+            val currentFloorData = buildingState.currentFloorData ?: continue
+
+            val meta = currentFloorData.metadata
+            val scale = meta.scale
+            val rotRad = Math.toRadians(meta.rotation.toDouble()).toFloat()
+            val cosA = cos(rotRad)
+            val sinA = sin(rotRad)
+
+            for (polygon in currentFloorData.boundaryPolygons) {
+                if (polygon.points.isEmpty()) continue
+                val transformed = polygon.points.sortedBy { it.id }.map { p ->
+                    val px = p.x * scale
+                    val py = p.y * scale
+                    Pair(px * cosA - py * sinA + relX, px * sinA + py * cosA + relY)
+                }
+                if (isPointInPolygon(point.x, point.y, transformed)) {
+                    return buildingId
+                }
+            }
+        }
+        return state.buildingStates.keys.firstOrNull()
+    }
+
+    /**
      * Returns the [FloorConstraintData] bundle for the floor containing [point]
      * (campus-wide coordinates). Used by PDR error correction to constraint-check
      * against walls and snap to entrances.

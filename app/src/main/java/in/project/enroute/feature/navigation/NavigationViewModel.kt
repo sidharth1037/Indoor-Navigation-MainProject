@@ -63,6 +63,9 @@ data class NavigationUiState(
     val turnByTurnInstructionType: GuidanceType = GuidanceType.IDLE,
     val targetRoom: Room? = null,
     val targetEntrance: Entrance? = null,
+    val directGoalCampus: Offset? = null,
+    val directGoalFloorId: String? = null,
+    val directGoalBuildingId: String? = null,
     val error: String? = null
 ) {
     /** Convenience: true when a path is available. */
@@ -291,12 +294,38 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
      * @param userPosition The user's current campus-wide position (from PDR).
      * @param currentFloor The floor ID the user is on (e.g. "floor_1").
      */
-    fun requestDirections(room: Room, userPosition: Offset, currentFloor: String) {
+    fun requestDirections(
+        room: Room,
+        userPosition: Offset,
+        currentFloor: String,
+        directGoalCampus: Offset? = null,
+        directGoalFloorId: String? = null,
+        directGoalBuildingId: String? = null
+    ) {
         pathfindingJob?.cancel()
         rerouteJob?.cancel()
 
-        // Find the entrance that matches this room
-        val campusEntrance = findEntranceForRoom(room)
+        // Prefer direct-goal pathfinding for synthetic targets (landmarks).
+        val campusEntrance = if (directGoalCampus != null) {
+            CampusEntrance(
+                original = Entrance(
+                    id = -1,
+                    x = directGoalCampus.x,
+                    y = directGoalCampus.y,
+                    name = room.name,
+                    roomNo = room.number?.toString(),
+                    floorId = directGoalFloorId ?: currentFloor,
+                    floor = floorNumberOf(directGoalFloorId ?: currentFloor)
+                ),
+                campusX = directGoalCampus.x,
+                campusY = directGoalCampus.y,
+                buildingId = directGoalBuildingId ?: room.buildingId.orEmpty(),
+                floorId = directGoalFloorId ?: currentFloor
+            )
+        } else {
+            findEntranceForRoom(room)
+        }
+
         if (campusEntrance == null) {
             _uiState.update {
                 it.copy(
@@ -324,7 +353,10 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 turnByTurnInstructionType = GuidanceType.IDLE,
                 error = null,
                 targetRoom = room,
-                targetEntrance = campusEntrance.original,
+                targetEntrance = if (directGoalCampus != null) null else campusEntrance.original,
+                directGoalCampus = directGoalCampus,
+                directGoalFloorId = directGoalFloorId,
+                directGoalBuildingId = directGoalBuildingId,
                 multiFloorPath = MultiFloorPath.EMPTY
             )
         }
@@ -658,7 +690,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         lastRerouteAtMs = now
 
         val state = _uiState.value
-        val goalEntrance = findEntranceForRoom(state.targetRoom ?: return) ?: return
+        val goalEntrance = resolveGoalEntrance(state) ?: return
 
         Log.d(TAG, "Rerouting from (${userPosition.x}, ${userPosition.y}) floor=$currentFloor")
 
@@ -829,6 +861,30 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         }
 
         return null
+    }
+
+    private fun resolveGoalEntrance(state: NavigationUiState): CampusEntrance? {
+        val directGoal = state.directGoalCampus
+        if (directGoal != null) {
+            val floorId = state.directGoalFloorId ?: state.targetRoom?.floorId ?: "floor_1"
+            val buildingId = state.directGoalBuildingId ?: state.targetRoom?.buildingId.orEmpty()
+            return CampusEntrance(
+                original = Entrance(
+                    id = -1,
+                    x = directGoal.x,
+                    y = directGoal.y,
+                    name = state.targetRoom?.name,
+                    roomNo = state.targetRoom?.number?.toString(),
+                    floorId = floorId,
+                    floor = floorNumberOf(floorId)
+                ),
+                campusX = directGoal.x,
+                campusY = directGoal.y,
+                buildingId = buildingId,
+                floorId = floorId
+            )
+        }
+        return findEntranceForRoom(state.targetRoom ?: return null)
     }
 
     // ──────────────────────────────────────────────
