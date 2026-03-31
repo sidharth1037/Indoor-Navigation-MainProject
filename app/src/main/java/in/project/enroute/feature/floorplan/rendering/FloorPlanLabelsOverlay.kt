@@ -22,6 +22,8 @@ import `in`.project.enroute.data.model.FloorPlanData
 import kotlin.math.cos
 import kotlin.math.sin
 
+private const val LANDMARK_LABEL_MIN_CANVAS_SCALE = 1.1f
+
 /**
  * Overlay that renders room labels, building names, and the search pin
  * on a separate [Canvas] above the navigation path layer.
@@ -95,7 +97,12 @@ fun FloorPlanLabelsOverlay(
                             val safeScale = canvasState.scale.coerceAtLeast(0.01f)
                             val labelAnchorOffsetTextSpace = landmarkScreenSizing.labelCenterOffsetPx / safeScale
 
-                            val landmarkLabelsForFloor = if (currentFloorId == floorData.floorId) {
+                            val shouldShowLandmarkLabels =
+                                canvasState.scale >= LANDMARK_LABEL_MIN_CANVAS_SCALE
+
+                            val landmarkLabelsForFloor = if (
+                                currentFloorId == floorData.floorId && shouldShowLandmarkLabels
+                            ) {
                                 landmarks
                                     .asSequence()
                                     .filter { it.floorId == floorData.floorId }
@@ -156,6 +163,9 @@ fun FloorPlanLabelsOverlay(
                                 },
                                 textYOffsetForRoomPx = { room ->
                                     landmarkLabelYOffsetById[room.id] ?: 0f
+                                },
+                                multilineCenterCompensationForRoom = { room ->
+                                    room.id in landmarkLabelIds
                                 }
                             )
                         }

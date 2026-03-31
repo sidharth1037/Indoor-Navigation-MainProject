@@ -54,18 +54,15 @@ fun computeLandmarkScreenSizing(
 
     val labelTextPx = base.effectiveNameTextSizeWorld * canvasScale * LANDMARK_LABEL_TEXT_SCALE
 
-    // Icon follows the same zoom curve as landmark text.
-    val iconSizePx = (labelTextPx * 1.02f).coerceAtLeast(16f)
-
-    // Circle is derived from icon size so icon+circle always scale together.
-    val markerRadiusPx = (iconSizePx * 0.74f).coerceAtLeast(13f)
+    // Simple and robust: icon and circle follow label scale, and labels are always
+    // anchored at least one full label-height below the icon with fixed separation.
+    val iconSizePx = (labelTextPx * 1.08f).coerceIn(18f, 42f)
+    val markerRadiusPx = (iconSizePx * 0.75f).coerceAtLeast(13f)
 
     val iconHalfPx = iconSizePx / 2f
-    // Gap behavior: larger when zoomed out, tighter when zoomed in.
-    val zoomOutExtraPx = ((1f / canvasScale) - 1f).coerceIn(0f, 1.5f) * 12f
-    val zoomInReductionPx = (canvasScale - 1f).coerceIn(0f, 1.5f) * 3f
-    val baseGapPx = (10f + zoomOutExtraPx - zoomInReductionPx).coerceIn(24f, 30f)
-    val labelCenterOffsetPx = iconHalfPx + baseGapPx + (labelTextPx * 0.55f)
+    // More gap when zoomed in, less gap when zoomed out.
+    val zoomAdaptiveGapPx = (20f + (canvasScale - 1f) * 7f).coerceIn(14f, 30f)
+    val labelCenterOffsetPx = iconHalfPx + labelTextPx + zoomAdaptiveGapPx
 
     return LandmarkScreenSizing(
         markerRadiusPx = markerRadiusPx,

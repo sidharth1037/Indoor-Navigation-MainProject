@@ -22,6 +22,7 @@ private data class LabelLayout(
     val labelText: String,
     val textScale: Float,
     val textYOffsetPx: Float,
+    val multilineCenterCompensation: Boolean,
     var maxChars: Int,
     var lines: List<String>,
     var bounds: RectF
@@ -59,7 +60,8 @@ fun DrawScope.drawRoomLabels(
     textSize: Float = 30f,
     minZoomForConstantSize: Float = 0.76f,
     textScaleForRoom: ((Room) -> Float)? = null,
-    textYOffsetForRoomPx: ((Room) -> Float)? = null
+    textYOffsetForRoomPx: ((Room) -> Float)? = null,
+    multilineCenterCompensationForRoom: ((Room) -> Boolean)? = null
 ) {
     if (canvasScale < 0.4f) return
 
@@ -95,7 +97,8 @@ fun DrawScope.drawRoomLabels(
         textSin = textSin,
         paint = paint,
         textScaleForRoom = textScaleForRoom,
-        textYOffsetForRoomPx = textYOffsetForRoomPx
+        textYOffsetForRoomPx = textYOffsetForRoomPx,
+        multilineCenterCompensationForRoom = multilineCenterCompensationForRoom
     )
 
     // ── 2. Overlap resolution (multi-pass) ──────────────────────
@@ -123,7 +126,12 @@ fun DrawScope.drawRoomLabels(
 
             val lineHeight = paint.descent() - paint.ascent()
             val totalHeight = lineHeight * layout.lines.size
-            val anchoredY = layout.textY + layout.textYOffsetPx
+            val wrappedCompensation = if (layout.multilineCenterCompensation) {
+                (layout.lines.size - 1).coerceAtLeast(0) * lineHeight * 0.5f
+            } else {
+                0f
+            }
+            val anchoredY = layout.textY + layout.textYOffsetPx + wrappedCompensation
             val startY = anchoredY - totalHeight / 2
 
             for ((index, line) in layout.lines.withIndex()) {
@@ -151,7 +159,8 @@ private fun buildLayouts(
     textSin: Float,
     paint: Paint,
     textScaleForRoom: ((Room) -> Float)?,
-    textYOffsetForRoomPx: ((Room) -> Float)?
+    textYOffsetForRoomPx: ((Room) -> Float)?,
+    multilineCenterCompensationForRoom: ((Room) -> Boolean)?
 ): MutableList<LabelLayout> {
     val layouts = mutableListOf<LabelLayout>()
 
@@ -168,10 +177,20 @@ private fun buildLayouts(
         val labelText = if (room.number != null) "${room.number}: $name" else name
         val textScale = (textScaleForRoom?.invoke(room) ?: 1f).coerceAtLeast(0.55f)
         val textYOffsetPx = textYOffsetForRoomPx?.invoke(room) ?: 0f
+        val multilineCenterCompensation = multilineCenterCompensationForRoom?.invoke(room) ?: false
         val lines = splitLabel(labelText, DEFAULT_MAX_CHARS)
+        val originalTextSize = paint.textSize
+        paint.textSize = originalTextSize * textScale
+        val lineHeight = paint.descent() - paint.ascent()
+        paint.textSize = originalTextSize
+        val wrappedCompensation = if (multilineCenterCompensation) {
+            (lines.size - 1).coerceAtLeast(0) * lineHeight * 0.5f
+        } else {
+            0f
+        }
         val bounds = measureBounds(
             cx = textX,
-            cy = textY + textYOffsetPx,
+            cy = textY + textYOffsetPx + wrappedCompensation,
             lines = lines,
             paint = paint,
             textScale = textScale
@@ -184,6 +203,7 @@ private fun buildLayouts(
             labelText = labelText,
             textScale = textScale,
             textYOffsetPx = textYOffsetPx,
+            multilineCenterCompensation = multilineCenterCompensation,
             maxChars = DEFAULT_MAX_CHARS,
             lines = lines,
             bounds = bounds
@@ -245,9 +265,18 @@ private fun resolveOverlaps(layouts: MutableList<LabelLayout>, paint: Paint) {
 
             layout.maxChars = newMax
             layout.lines = splitLabel(layout.labelText, newMax)
+            val originalTextSize = paint.textSize
+            paint.textSize = originalTextSize * layout.textScale
+            val lineHeight = paint.descent() - paint.ascent()
+            paint.textSize = originalTextSize
+            val wrappedCompensation = if (layout.multilineCenterCompensation) {
+                (layout.lines.size - 1).coerceAtLeast(0) * lineHeight * 0.5f
+            } else {
+                0f
+            }
             layout.bounds = measureBounds(
                 cx = layout.textX,
-                cy = layout.textY + layout.textYOffsetPx,
+                cy = layout.textY + layout.textYOffsetPx + wrappedCompensation,
                 lines = layout.lines,
                 paint = paint,
                 textScale = layout.textScale

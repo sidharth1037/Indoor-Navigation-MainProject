@@ -395,13 +395,26 @@ fun HomeScreen(
             },
             onShowRoomOnMap = { room ->
                 floorPlanViewModel.showPinnedRoomOnMap()
-                room.floorId?.let { floorPlanViewModel.switchToFloorById(it) }
-                floorPlanViewModel.centerOnCoordinate(
-                    x = room.x,
-                    y = room.y,
-                    scale = 1.2f,
-                    buildingId = room.buildingId
-                )
+                val matchedLandmark = landmarkUiState.landmarks.firstOrNull {
+                    landmarkSyntheticRoomId(it.id) == room.id
+                }
+
+                if (matchedLandmark != null) {
+                    floorPlanViewModel.switchToFloorById(matchedLandmark.floorId)
+                    floorPlanViewModel.centerOnCampusCoordinate(
+                        campusX = matchedLandmark.campusX,
+                        campusY = matchedLandmark.campusY,
+                        scale = 1.2f
+                    )
+                } else {
+                    room.floorId?.let { floorPlanViewModel.switchToFloorById(it) }
+                    floorPlanViewModel.centerOnCoordinate(
+                        x = room.x,
+                        y = room.y,
+                        scale = 1.2f,
+                        buildingId = room.buildingId
+                    )
+                }
             },
             onSwitchToFloorById = { floorId -> floorPlanViewModel.switchToFloorById(floorId) },
             showMotionLabel = settingsUiState.showMotionLabel,
@@ -918,7 +931,7 @@ private fun HomeScreenContent(
                                     // Landmark placement mode: store in LandmarkViewModel
                                     val floorId = vm.findFloorIdAtPoint(origin)
                                     val buildingId = vm.findBuildingIdAtPoint(origin)
-                                    landmarkViewModel?.setPendingLocation(origin, floorId, buildingId)
+                                    landmarkViewModel.setPendingLocation(origin, floorId, buildingId)
                                 } else {
                                     pendingOriginLocation = origin
                                 }
@@ -973,7 +986,15 @@ private fun HomeScreenContent(
                     )
                 }
 
-                // Room labels, building names, and search pin — above nav path
+                LandmarkOverlay(
+                    landmarks = landmarkViewModel?.uiState?.collectAsState()?.value?.landmarks ?: emptyList(),
+                    currentFloorId = uiState.currentFloorId,
+                    canvasState = effectiveCanvasState,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Room labels, building names, and search pin — rendered after landmarks
+                // so labels stay readable when landmark markers overlap them at low zoom.
                 FloorPlanLabelsOverlay(
                     buildingStates = uiState.buildingStates,
                     canvasState = effectiveCanvasState,
@@ -987,13 +1008,6 @@ private fun HomeScreenContent(
                     overlayPinnedRoom = if (overlayRequestedDirections) null else overlayPinnedRoom,
                     pinDrawable = pinDrawable,
                     pinTintColor = primaryColor,
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                LandmarkOverlay(
-                    landmarks = landmarkViewModel?.uiState?.collectAsState()?.value?.landmarks ?: emptyList(),
-                    currentFloorId = uiState.currentFloorId,
-                    canvasState = effectiveCanvasState,
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -1587,7 +1601,7 @@ private fun HomeScreenContent(
                     LandmarkDeleteConfirmDialog(
                         landmarkName = selectedLandmark.name,
                         onConfirm = {
-                            landmarkViewModel?.deleteLandmark(selectedLandmark.id)
+                            landmarkViewModel.deleteLandmark(selectedLandmark.id)
                             showLandmarkDeleteConfirmDialog = false
                             overlayPinnedRoom = null
                             onExitNavigation()

@@ -191,7 +191,8 @@ fun FloorPlanCanvas(
                             val halfW = (maxLineChars * charWidthPx) / 2f + hitPadX
                             val halfH = (numLines * lineHeightPx) / 2f + hitPadY
 
-                            val labelCenterY = screenY + screenSizing.labelCenterOffsetPx
+                            val wrappedCompensation = (numLines - 1).coerceAtLeast(0) * lineHeightPx * 0.5f
+                            val labelCenterY = screenY + screenSizing.labelCenterOffsetPx + wrappedCompensation
                             val labelDx = tapOffset.x - screenX
                             val labelDy = tapOffset.y - labelCenterY
                             val labelHit = abs(labelDx) <= halfW && abs(labelDy) <= halfH
