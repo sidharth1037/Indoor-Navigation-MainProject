@@ -24,6 +24,9 @@ import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.twotone.*
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -173,13 +176,13 @@ val landmarkIconOptions = listOf(
     LandmarkIconOption("add", "Add", Icons.Default.Add),
     LandmarkIconOption("favorite", "Favorite", Icons.Default.Favorite),
     LandmarkIconOption("star", "Star", Icons.Default.Star),
-    LandmarkIconOption("faucet", "Faucet", Icons.Default.Plumbing),
-    LandmarkIconOption("tap", "Tap", Icons.Default.Plumbing),
-    LandmarkIconOption("wash_basin", "Wash Basin", Icons.Default.Plumbing),
+    LandmarkIconOption("faucet", "Faucet", Icons.Rounded.Plumbing),
+    LandmarkIconOption("tap", "Tap", Icons.Outlined.Plumbing),
+    LandmarkIconOption("wash_basin", "Wash Basin", Icons.TwoTone.Wash),
     LandmarkIconOption("drinking_water", "Drinking Water", Icons.Default.WaterDrop),
-    LandmarkIconOption("pillar", "Pillar", Icons.Default.AccountBalance),
+    LandmarkIconOption("pillar", "Pillar", Icons.Default.Foundation),
     LandmarkIconOption("column", "Column", Icons.Default.AccountBalance),
-    LandmarkIconOption("colonnade", "Colonnade", Icons.Default.AccountBalance),
+    LandmarkIconOption("colonnade", "Colonnade", Icons.Default.Balcony),
     LandmarkIconOption("notice", "Notice", Icons.Default.Description),
     LandmarkIconOption("bulletin", "Bulletin", Icons.Default.Description),
     LandmarkIconOption("announcement", "Announcement", Icons.Default.Info),
@@ -231,6 +234,45 @@ val landmarkIconOptions = listOf(
     LandmarkIconOption("pin_point", "Pin Point", Icons.Default.LocationOn),
     LandmarkIconOption("city_center", "City Center", Icons.Default.LocationCity),
     LandmarkIconOption("wifi_zone", "WiFi Zone", Icons.Default.Wifi),
+    LandmarkIconOption("countertops", "Countertops", Icons.Default.Countertops),
+    LandmarkIconOption("warehouse", "Warehouse", Icons.Default.Warehouse),
+    LandmarkIconOption("chair", "Chair", Icons.Default.Chair),
+    LandmarkIconOption("table_bar", "Table Bar", Icons.Default.TableBar),
+    LandmarkIconOption("desk", "Desk", Icons.Default.Desk),
+    LandmarkIconOption("weekend", "Lounge", Icons.Default.Weekend),
+    LandmarkIconOption("temple", "Temple", Icons.Default.TempleBuddhist),
+    LandmarkIconOption("mosque", "Mosque", Icons.Default.Mosque),
+    LandmarkIconOption("synagogue", "Synagogue", Icons.Default.Synagogue),
+    LandmarkIconOption("castle", "Castle", Icons.Default.Castle),
+    LandmarkIconOption("museum", "Museum", Icons.Default.Museum),
+    LandmarkIconOption("factory", "Factory", Icons.Default.Factory),
+    LandmarkIconOption("hardware_store", "Hardware", Icons.Default.Hardware),
+    LandmarkIconOption("mall_directory", "Mall Directory", Icons.Default.StoreMallDirectory),
+    LandmarkIconOption("home_work", "Home Work", Icons.Default.HomeWork),
+    LandmarkIconOption("garage", "Garage", Icons.Default.Garage),
+    LandmarkIconOption("sliding_door", "Sliding Door", Icons.Default.DoorSliding),
+    LandmarkIconOption("escalator", "Escalator", Icons.Default.Escalator),
+    LandmarkIconOption("escalator_warning", "Escalator Warning", Icons.Default.EscalatorWarning),
+    LandmarkIconOption("roller_shades", "Roller Shades", Icons.Default.RollerShades),
+    LandmarkIconOption("blinds", "Blinds", Icons.Default.Blinds),
+    LandmarkIconOption("light", "Light", Icons.Default.Lightbulb),
+    LandmarkIconOption("inventory", "Inventory", Icons.Default.Inventory2),
+    LandmarkIconOption("medication", "Medication", Icons.Default.Medication),
+    LandmarkIconOption("vaccines", "Vaccines", Icons.Default.Vaccines),
+    LandmarkIconOption("emergency", "Emergency", Icons.Default.Emergency),
+    LandmarkIconOption("hydrant", "Fire Hydrant", Icons.Default.FireHydrantAlt),
+    LandmarkIconOption("drink", "Drink", Icons.Default.LocalDrink),
+    LandmarkIconOption("bar", "Bar", Icons.Default.LocalBar),
+    LandmarkIconOption("liquor", "Liquor", Icons.Default.Liquor),
+    LandmarkIconOption("hostel", "Hostel", Icons.Default.Gite),
+    LandmarkIconOption("villa", "Villa", Icons.Default.Villa),
+    LandmarkIconOption("roof", "Roof", Icons.Default.Roofing),
+    LandmarkIconOption("window", "Window", Icons.Default.Window),
+    LandmarkIconOption("bathtub", "Bathtub", Icons.Default.Bathtub),
+    LandmarkIconOption("shower", "Shower", Icons.Default.Shower),
+    LandmarkIconOption("deck", "Deck", Icons.Default.Deck),
+    LandmarkIconOption("yard", "Yard", Icons.Default.Yard),
+    LandmarkIconOption("fence", "Fence", Icons.Default.Fence),
 )
 
 private val commonLandmarkIconIds = setOf(

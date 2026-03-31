@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import `in`.project.enroute.data.model.Landmark
 import `in`.project.enroute.data.model.Room
 import `in`.project.enroute.feature.floorplan.state.BuildingState
 
@@ -33,7 +34,12 @@ data class SearchResult(
     val label: String?,
     val roomNo: Int?,
     val buildingName: String,
-    val room: Room
+    val room: Room,
+    val isLandmark: Boolean = false,
+    val landmark: Landmark? = null,
+    val useCampusCoordinates: Boolean = false,
+    val campusX: Float? = null,
+    val campusY: Float? = null
 )
 
 /**
@@ -45,7 +51,12 @@ data class SearchResult(
  * @param query Search query string - performs case-insensitive prefix match on room labels or room numbers
  * @return List of SearchResult objects matching the query, sorted by room number or label
  */
-fun searchRooms(buildingStates: Map<String, BuildingState>, query: String): List<SearchResult> {
+fun searchRooms(
+    buildingStates: Map<String, BuildingState>,
+    query: String,
+    landmarks: List<Landmark> = emptyList(),
+    includeLandmarks: Boolean = true
+): List<SearchResult> {
     if (query.isBlank()) return emptyList()
 
     val normalizedQuery = query.trim()
@@ -97,11 +108,60 @@ fun searchRooms(buildingStates: Map<String, BuildingState>, query: String): List
         }
     }
 
+    if (includeLandmarks) {
+        val lower = normalizedQuery.lowercase()
+        landmarks
+            .asSequence()
+            .filter { it.name.isNotBlank() }
+            .filter { lm ->
+                val name = lm.name.lowercase()
+                if (isNumericQuery) {
+                    false
+                } else {
+                    name.startsWith(lower)
+                }
+            }
+            .forEach { lm ->
+                val buildingName =
+                    buildingStates[lm.buildingId]?.building?.buildingName ?: "Landmark"
+                val syntheticRoom = Room(
+                    id = landmarkSyntheticRoomId(lm.id),
+                    x = lm.x,
+                    y = lm.y,
+                    name = lm.name,
+                    number = null,
+                    floorId = lm.floorId,
+                    buildingId = lm.buildingId
+                )
+                allResults.add(
+                    SearchResult(
+                        x = lm.x,
+                        y = lm.y,
+                        label = lm.name,
+                        roomNo = null,
+                        buildingName = buildingName,
+                        room = syntheticRoom,
+                        isLandmark = true,
+                        landmark = lm,
+                        useCampusCoordinates = true,
+                        campusX = lm.campusX,
+                        campusY = lm.campusY
+                    )
+                )
+            }
+    }
+
     return if (isNumericQuery) {
         allResults.sortedBy { it.roomNo ?: Int.MAX_VALUE }
     } else {
         allResults.sortedBy { it.label ?: "" }
     }
+}
+
+private fun landmarkSyntheticRoomId(landmarkId: String): Int {
+    val hash = landmarkId.hashCode()
+    val safePositive = if (hash == Int.MIN_VALUE) 0 else kotlin.math.abs(hash)
+    return -(safePositive + 1)
 }
 
 /**

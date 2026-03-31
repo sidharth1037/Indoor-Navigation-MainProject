@@ -1866,6 +1866,7 @@ private fun HomeScreenContent(
                 ) {
                     SearchScreen(
                         buildingStates = uiState.buildingStates,
+                        landmarks = landmarkViewModel?.uiState?.collectAsState()?.value?.landmarks ?: emptyList(),
                         onBack = { 
                             showSearch = false 
                             isMorphingToSearch = false
@@ -1876,7 +1877,12 @@ private fun HomeScreenContent(
                             }
                         },
                         onCenterView = onCenterView,
+                        onCenterOnCampus = onCenterOnCampus,
                         onRoomTap = { room -> requestRoomSelection(room) },
+                        onLandmarkTap = { landmark, room ->
+                            landmarkViewModel?.selectLandmark(landmark)
+                            requestRoomSelection(room)
+                        },
                         onResultSelected = {
                             // A destination was chosen from search, so don't reopen the prompt.
                             searchOpenedFromDialog = false
@@ -1893,6 +1899,8 @@ private fun HomeScreenContent(
                 ) {
                     SearchScreen(
                         buildingStates = uiState.buildingStates,
+                        landmarks = emptyList(),
+                        includeLandmarks = false,
                         onBack = {
                             showLocationSearch = false
                             isMorphingToSearch = false

@@ -44,6 +44,7 @@ import kotlinx.coroutines.delay
 import `in`.project.enroute.feature.home.utils.searchRooms
 import `in`.project.enroute.feature.home.utils.DestinationButton
 import `in`.project.enroute.feature.home.utils.SearchResult
+import `in`.project.enroute.data.model.Landmark
 import `in`.project.enroute.data.model.Room
 import `in`.project.enroute.feature.floorplan.state.BuildingState
 
@@ -54,9 +55,13 @@ import `in`.project.enroute.feature.floorplan.state.BuildingState
 @Composable
 fun SearchScreen(
     buildingStates: Map<String, BuildingState>,
+    landmarks: List<Landmark> = emptyList(),
+    includeLandmarks: Boolean = true,
     onBack: () -> Unit,
     onCenterView: (x: Float, y: Float, scale: Float, buildingId: String?) -> Unit = { _, _, _, _ -> },
+    onCenterOnCampus: (x: Float, y: Float, scale: Float) -> Unit = { _, _, _ -> },
     onRoomTap: (Room) -> Unit = { _ -> },
+    onLandmarkTap: (Landmark, Room) -> Unit = { _, _ -> },
     onResultSelected: () -> Unit = {}
 ) {
     val query = remember { mutableStateOf("") }
@@ -72,14 +77,15 @@ fun SearchScreen(
     }
     
     // Track pending navigation to delay it until keyboard is hidden
-    // Stores (x, y, buildingId) for the target room
-    val pendingNavigation = remember { mutableStateOf<Triple<Float, Float, String?>?>(null) }
+    val pendingNavigation = remember { mutableStateOf<SearchResult?>(null) }
     
     // Search across all loaded buildings when query changes
-    LaunchedEffect(query.value, buildingStates) {
+    LaunchedEffect(query.value, buildingStates, landmarks, includeLandmarks) {
         searchResults.value = searchRooms(
             buildingStates = buildingStates,
-            query = query.value
+            query = query.value,
+            landmarks = landmarks,
+            includeLandmarks = includeLandmarks
         )
         hasSearched.value = true
     }
@@ -96,8 +102,12 @@ fun SearchScreen(
         if (pendingNavigation.value != null) {
             // Wait for keyboard hide animation (approximately 150ms)
             delay(150)
-            val (x, y, buildingId) = pendingNavigation.value!!
-            onCenterView(x, y, 1.2f, buildingId)
+            val target = pendingNavigation.value!!
+            if (target.useCampusCoordinates && target.campusX != null && target.campusY != null) {
+                onCenterOnCampus(target.campusX, target.campusY, 1.2f)
+            } else {
+                onCenterView(target.x, target.y, 1.2f, target.room.buildingId)
+            }
             onBack()
             pendingNavigation.value = null
         }
@@ -207,14 +217,17 @@ fun SearchScreen(
                 items(searchResults.value) { result ->
                     DestinationButton(
                         coordinates = Pair(result.x, result.y),
-                        onNavigate = { x, y ->
-                            // Pin the room first
-                            onRoomTap(result.room)
+                        onNavigate = { _, _ ->
+                            if (result.isLandmark && result.landmark != null) {
+                                onLandmarkTap(result.landmark, result.room)
+                            } else {
+                                onRoomTap(result.room)
+                            }
                             onResultSelected()
                             // Hide keyboard immediately
                             focusManager.clearFocus()
                             // Schedule navigation after keyboard hide animation completes
-                            pendingNavigation.value = Triple(x, y, result.room.buildingId)
+                            pendingNavigation.value = result
                         },
                         label = result.label,
                         roomNumber = result.roomNo,
