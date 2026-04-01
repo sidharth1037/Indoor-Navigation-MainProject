@@ -1044,12 +1044,14 @@ private fun HomeScreenContent(
 
                 // PDR path overlay — user position always on top
                 if (pdrUiState.pdrState.path.isNotEmpty()) {
+                    val isPdrOutdoors = pdrUiState.pdrState.currentBuilding == null
                     PdrPathOverlay(
                         path = pdrUiState.pdrState.path,
                         currentHeading = heading,
                         showDirectionCone = hasFreshHeadingSinceStart,
                         canvasState = effectiveCanvasState,
-                        isOnCurrentFloor = pdrUiState.pdrState.currentFloor == null ||
+                        isOnCurrentFloor = isPdrOutdoors ||
+                                pdrUiState.pdrState.currentFloor == null ||
                                 pdrUiState.pdrState.currentFloor == uiState.currentFloorId,
                         isOnStairs = pdrUiState.pdrState.isOnStairs,
                         currentPosition = pdrUiState.pdrState.currentPosition,
