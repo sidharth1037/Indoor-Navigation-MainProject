@@ -19,6 +19,8 @@ import `in`.project.enroute.feature.landmark.LandmarkViewModel
 import `in`.project.enroute.feature.landmark.ui.AddLandmarkScreen
 import `in`.project.enroute.feature.navigation.NavigationViewModel
 import `in`.project.enroute.feature.pdr.PdrViewModel
+import `in`.project.enroute.feature.roominfo.RoomInfoViewModel
+import `in`.project.enroute.feature.roominfo.ui.RoomInfoScreen
 import `in`.project.enroute.feature.settings.SettingsScreen
 import `in`.project.enroute.feature.welcome.WelcomeScreen
 import android.widget.Toast
@@ -35,6 +37,16 @@ sealed class Screen(val route: String) {
     data object Admin : Screen("admin")
     data object AddLandmark : Screen("add_landmark/{campusId}") {
         fun createRoute(campusId: String) = "add_landmark/$campusId"
+    }
+    data object RoomInfo : Screen("room_info/{campusId}/{buildingId}/{floorId}/{roomId}/{roomNumber}/{roomName}") {
+        fun createRoute(
+            campusId: String,
+            buildingId: String,
+            floorId: String,
+            roomId: Int,
+            roomNumber: Int?,
+            roomName: String?
+        ) = "room_info/$campusId/$buildingId/$floorId/$roomId/${roomNumber ?: "null"}/${roomName ?: "null"}"
     }
 }
 
@@ -84,6 +96,7 @@ fun NavigationGraph(
             val navigationViewModel: NavigationViewModel = viewModel(backStackEntry)
             val elevatorViewModel: ElevatorViewModel = viewModel(backStackEntry)
             val landmarkViewModel: LandmarkViewModel = viewModel(backStackEntry)
+            val roomInfoViewModel: RoomInfoViewModel = viewModel(backStackEntry)
             HomeScreen(
                 campusId = campusId,
                 floorPlanViewModel = floorPlanViewModel,
@@ -91,6 +104,7 @@ fun NavigationGraph(
                 navigationViewModel = navigationViewModel,
                 elevatorViewModel = elevatorViewModel,
                 landmarkViewModel = landmarkViewModel,
+                roomInfoViewModel = roomInfoViewModel,
                 onSettingsClick = {
                     navController.navigate(Screen.Settings.route) {
                         launchSingleTop = true
@@ -108,6 +122,20 @@ fun NavigationGraph(
                 },
                 onNavigateToAddLandmark = {
                     navController.navigate(Screen.AddLandmark.createRoute(campusId)) {
+                        launchSingleTop = true
+                    }
+                },
+                onNavigateToRoomInfo = { buildingId, floorId, roomId, roomNumber, roomName ->
+                    navController.navigate(
+                        Screen.RoomInfo.createRoute(
+                            campusId,
+                            buildingId,
+                            floorId,
+                            roomId,
+                            roomNumber,
+                            roomName
+                        )
+                    ) {
                         launchSingleTop = true
                     }
                 }
@@ -190,6 +218,57 @@ fun NavigationGraph(
                         )
                     }
                 },
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(
+            route = Screen.RoomInfo.route,
+            arguments = listOf(
+                navArgument("campusId") { type = NavType.StringType },
+                navArgument("buildingId") { type = NavType.StringType },
+                navArgument("floorId") { type = NavType.StringType },
+                navArgument("roomId") { type = NavType.IntType },
+                navArgument("roomNumber") { type = NavType.StringType },
+                navArgument("roomName") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val campusId = backStackEntry.arguments?.getString("campusId") ?: ""
+            val buildingId = backStackEntry.arguments?.getString("buildingId") ?: ""
+            val buildingName = remember(backStackEntry) {
+                val homeEntry = navController.getBackStackEntry(Screen.Home.createRoute(campusId))
+                val floorPlanViewModel: FloorPlanViewModel = viewModel(homeEntry)
+                val uiState = floorPlanViewModel.uiState.value
+                uiState.buildingStates[buildingId]?.building?.buildingName ?: ""
+            }
+            val floorId = backStackEntry.arguments?.getString("floorId") ?: ""
+            val roomId = backStackEntry.arguments?.getInt("roomId") ?: 0
+            val roomNumberStr = backStackEntry.arguments?.getString("roomNumber") ?: "null"
+            val roomNameStr = backStackEntry.arguments?.getString("roomName") ?: "null"
+            val roomNumber = if (roomNumberStr == "null") null else roomNumberStr.toIntOrNull()
+            val roomName = if (roomNameStr == "null") null else roomNameStr
+
+            // Share the RoomInfoViewModel from the Home backstack entry
+            val homeEntry = remember(backStackEntry) {
+                navController.getBackStackEntry(Screen.Home.createRoute(campusId))
+            }
+            val roomInfoViewModel: RoomInfoViewModel = viewModel(homeEntry)
+            val isAdmin = AdminAuthRepository.isLoggedIn.value && 
+                remember(backStackEntry) {
+                    val floorPlanViewModel: FloorPlanViewModel = viewModel(homeEntry)
+                    val uiState = floorPlanViewModel.uiState.value
+                    uiState.campusMetadata.createdBy == AdminAuthRepository.currentUser?.uid
+                }
+
+            RoomInfoScreen(
+                campusId = campusId,
+                buildingId = buildingId,
+                buildingName = buildingName,
+                floorId = floorId,
+                roomId = roomId,
+                roomNumber = roomNumber,
+                roomName = roomName,
+                isAdmin = isAdmin,
+                viewModel = roomInfoViewModel,
                 onBack = { navController.popBackStack() }
             )
         }

@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Directions
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.Navigation
 import androidx.compose.material3.CircularProgressIndicator
@@ -84,6 +85,7 @@ fun RoomInfoPanel(
     onShowOnMapClick: (Room) -> Unit = {},
     onStartClick: () -> Unit = {},
     onExitClick: () -> Unit = {},
+    onInfoClick: () -> Unit = {},
     headerActions: List<RoomInfoHeaderAction> = emptyList(),
     onHeightMeasured: (Int) -> Unit = {}
 ) {
@@ -135,6 +137,7 @@ fun RoomInfoPanel(
             onShowOnMapClick = onShowOnMapClick,
             onStartClick = onStartClick,
             onExitClick = onExitClick,
+            onInfoClick = onInfoClick,
             headerActions = lastHeaderActions,
             onHeightMeasured = onHeightMeasured
         )
@@ -156,6 +159,7 @@ private fun RoomInfoPanelContent(
     onShowOnMapClick: (Room) -> Unit,
     onStartClick: () -> Unit,
     onExitClick: () -> Unit,
+    onInfoClick: () -> Unit,
     headerActions: List<RoomInfoHeaderAction>,
     onHeightMeasured: (Int) -> Unit
 ) {
@@ -323,6 +327,31 @@ private fun RoomInfoPanelContent(
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Info button - visible for all users
+                TextButton(
+                    onClick = onInfoClick,
+                    modifier = Modifier.height(actionButtonHeight),
+                    shape = pillShape,
+                    contentPadding = actionButtonPadding,
+                    colors = primaryPillColors
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Info,
+                        contentDescription = "Room Info",
+                        tint = MaterialTheme.colorScheme.background,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Info",
+                        color = MaterialTheme.colorScheme.background,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
                 TextButton(
                     onClick = {
                         // Keep visual style constant while preventing repeat requests.

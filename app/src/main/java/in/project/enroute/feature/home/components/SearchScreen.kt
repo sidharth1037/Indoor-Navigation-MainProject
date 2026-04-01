@@ -46,6 +46,7 @@ import `in`.project.enroute.feature.home.utils.DestinationButton
 import `in`.project.enroute.feature.home.utils.SearchResult
 import `in`.project.enroute.data.model.Landmark
 import `in`.project.enroute.data.model.Room
+import `in`.project.enroute.data.model.RoomInfo
 import `in`.project.enroute.feature.floorplan.state.BuildingState
 
 /**
@@ -56,6 +57,7 @@ import `in`.project.enroute.feature.floorplan.state.BuildingState
 fun SearchScreen(
     buildingStates: Map<String, BuildingState>,
     landmarks: List<Landmark> = emptyList(),
+    roomInfoList: List<RoomInfo> = emptyList(),
     includeLandmarks: Boolean = true,
     onBack: () -> Unit,
     onCenterView: (x: Float, y: Float, scale: Float, buildingId: String?) -> Unit = { _, _, _, _ -> },
@@ -80,10 +82,11 @@ fun SearchScreen(
     val pendingNavigation = remember { mutableStateOf<SearchResult?>(null) }
     
     // Search across all loaded buildings when query changes
-    LaunchedEffect(query.value, buildingStates, landmarks, includeLandmarks) {
+    LaunchedEffect(query.value, buildingStates, landmarks, roomInfoList, includeLandmarks) {
         searchResults.value = searchRooms(
             buildingStates = buildingStates,
             query = query.value,
+            roomInfoList = roomInfoList,
             landmarks = landmarks,
             includeLandmarks = includeLandmarks
         )

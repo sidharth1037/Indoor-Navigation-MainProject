@@ -105,6 +105,7 @@ import `in`.project.enroute.feature.landmark.ui.LandmarkDeleteConfirmDialog
 import `in`.project.enroute.feature.landmark.ui.LandmarkOverlay
 import `in`.project.enroute.feature.landmark.ui.LandmarkPlacementPanel
 import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
+import `in`.project.enroute.feature.roominfo.RoomInfoViewModel
 import kotlin.math.sqrt
 
 @Composable
@@ -115,16 +116,19 @@ fun HomeScreen(
     navigationViewModel: NavigationViewModel = viewModel(),
     elevatorViewModel: ElevatorViewModel = viewModel(),
     landmarkViewModel: LandmarkViewModel = viewModel(),
+    roomInfoViewModel: RoomInfoViewModel = viewModel(),
     settingsViewModel: SettingsViewModel = viewModel(),
     onSettingsClick: () -> Unit = {},
     onAdminClick: () -> Unit = {},
-    onNavigateToAddLandmark: () -> Unit = {}
+    onNavigateToAddLandmark: () -> Unit = {},
+    onNavigateToRoomInfo: (buildingId: String, floorId: String, roomId: Int, roomNumber: Int?, roomName: String?) -> Unit = { _, _, _, _, _ -> }
 ) {
     val uiState by floorPlanViewModel.uiState.collectAsState()
     val pdrUiState by pdrViewModel.uiState.collectAsState()
     val navUiState by navigationViewModel.uiState.collectAsState()
     val settingsUiState by settingsViewModel.uiState.collectAsState()
     val landmarkUiState by landmarkViewModel.uiState.collectAsState()
+    val roomInfoUiState by roomInfoViewModel.uiState.collectAsState()
     // Heading collected separately for PDR — not used for compass (compass uses canvas rotation)
     val heading by pdrViewModel.heading.collectAsState()
     val hasFreshHeadingSinceStart by pdrViewModel.hasFreshHeadingSinceStart.collectAsState()
@@ -133,10 +137,11 @@ fun HomeScreen(
     // State for origin location error snack bar
     var originErrorType by remember { mutableStateOf<FloorPlanViewModel.OriginErrorType?>(null) }
 
-    // Load all buildings and landmarks on first composition
+    // Load all buildings, landmarks, and room info on first composition
     LaunchedEffect(Unit) {
         floorPlanViewModel.loadCampus(campusId)
         landmarkViewModel.loadLandmarks(campusId)
+        roomInfoViewModel.loadAllRoomInfo(campusId)
     }
 
     // Supply loaded floor data to NavigationViewModel whenever it changes
@@ -1436,6 +1441,17 @@ private fun HomeScreenContent(
                         overlayPinnedRoom = null
                         onExitNavigation()
                     },
+                    onInfoClick = {
+                        if (activePinnedRoom != null) {
+                            onNavigateToRoomInfo(
+                                activePinnedRoom.buildingId ?: "",
+                                activePinnedRoom.floorId ?: "",
+                                activePinnedRoom.id,
+                                activePinnedRoom.number,
+                                activePinnedRoom.name
+                            )
+                        }
+                    },
                     headerActions = if (showLandmarkActions) {
                         listOf(
                             RoomInfoHeaderAction(
@@ -1570,6 +1586,17 @@ private fun HomeScreenContent(
                     onExitClick = {
                         overlayPinnedRoom = null
                         onExitNavigation()
+                    },
+                    onInfoClick = {
+                        if (overlayPinnedRoom != null) {
+                            onNavigateToRoomInfo(
+                                overlayPinnedRoom.buildingId ?: "",
+                                overlayPinnedRoom.floorId ?: "",
+                                overlayPinnedRoom.id,
+                                overlayPinnedRoom.number,
+                                overlayPinnedRoom.name
+                            )
+                        }
                     },
                     headerActions = if (
                         isAdminOfCampus &&
@@ -1867,6 +1894,7 @@ private fun HomeScreenContent(
                     SearchScreen(
                         buildingStates = uiState.buildingStates,
                         landmarks = landmarkViewModel?.uiState?.collectAsState()?.value?.landmarks ?: emptyList(),
+                        roomInfoList = roomInfoUiState.allRoomInfo,
                         onBack = { 
                             showSearch = false 
                             isMorphingToSearch = false
@@ -1900,6 +1928,7 @@ private fun HomeScreenContent(
                     SearchScreen(
                         buildingStates = uiState.buildingStates,
                         landmarks = emptyList(),
+                        roomInfoList = roomInfoUiState.allRoomInfo,
                         includeLandmarks = false,
                         onBack = {
                             showLocationSearch = false

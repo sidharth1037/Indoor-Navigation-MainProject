@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import `in`.project.enroute.data.model.Landmark
 import `in`.project.enroute.data.model.Room
+import `in`.project.enroute.data.model.RoomInfo
 import `in`.project.enroute.feature.floorplan.state.BuildingState
 
 /**
@@ -37,6 +38,8 @@ data class SearchResult(
     val room: Room,
     val isLandmark: Boolean = false,
     val landmark: Landmark? = null,
+    val isTagMatch: Boolean = false,
+    val matchedTag: String? = null,
     val useCampusCoordinates: Boolean = false,
     val campusX: Float? = null,
     val campusY: Float? = null
@@ -44,16 +47,21 @@ data class SearchResult(
 
 /**
  * Searches for rooms across all loaded buildings and floors using prefix matching.
+ * Also searches tags using contains matching for non-numeric queries.
  * Uses data already loaded from Firebase via the ViewModel's BuildingState map.
- * If query is numeric, searches by room number. If query is string, searches by label.
+ * If query is numeric, searches by room number. If query is string, searches by label and tags.
  *
  * @param buildingStates Map of building ID to BuildingState from the ViewModel (Firebase data)
  * @param query Search query string - performs case-insensitive prefix match on room labels or room numbers
+ * @param roomInfoList List of RoomInfo objects for tag searching (contains matching)
+ * @param landmarks List of landmarks to search
+ * @param includeLandmarks Whether to include landmark results
  * @return List of SearchResult objects matching the query, sorted by room number or label
  */
 fun searchRooms(
     buildingStates: Map<String, BuildingState>,
     query: String,
+    roomInfoList: List<RoomInfo> = emptyList(),
     landmarks: List<Landmark> = emptyList(),
     includeLandmarks: Boolean = true
 ): List<SearchResult> {
@@ -149,6 +157,48 @@ fun searchRooms(
                     )
                 )
             }
+    }
+
+    // Search tags using contains matching (non-numeric queries only)
+    if (!isNumericQuery && roomInfoList.isNotEmpty()) {
+        val queryLower = normalizedQuery.lowercase()
+        val roomsByIdentifier = mutableMapOf<Triple<String, String, Int>, Room>()
+
+        for ((_, buildingState) in buildingStates) {
+            for ((_, floorData) in buildingState.floors) {
+                for (room in floorData.rooms) {
+                    val key = Triple(room.buildingId ?: "", room.floorId ?: "", room.id)
+                    roomsByIdentifier[key] = room
+                }
+            }
+        }
+
+        val processedTagResults = mutableSetOf<Triple<String, String, Int>>()
+
+        roomInfoList.forEach { roomInfo ->
+            roomInfo.tags.forEach { tag ->
+                if (tag.lowercase().contains(queryLower)) {
+                    val key = Triple(roomInfo.buildingId, roomInfo.floorId, roomInfo.roomId)
+                    val room = roomsByIdentifier[key] ?: return@forEach
+
+                    // One result per matching tag
+                    val buildingName = buildingStates[roomInfo.buildingId]?.building?.buildingName ?: ""
+                    allResults.add(
+                        SearchResult(
+                            x = room.x,
+                            y = room.y,
+                            label = tag,
+                            roomNo = null,
+                            buildingName = buildingName,
+                            room = room,
+                            isTagMatch = true,
+                            matchedTag = tag
+                        )
+                    )
+                    processedTagResults.add(key)
+                }
+            }
+        }
     }
 
     return if (isNumericQuery) {

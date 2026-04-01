@@ -720,6 +720,107 @@ class FirebaseFloorPlanRepository(
             .await()
     }
 
+    // ── Room Info operations ────────────────────────────────────
+
+    /**
+     * Loads all room info documents for this campus.
+     * Used for populating the search index and tag matching.
+     *
+     * @return List of RoomInfo objects with description and tags.
+     */
+    suspend fun loadAllRoomInfo(): List<RoomInfo> = withContext(Dispatchers.IO) {
+        try {
+            val snapshot = firestore
+                .collection("campuses").document(campusId)
+                .collection("room_info")
+                .get()
+                .await()
+
+            snapshot.documents.mapNotNull { doc ->
+                try {
+                    RoomInfo(
+                        buildingId = doc.getString("buildingId") ?: return@mapNotNull null,
+                        floorId = doc.getString("floorId") ?: return@mapNotNull null,
+                        roomId = doc.getLong("roomId")?.toInt() ?: return@mapNotNull null,
+                        description = doc.getString("description") ?: "",
+                        tags = (doc.get("tags") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+                    )
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Loads room info for a specific room.
+     *
+     * @param buildingId Building ID
+     * @param floorId Floor ID
+     * @param roomId Room ID
+     * @return RoomInfo if exists, or null if no info document found
+     */
+    suspend fun loadRoomInfo(buildingId: String, floorId: String, roomId: Int): RoomInfo? =
+        withContext(Dispatchers.IO) {
+            try {
+                val docId = "${buildingId}_${floorId}_$roomId"
+                val doc = firestore
+                    .collection("campuses").document(campusId)
+                    .collection("room_info")
+                    .document(docId)
+                    .get()
+                    .await()
+
+                if (!doc.exists()) return@withContext null
+
+                RoomInfo(
+                    buildingId = doc.getString("buildingId") ?: buildingId,
+                    floorId = doc.getString("floorId") ?: floorId,
+                    roomId = doc.getLong("roomId")?.toInt() ?: roomId,
+                    description = doc.getString("description") ?: "",
+                    tags = (doc.get("tags") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+                )
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+    /**
+     * Saves or updates room info in Firestore.
+     * Uses set() with merge so that existing descriptions/tags are overwritten cleanly.
+     *
+     * @param buildingId Building ID
+     * @param floorId Floor ID
+     * @param roomId Room ID
+     * @param description Room description
+     * @param tags List of tag strings
+     */
+    suspend fun saveRoomInfo(
+        buildingId: String,
+        floorId: String,
+        roomId: Int,
+        description: String,
+        tags: List<String>
+    ) = withContext(Dispatchers.IO) {
+        val docId = "${buildingId}_${floorId}_$roomId"
+        val data = mapOf(
+            "buildingId" to buildingId,
+            "floorId" to floorId,
+            "roomId" to roomId,
+            "description" to description,
+            "tags" to tags
+        )
+
+        firestore
+            .collection("campuses").document(campusId)
+            .collection("room_info")
+            .document(docId)
+            .set(data)
+            .await()
+    }
+
     companion object {
         /**
          * In-memory cache of all campus documents. Populated lazily on the
