@@ -80,6 +80,7 @@ fun RoomInfoPanel(
     hasPath: Boolean = false,
     isNavigationStarted: Boolean = false,
     showShowOnMapButton: Boolean = false,
+    showInfoButton: Boolean = true,
     onDismiss: () -> Unit = {},
     onDirectionsClick: (Room) -> Unit = {},
     onShowOnMapClick: (Room) -> Unit = {},
@@ -95,6 +96,7 @@ fun RoomInfoPanel(
     var lastHasPath by remember { mutableStateOf(hasPath) }
     var lastIsNavigationStarted by remember { mutableStateOf(isNavigationStarted) }
     var lastShowOnMapButton by remember { mutableStateOf(showShowOnMapButton) }
+    var lastShowInfoButton by remember { mutableStateOf(showInfoButton) }
     var lastBuildingName by remember { mutableStateOf(buildingName) }
     var lastDistanceMeters by remember { mutableStateOf(distanceMeters) }
     var lastEtaText by remember { mutableStateOf(etaText) }
@@ -105,6 +107,7 @@ fun RoomInfoPanel(
         lastHasPath = hasPath
         lastIsNavigationStarted = isNavigationStarted
         lastShowOnMapButton = showShowOnMapButton
+        lastShowInfoButton = showInfoButton
         lastBuildingName = buildingName
         lastDistanceMeters = distanceMeters
         lastEtaText = etaText
@@ -132,6 +135,7 @@ fun RoomInfoPanel(
             hasPath = lastHasPath,
             isNavigationStarted = lastIsNavigationStarted,
             showShowOnMapButton = lastShowOnMapButton,
+            showInfoButton = lastShowInfoButton,
             onDismiss = onDismiss,
             onDirectionsClick = onDirectionsClick,
             onShowOnMapClick = onShowOnMapClick,
@@ -154,6 +158,7 @@ private fun RoomInfoPanelContent(
     hasPath: Boolean,
     isNavigationStarted: Boolean,
     showShowOnMapButton: Boolean,
+    showInfoButton: Boolean,
     onDismiss: () -> Unit,
     onDirectionsClick: (Room) -> Unit,
     onShowOnMapClick: (Room) -> Unit,
@@ -319,38 +324,40 @@ private fun RoomInfoPanelContent(
             )
             val mapPillColors = ButtonDefaults.textButtonColors(
                 containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onSecondary
+                contentColor = MaterialTheme.colorScheme.background
             )
-            val actionButtonHeight = 37.dp
-            val actionButtonPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp)
+            val actionButtonHeight = 34.dp
+            val actionButtonPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
 
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Info button - visible for all users
-                TextButton(
-                    onClick = onInfoClick,
-                    modifier = Modifier.height(actionButtonHeight),
-                    shape = pillShape,
-                    contentPadding = actionButtonPadding,
-                    colors = primaryPillColors
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Info,
-                        contentDescription = "Room Info",
-                        tint = MaterialTheme.colorScheme.background,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Info",
-                        color = MaterialTheme.colorScheme.background,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp
-                    )
-                }
+                if (showInfoButton) {
+                    TextButton(
+                        onClick = onInfoClick,
+                        modifier = Modifier.height(actionButtonHeight),
+                        shape = pillShape,
+                        contentPadding = actionButtonPadding,
+                        colors = primaryPillColors
+                    ) {
+                        Text(
+                            text = "Info",
+                            color = MaterialTheme.colorScheme.background,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Rounded.Info,
+                            contentDescription = "Room Info",
+                            tint = MaterialTheme.colorScheme.background,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
 
-                Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                }
 
                 TextButton(
                     onClick = {
@@ -368,9 +375,9 @@ private fun RoomInfoPanelContent(
                         text = if (hasPath) "Start" else "Directions",
                         color = MaterialTheme.colorScheme.background,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp
+                        fontSize = 13.sp
                     )
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     if (!hasPath && isCalculatingPath) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
@@ -397,21 +404,21 @@ private fun RoomInfoPanelContent(
                         shape = pillShape,
                         colors = mapPillColors,
                         modifier = Modifier
-                            .padding(start = 10.dp)
+                            .padding(start = 6.dp)
                             .height(actionButtonHeight),
                         contentPadding = actionButtonPadding
                     ) {
                         Text(
-                            text = if (hasPath) "Show full route" else "Show on map",
-                            color = MaterialTheme.colorScheme.onSecondary,
+                            text = if (hasPath) "Show Full Route" else "Show on Map",
+                            color = MaterialTheme.colorScheme.background,
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 15.sp
+                            fontSize = 13.sp
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Icon(
                             imageVector = Icons.Rounded.Map,
                             contentDescription = if (hasPath) "Show full route" else "Show on map",
-                            tint = MaterialTheme.colorScheme.onSecondary,
+                            tint = MaterialTheme.colorScheme.background,
                             modifier = Modifier.size(18.dp)
                         )
                     }

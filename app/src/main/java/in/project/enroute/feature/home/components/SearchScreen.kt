@@ -218,6 +218,14 @@ fun SearchScreen(
                 verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
                 items(searchResults.value) { result ->
+                    val primaryLabel = if (result.isTagMatch && !result.matchedTag.isNullOrBlank()) {
+                        val roomLabel = result.label ?: result.room.name ?: result.room.number?.toString() ?: "Room"
+                        "$roomLabel • ${result.matchedTag}"
+                    } else {
+                        result.label
+                    }
+                    val primaryRoomNumber = if (result.isTagMatch) null else result.roomNo
+
                     DestinationButton(
                         coordinates = Pair(result.x, result.y),
                         onNavigate = { _, _ ->
@@ -232,9 +240,10 @@ fun SearchScreen(
                             // Schedule navigation after keyboard hide animation completes
                             pendingNavigation.value = result
                         },
-                        label = result.label,
-                        roomNumber = result.roomNo,
+                        label = primaryLabel,
+                        roomNumber = primaryRoomNumber,
                         buildingName = result.buildingName,
+                        floorLabel = result.floorLabel,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

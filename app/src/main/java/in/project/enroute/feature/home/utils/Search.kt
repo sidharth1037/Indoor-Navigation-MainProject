@@ -35,6 +35,7 @@ data class SearchResult(
     val label: String?,
     val roomNo: Int?,
     val buildingName: String,
+    val floorLabel: String? = null,
     val room: Room,
     val isLandmark: Boolean = false,
     val landmark: Landmark? = null,
@@ -44,6 +45,12 @@ data class SearchResult(
     val campusX: Float? = null,
     val campusY: Float? = null
 )
+
+private fun formatFloorLabel(floorId: String?): String? {
+    if (floorId.isNullOrBlank()) return null
+    val num = floorId.removePrefix("floor_")
+    return if (num.isBlank()) null else "Floor $num"
+}
 
 /**
  * Searches for rooms across all loaded buildings and floors using prefix matching.
@@ -90,6 +97,7 @@ fun searchRooms(
                                 label = room.name,
                                 roomNo = room.number,
                                 buildingName = buildingName,
+                                floorLabel = formatFloorLabel(room.floorId ?: floorData.floorId),
                                 room = room
                             )
                         )
@@ -108,6 +116,7 @@ fun searchRooms(
                                 label = room.name,
                                 roomNo = room.number,
                                 buildingName = buildingName,
+                                floorLabel = formatFloorLabel(room.floorId ?: floorData.floorId),
                                 room = room
                             )
                         )
@@ -148,6 +157,7 @@ fun searchRooms(
                         label = lm.name,
                         roomNo = null,
                         buildingName = buildingName,
+                        floorLabel = formatFloorLabel(lm.floorId),
                         room = syntheticRoom,
                         isLandmark = true,
                         landmark = lm,
@@ -187,9 +197,10 @@ fun searchRooms(
                         SearchResult(
                             x = room.x,
                             y = room.y,
-                            label = tag,
-                            roomNo = null,
+                            label = room.name,
+                            roomNo = room.number,
                             buildingName = buildingName,
+                            floorLabel = formatFloorLabel(room.floorId ?: roomInfo.floorId),
                             room = room,
                             isTagMatch = true,
                             matchedTag = tag
@@ -232,7 +243,8 @@ fun DestinationButton(
     modifier: Modifier = Modifier,
     label: String? = null,
     roomNumber: Int? = null,
-    buildingName: String? = null
+    buildingName: String? = null,
+    floorLabel: String? = null
 ) {
     val displayText = buildString {
         roomNumber?.let { append(" $it") }
@@ -263,9 +275,11 @@ fun DestinationButton(
             )
             Column {
                 Text(text = displayText)
-                if (!buildingName.isNullOrBlank()) {
+                val locationText = listOfNotNull(buildingName?.takeIf { it.isNotBlank() }, floorLabel?.takeIf { it.isNotBlank() })
+                    .joinToString("  •  ")
+                if (locationText.isNotBlank()) {
                     Text(
-                        text = buildingName,
+                        text = locationText,
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )

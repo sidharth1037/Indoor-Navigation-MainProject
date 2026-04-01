@@ -1,6 +1,7 @@
 package `in`.project.enroute.feature.navigation
 
 import android.app.Application
+import android.os.Process
 import android.util.Log
 import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.AndroidViewModel
@@ -26,7 +27,11 @@ import `in`.project.enroute.feature.navigation.guidance.TripEtaEstimator
 import `in`.project.enroute.feature.navigation.guidance.TurnByTurnGuidanceEngine
 import `in`.project.enroute.feature.settings.data.SettingsRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,8 +39,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+import java.util.concurrent.Executors
 
 /**
  * UI state for the navigation / pathfinding feature.
@@ -122,6 +129,20 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     private val _uiState = MutableStateFlow(NavigationUiState())
     val uiState: StateFlow<NavigationUiState> = _uiState.asStateFlow()
 
+    private val pathfindingDispatcher: ExecutorCoroutineDispatcher = run {
+        val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(2)
+        val threadCount = (cores - 1).coerceIn(2, 4)
+        Executors.newFixedThreadPool(threadCount) { runnable ->
+            Thread {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_MORE_FAVORABLE)
+                runnable.run()
+            }.apply {
+                name = "enroute-pathfinding"
+                isDaemon = true
+            }
+        }.asCoroutineDispatcher()
+    }
+
     private val settingsRepository = SettingsRepository(application.applicationContext)
 
     private val guidanceConfig = GuidanceConfig()
@@ -190,6 +211,12 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     /** Running reroute job — cancelled if a new reroute or path request comes in. */
     private var rerouteJob: Job? = null
+
+    private data class RouteCandidate(
+        val entrance: CampusEntrance,
+        val route: MultiFloorPath,
+        val distanceUnits: Float
+    )
 
     init {
         viewModelScope.launch {
@@ -306,27 +333,29 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         rerouteJob?.cancel()
 
         // Prefer direct-goal pathfinding for synthetic targets (landmarks).
-        val campusEntrance = if (directGoalCampus != null) {
-            CampusEntrance(
-                original = Entrance(
-                    id = -1,
-                    x = directGoalCampus.x,
-                    y = directGoalCampus.y,
-                    name = room.name,
-                    roomNo = room.number?.toString(),
-                    floorId = directGoalFloorId ?: currentFloor,
-                    floor = floorNumberOf(directGoalFloorId ?: currentFloor)
-                ),
-                campusX = directGoalCampus.x,
-                campusY = directGoalCampus.y,
-                buildingId = directGoalBuildingId ?: room.buildingId.orEmpty(),
-                floorId = directGoalFloorId ?: currentFloor
+        val candidateEntrances = if (directGoalCampus != null) {
+            listOf(
+                CampusEntrance(
+                    original = Entrance(
+                        id = -1,
+                        x = directGoalCampus.x,
+                        y = directGoalCampus.y,
+                        name = room.name,
+                        roomNo = room.number?.toString(),
+                        floorId = directGoalFloorId ?: currentFloor,
+                        floor = floorNumberOf(directGoalFloorId ?: currentFloor)
+                    ),
+                    campusX = directGoalCampus.x,
+                    campusY = directGoalCampus.y,
+                    buildingId = directGoalBuildingId ?: room.buildingId.orEmpty(),
+                    floorId = directGoalFloorId ?: currentFloor
+                )
             )
         } else {
-            findEntranceForRoom(room)
+            findEntrancesForRoom(room)
         }
 
-        if (campusEntrance == null) {
+        if (candidateEntrances.isEmpty()) {
             _uiState.update {
                 it.copy(
                     error = "No entrance found for room ${room.name ?: room.number}",
@@ -338,10 +367,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
 
-        Log.d(TAG, "Matched entrance id=${campusEntrance.original.id} " +
-                "floor=${campusEntrance.floorId} " +
-                "campus(${campusEntrance.campusX}, ${campusEntrance.campusY}) " +
-                "for room ${room.name ?: room.number}")
+        Log.d(TAG, "Matched ${candidateEntrances.size} entrance candidate(s) for room ${room.name ?: room.number}")
 
         _uiState.update {
             it.copy(
@@ -353,7 +379,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 turnByTurnInstructionType = GuidanceType.IDLE,
                 error = null,
                 targetRoom = room,
-                targetEntrance = if (directGoalCampus != null) null else campusEntrance.original,
+                targetEntrance = null,
                 directGoalCampus = directGoalCampus,
                 directGoalFloorId = directGoalFloorId,
                 directGoalBuildingId = directGoalBuildingId,
@@ -362,22 +388,27 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         }
 
         pathfindingJob = viewModelScope.launch {
-            val result = withContext(Dispatchers.Default) {
-                computeRouteWithDescendingReverse(
+            val bestCandidate = withContext(pathfindingDispatcher) {
+                computeBestCandidateRoute(
                     start = userPosition,
                     startFloorId = currentFloor,
-                    goalEntrance = campusEntrance
+                    candidateEntrances = candidateEntrances
                 )
             }
 
             _uiState.update {
-                if (result.isEmpty) {
+                if (bestCandidate == null || bestCandidate.route.isEmpty) {
                     it.copy(isCalculating = false, error = "Could not find a path")
                 } else {
-                    val subdivided = subdividePath(result)
+                    val selectedEntrance = bestCandidate.entrance
+                    val subdivided = subdividePath(bestCandidate.route)
                     val remainingMeters = computeRemainingDistanceMeters(subdivided)
                     val etaText = TripEtaEstimator.formatEta(
-                        TripEtaEstimator.estimateEtaSeconds(remainingMeters, effectiveSpeedMps())
+                        TripEtaEstimator.estimateEtaSecondsWithStairs(
+                            distanceMeters = remainingMeters,
+                            speedMps = effectiveSpeedMps(),
+                            stairTransitions = subdivided.transitions.size
+                        )
                     )
                     it.copy(
                         isCalculating = false,
@@ -386,6 +417,10 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                         estimatedTimeText = etaText,
                         turnByTurnInstruction = "",
                         turnByTurnInstructionType = GuidanceType.IDLE,
+                        targetEntrance = if (directGoalCampus != null) null else selectedEntrance.original,
+                        directGoalCampus = selectedEntrance.campusOffset,
+                        directGoalFloorId = selectedEntrance.floorId,
+                        directGoalBuildingId = selectedEntrance.buildingId,
                         multiFloorPath = subdivided,
                         displayPath = subdivided
                     )
@@ -502,7 +537,11 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             if (trimmed != null) {
                 val remainingMeters = computeRemainingDistanceMeters(trimmed)
                 val etaText = TripEtaEstimator.formatEta(
-                    TripEtaEstimator.estimateEtaSeconds(remainingMeters, effectiveSpeedMps())
+                    TripEtaEstimator.estimateEtaSecondsWithStairs(
+                        distanceMeters = remainingMeters,
+                        speedMps = effectiveSpeedMps(),
+                        stairTransitions = trimmed.transitions.size
+                    )
                 )
                 _uiState.update {
                     it.copy(
@@ -695,7 +734,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         Log.d(TAG, "Rerouting from (${userPosition.x}, ${userPosition.y}) floor=$currentFloor")
 
         rerouteJob = viewModelScope.launch {
-            val result = withContext(Dispatchers.Default) {
+            val result = withContext(pathfindingDispatcher) {
                 computeRouteWithDescendingReverse(
                     start = userPosition,
                     startFloorId = currentFloor,
@@ -709,7 +748,11 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 _uiState.update {
                     val remainingMeters = computeRemainingDistanceMeters(subdivided)
                     val etaText = TripEtaEstimator.formatEta(
-                        TripEtaEstimator.estimateEtaSeconds(remainingMeters, effectiveSpeedMps())
+                        TripEtaEstimator.estimateEtaSecondsWithStairs(
+                            distanceMeters = remainingMeters,
+                            speedMps = effectiveSpeedMps(),
+                            stairTransitions = subdivided.transitions.size
+                        )
                     )
                     it.copy(
                         multiFloorPath = subdivided,
@@ -729,15 +772,46 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     // Internal helpers
     // ──────────────────────────────────────────────
 
+    private suspend fun computeBestCandidateRoute(
+        start: Offset,
+        startFloorId: String,
+        candidateEntrances: List<CampusEntrance>
+    ): RouteCandidate? = coroutineScope {
+        val candidates = candidateEntrances.map { entrance ->
+            async {
+                // Isolate per-candidate repo cache to avoid concurrent mutation races.
+                val localRepoByFloor = mutableMapOf<String, NavigationRepository>()
+                val route = computeRouteWithDescendingReverse(
+                    start = start,
+                    startFloorId = startFloorId,
+                    goalEntrance = entrance,
+                    repoByFloor = localRepoByFloor
+                )
+                if (route.isEmpty) {
+                    null
+                } else {
+                    RouteCandidate(
+                        entrance = entrance,
+                        route = route,
+                        distanceUnits = computePathDistanceUnits(route)
+                    )
+                }
+            }
+        }.awaitAll().filterNotNull()
+
+        candidates.minByOrNull { it.distanceUnits }
+    }
+
     /**
      * Computes a route from user -> destination, but when user is above destination
      * we run pathfinding in reverse (destination -> user) and flip the result.
      * This keeps descending behavior symmetric with ascending.
      */
-    private fun computeRouteWithDescendingReverse(
+    private suspend fun computeRouteWithDescendingReverse(
         start: Offset,
         startFloorId: String,
-        goalEntrance: CampusEntrance
+        goalEntrance: CampusEntrance,
+        repoByFloor: MutableMap<String, NavigationRepository> = repositoryByFloor
     ): MultiFloorPath {
         val startFloorNumber = floorNumberOf(startFloorId)
         val goalFloorNumber = floorNumberOf(goalEntrance.floorId)
@@ -752,7 +826,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 stairConnections = stairwellConnections,
                 wallsByFloor = campusWallsByFloor.toMap(),
                 boundaryByFloor = campusBoundaryByFloor.toMap(),
-                repoByFloor = repositoryByFloor,
+                repoByFloor = repoByFloor,
                 precalculatedGrids = precalculatedGrids.toMap()
             )
         }
@@ -787,7 +861,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             stairConnections = stairwellConnections,
             wallsByFloor = campusWallsByFloor.toMap(),
             boundaryByFloor = campusBoundaryByFloor.toMap(),
-            repoByFloor = repositoryByFloor,
+            repoByFloor = repoByFloor,
             precalculatedGrids = precalculatedGrids.toMap()
         )
 
@@ -839,28 +913,28 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
      * Finds the campus-wide entrance that matches [room] by room number or name.
      * When the room has a buildingId, entrance matching is scoped to that building.
      */
-    private fun findEntranceForRoom(room: Room): CampusEntrance? {
+    private fun findEntrancesForRoom(room: Room): List<CampusEntrance> {
         // Try matching by room number first (most reliable)
         if (room.number != null) {
-            val byNumber = campusEntrances.firstOrNull { ce ->
+            val byNumber = campusEntrances.filter { ce ->
                 ce.original.roomNo != null &&
                         ce.original.roomNo == room.number.toString() &&
                         (room.buildingId == null || ce.buildingId == room.buildingId)
             }
-            if (byNumber != null) return byNumber
+            if (byNumber.isNotEmpty()) return byNumber
         }
 
         // Fall back to name matching (case-insensitive) within the same building
         if (room.name != null) {
-            val byName = campusEntrances.firstOrNull { ce ->
+            val byName = campusEntrances.filter { ce ->
                 ce.original.name != null &&
                         ce.original.name.equals(room.name, ignoreCase = true) &&
                         (room.buildingId == null || ce.buildingId == room.buildingId)
             }
-            if (byName != null) return byName
+            if (byName.isNotEmpty()) return byName
         }
 
-        return null
+        return emptyList()
     }
 
     private fun resolveGoalEntrance(state: NavigationUiState): CampusEntrance? {
@@ -884,7 +958,21 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 floorId = floorId
             )
         }
-        return findEntranceForRoom(state.targetRoom ?: return null)
+        return findEntrancesForRoom(state.targetRoom ?: return null).firstOrNull()
+    }
+
+    private fun computePathDistanceUnits(path: MultiFloorPath): Float {
+        var total = 0f
+        for (segment in path.segments) {
+            for (i in 1 until segment.points.size) {
+                val from = segment.points[i - 1]
+                val to = segment.points[i]
+                val dx = to.x - from.x
+                val dy = to.y - from.y
+                total += sqrt(dx * dx + dy * dy)
+            }
+        }
+        return total
     }
 
     // ──────────────────────────────────────────────
@@ -901,6 +989,8 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         persistSessionSpeedIfAvailable()
         super.onCleared()
         pathfindingJob?.cancel()
+        rerouteJob?.cancel()
+        pathfindingDispatcher.close()
     }
 
     private fun effectiveSpeedMps(): Float {

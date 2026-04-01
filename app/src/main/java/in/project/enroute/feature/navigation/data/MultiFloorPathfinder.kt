@@ -6,6 +6,9 @@ import `in`.project.enroute.data.model.Wall
 import `in`.project.enroute.feature.navigation.NavigationRepository
 import `in`.project.enroute.feature.navigation.data.PathTransition
 import `in`.project.enroute.feature.navigation.data.TransitionDirection
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlin.math.sqrt
 
 /**
@@ -32,6 +35,7 @@ class MultiFloorPathfinder {
 
     companion object {
         private const val TAG = "MultiFloorPathfinder"
+        private const val MAX_FIRST_FLOOR_CANDIDATES = 4
     }
 
     /**
@@ -48,7 +52,7 @@ class MultiFloorPathfinder {
      * @param repoByFloor      Lazily-built [NavigationRepository] per floor.
      * @return A [MultiFloorPath] with per-floor segments, or empty if no route exists.
      */
-    fun findMultiFloorPath(
+    suspend fun findMultiFloorPath(
         start: Offset,
         startFloorId: String,
         goalEntrance: CampusEntrance,
@@ -114,27 +118,42 @@ class MultiFloorPathfinder {
         }
         Log.d(TAG, "Found ${firstFloorConnections.size} candidate connection(s) on $startFloorId")
 
-        // Try each candidate connection and compute full route
+        val shortlistedConnections = firstFloorConnections
+            .sortedBy { connection -> distance(start, directionalEntryPoint(connection, goingUp)) }
+            .take(MAX_FIRST_FLOOR_CANDIDATES)
+
+        if (shortlistedConnections.size < firstFloorConnections.size) {
+            Log.d(
+                TAG,
+                "Pruned first-floor candidates ${firstFloorConnections.size} -> " +
+                    "${shortlistedConnections.size}"
+            )
+        }
+
+        val candidateResults = coroutineScope {
+            shortlistedConnections.map { connection ->
+                async {
+                    val candidate = computeCandidateRoute(
+                        start = start,
+                        floorSequence = floorSequence,
+                        firstConnection = connection,
+                        goalEntrance = goalEntrance,
+                        goingUp = goingUp,
+                        stairConnections = stairConnections,
+                        allEntrances = allEntrances,
+                        wallsByFloor = wallsByFloor,
+                        boundaryByFloor = boundaryByFloor,
+                        repoByFloor = repoByFloor,
+                        precalculatedGrids = precalculatedGrids
+                    )
+                    if (candidate.isEmpty) null else candidate to totalPathDistance(candidate)
+                }
+            }.awaitAll().filterNotNull()
+        }
+
         var bestPath: MultiFloorPath = MultiFloorPath.EMPTY
         var bestDistance = Float.MAX_VALUE
-
-        for (connection in firstFloorConnections) {
-            val candidate = computeCandidateRoute(
-                start = start,
-                floorSequence = floorSequence,
-                firstConnection = connection,
-                goalEntrance = goalEntrance,
-                goingUp = goingUp,
-                stairConnections = stairConnections,
-                allEntrances = allEntrances,
-                wallsByFloor = wallsByFloor,
-                boundaryByFloor = boundaryByFloor,
-                repoByFloor = repoByFloor,
-                precalculatedGrids = precalculatedGrids
-            )
-            if (candidate.isEmpty) continue
-
-            val distance = totalPathDistance(candidate)
+        for ((candidate, distance) in candidateResults) {
             if (distance < bestDistance) {
                 bestDistance = distance
                 bestPath = candidate

@@ -1,6 +1,8 @@
 package `in`.project.enroute.feature.roominfo.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,24 +11,29 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -76,7 +83,7 @@ fun RoomInfoScreen(
     val roomInfo = uiState.roomInfo
 
     // Load room info when entering screen
-    remember(campusId, buildingId, floorId, roomId) {
+    LaunchedEffect(campusId, buildingId, floorId, roomId) {
         viewModel.loadRoomInfo(buildingId, floorId, roomId)
     }
 
@@ -84,6 +91,26 @@ fun RoomInfoScreen(
     var editDescription by remember(roomInfo) { mutableStateOf(roomInfo?.description ?: "") }
     var editTags by remember(roomInfo) { mutableStateOf(roomInfo?.tags ?: emptyList()) }
     var tagInput by remember { mutableStateOf("") }
+
+    val cancelEdit: () -> Unit = {
+        isEditMode = false
+        editDescription = roomInfo?.description.orEmpty()
+        editTags = roomInfo?.tags ?: emptyList()
+        tagInput = ""
+    }
+
+    val closeRoomInfo: () -> Unit = {
+        viewModel.clearRoomInfo()
+        onBack()
+    }
+
+    BackHandler {
+        if (isEditMode) {
+            cancelEdit()
+        } else {
+            closeRoomInfo()
+        }
+    }
 
     val roomTitle = when {
         roomNumber != null && roomName != null -> "$roomNumber: $roomName"
@@ -120,8 +147,11 @@ fun RoomInfoScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = {
-                    viewModel.clearRoomInfo()
-                    onBack()
+                    if (isEditMode) {
+                        cancelEdit()
+                    } else {
+                        closeRoomInfo()
+                    }
                 }) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
@@ -225,17 +255,11 @@ fun RoomInfoScreen(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Tags section
                 Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    Text(
-                        text = "Tags",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
                     if (isEditMode) {
                         // Edit mode: tag input + add button
                         Row(
@@ -291,11 +315,23 @@ fun RoomInfoScreen(
                             verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
                         ) {
                             editTags.forEachIndexed { index, tag ->
-                                SuggestionChip(
+                                InputChip(
+                                    selected = false,
                                     onClick = {},
                                     label = { Text(tag) },
-                                    modifier = Modifier,
-                                    onDismiss = { editTags = editTags.filterIndexed { i, _ -> i != index } }
+                                    trailingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Close,
+                                            contentDescription = "Remove tag",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier
+                                                .size(18.dp)
+                                                .clickable {
+                                                    editTags = editTags.filterIndexed { i, _ -> i != index }
+                                                }
+                                        )
+                                    },
+                                    modifier = Modifier
                                 )
                             }
                         }
@@ -335,16 +371,17 @@ fun RoomInfoScreen(
                             .padding(horizontal = 16.dp),
                         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
                     ) {
-                        TextButton(
+                        OutlinedButton(
                             onClick = {
-                                isEditMode = false
-                                editDescription = roomInfo.description
-                                editTags = roomInfo.tags
-                                tagInput = ""
+                                cancelEdit()
                             },
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Cancel")
+                            Text(
+                                text = "Cancel",
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
                         Button(
                             onClick = {

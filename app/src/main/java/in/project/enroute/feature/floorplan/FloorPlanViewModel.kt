@@ -532,7 +532,13 @@ class FloorPlanViewModel(
                     pinnedRoom.floorId == null || pinnedRoom.floorId == newState.currentFloorId
                 }
 
-                val visibleOnCanvas = isRoomVisibleInFloorsToRender(pinnedRoom, newState.allFloorsToRender)
+                // Landmark pins use synthetic negative room IDs and are not present in floorData.rooms.
+                // Treat them as visible when their floor matches so Show on map does not hide the marker.
+                val visibleOnCanvas = if (pinnedRoom.id < 0) {
+                    true
+                } else {
+                    isRoomVisibleInFloorsToRender(pinnedRoom, newState.allFloorsToRender)
+                }
                 newState.copy(showPinnedRoomOnMap = onRoomFloor && visibleOnCanvas)
             } else {
                 newState

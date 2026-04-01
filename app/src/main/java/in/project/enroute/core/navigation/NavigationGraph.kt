@@ -234,12 +234,6 @@ fun NavigationGraph(
         ) { backStackEntry ->
             val campusId = backStackEntry.arguments?.getString("campusId") ?: ""
             val buildingId = backStackEntry.arguments?.getString("buildingId") ?: ""
-            val buildingName = remember(backStackEntry) {
-                val homeEntry = navController.getBackStackEntry(Screen.Home.createRoute(campusId))
-                val floorPlanViewModel: FloorPlanViewModel = viewModel(homeEntry)
-                val uiState = floorPlanViewModel.uiState.value
-                uiState.buildingStates[buildingId]?.building?.buildingName ?: ""
-            }
             val floorId = backStackEntry.arguments?.getString("floorId") ?: ""
             val roomId = backStackEntry.arguments?.getInt("roomId") ?: 0
             val roomNumberStr = backStackEntry.arguments?.getString("roomNumber") ?: "null"
@@ -247,17 +241,16 @@ fun NavigationGraph(
             val roomNumber = if (roomNumberStr == "null") null else roomNumberStr.toIntOrNull()
             val roomName = if (roomNameStr == "null") null else roomNameStr
 
-            // Share the RoomInfoViewModel from the Home backstack entry
             val homeEntry = remember(backStackEntry) {
                 navController.getBackStackEntry(Screen.Home.createRoute(campusId))
             }
+            val floorPlanViewModel: FloorPlanViewModel = viewModel(homeEntry)
             val roomInfoViewModel: RoomInfoViewModel = viewModel(homeEntry)
-            val isAdmin = AdminAuthRepository.isLoggedIn.value && 
-                remember(backStackEntry) {
-                    val floorPlanViewModel: FloorPlanViewModel = viewModel(homeEntry)
-                    val uiState = floorPlanViewModel.uiState.value
-                    uiState.campusMetadata.createdBy == AdminAuthRepository.currentUser?.uid
-                }
+            val isLoggedIn = AdminAuthRepository.isLoggedIn.collectAsState().value
+            val floorPlanUiState = floorPlanViewModel.uiState.collectAsState().value
+            val buildingName = floorPlanUiState.buildingStates[buildingId]?.building?.buildingName ?: ""
+            val isAdmin = isLoggedIn &&
+                floorPlanUiState.campusMetadata.createdBy == AdminAuthRepository.currentUser?.uid
 
             RoomInfoScreen(
                 campusId = campusId,

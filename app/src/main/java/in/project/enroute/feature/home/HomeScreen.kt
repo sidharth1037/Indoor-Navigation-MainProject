@@ -106,6 +106,7 @@ import `in`.project.enroute.feature.landmark.ui.LandmarkOverlay
 import `in`.project.enroute.feature.landmark.ui.LandmarkPlacementPanel
 import `in`.project.enroute.feature.admin.auth.AdminAuthRepository
 import `in`.project.enroute.feature.roominfo.RoomInfoViewModel
+import `in`.project.enroute.data.model.RoomInfo
 import kotlin.math.sqrt
 
 @Composable
@@ -370,16 +371,27 @@ fun HomeScreen(
                 // works even when zoomed out with no dominant building.
                 val floor = pdrUiState.pdrState.currentFloor ?: uiState.currentFloorId
                 if (currentPosition != null && floor != null) {
-                    val selectedLandmark = landmarkUiState.selectedLandmark
-                    val selectedLandmarkRoomId = selectedLandmark?.let { landmarkSyntheticRoomId(it.id) }
-                    if (selectedLandmark != null && room.id == selectedLandmarkRoomId) {
+                    val requestedLandmark = if (room.id < 0) {
+                        landmarkUiState.landmarks.firstOrNull { landmark ->
+                            landmarkSyntheticRoomId(landmark.id) == room.id &&
+                                landmark.floorId == room.floorId &&
+                                landmark.buildingId == room.buildingId &&
+                                landmark.name == room.name
+                        } ?: landmarkUiState.landmarks.firstOrNull { landmark ->
+                            landmarkSyntheticRoomId(landmark.id) == room.id
+                        }
+                    } else {
+                        null
+                    }
+
+                    if (requestedLandmark != null) {
                         navigationViewModel.requestDirections(
                             room = room,
                             userPosition = currentPosition,
                             currentFloor = floor,
-                            directGoalCampus = Offset(selectedLandmark.campusX, selectedLandmark.campusY),
-                            directGoalFloorId = selectedLandmark.floorId,
-                            directGoalBuildingId = selectedLandmark.buildingId
+                            directGoalCampus = Offset(requestedLandmark.campusX, requestedLandmark.campusY),
+                            directGoalFloorId = requestedLandmark.floorId,
+                            directGoalBuildingId = requestedLandmark.buildingId
                         )
                     } else {
                         navigationViewModel.requestDirections(room, currentPosition, floor)
@@ -399,6 +411,7 @@ fun HomeScreen(
                 floorPlanViewModel.clearPin()
             },
             onShowRoomOnMap = { room ->
+                floorPlanViewModel.pinRoom(room)
                 floorPlanViewModel.showPinnedRoomOnMap()
                 val matchedLandmark = landmarkUiState.landmarks.firstOrNull {
                     landmarkSyntheticRoomId(it.id) == room.id
@@ -436,7 +449,16 @@ fun HomeScreen(
             onClearNavigationPath = { navigationViewModel.clearPath() },
             onSettingsClick = onSettingsClick,
             onAdminClick = onAdminClick,
-            onNavigateToAddLandmark = onNavigateToAddLandmark
+            onNavigateToAddLandmark = onNavigateToAddLandmark,
+            onNavigateToRoomInfo = onNavigateToRoomInfo,
+            onPrefetchRoomInfo = { room ->
+                val buildingId = room.buildingId
+                val floorId = room.floorId
+                if (room.id >= 0 && !buildingId.isNullOrBlank() && !floorId.isNullOrBlank()) {
+                    roomInfoViewModel.loadRoomInfo(buildingId, floorId, room.id)
+                }
+            },
+            roomInfoList = roomInfoUiState.allRoomInfo
         )
     }
 }
@@ -487,7 +509,10 @@ private fun HomeScreenContent(
     onClearNavigationPath: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
     onAdminClick: () -> Unit = {},
-    onNavigateToAddLandmark: () -> Unit = {}
+    onNavigateToAddLandmark: () -> Unit = {},
+    onNavigateToRoomInfo: (buildingId: String, floorId: String, roomId: Int, roomNumber: Int?, roomName: String?) -> Unit = { _, _, _, _, _ -> },
+    onPrefetchRoomInfo: (Room) -> Unit = {},
+    roomInfoList: List<RoomInfo> = emptyList()
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var isMorphingToSearch by remember { mutableStateOf(false) }
@@ -811,6 +836,7 @@ private fun HomeScreenContent(
     val currentOnRoomTap = rememberUpdatedState(onRoomTap)
 
     fun requestRoomSelection(room: Room) {
+        onPrefetchRoomInfo(room)
         if (room.id >= 0) {
             landmarkViewModel?.clearSelectedLandmark()
         }
@@ -1363,6 +1389,7 @@ private fun HomeScreenContent(
                     hasPath = navUiState.hasPath,
                     isNavigationStarted = navUiState.isNavigationStarted,
                     showShowOnMapButton = shouldShowShowOnMapButton,
+                    showInfoButton = (activePinnedRoom?.id ?: -1) >= 0,
                     onDismiss = {
                         if (navUiState.hasPath || navUiState.isNavigationStarted || navUiState.isCalculating) {
                             onExitNavigation()
@@ -1442,15 +1469,14 @@ private fun HomeScreenContent(
                         onExitNavigation()
                     },
                     onInfoClick = {
-                        if (activePinnedRoom != null) {
-                            onNavigateToRoomInfo(
-                                activePinnedRoom.buildingId ?: "",
-                                activePinnedRoom.floorId ?: "",
-                                activePinnedRoom.id,
-                                activePinnedRoom.number,
-                                activePinnedRoom.name
-                            )
-                        }
+                        val room = activePinnedRoom ?: return@RoomInfoPanel
+                        onNavigateToRoomInfo(
+                            room.buildingId ?: "",
+                            room.floorId ?: "",
+                            room.id,
+                            room.number,
+                            room.name
+                        )
                     },
                     headerActions = if (showLandmarkActions) {
                         listOf(
@@ -1510,6 +1536,7 @@ private fun HomeScreenContent(
                             offFloor || farFromCenter
                         }
                     },
+                    showInfoButton = (overlayPinnedRoom?.id ?: -1) >= 0,
                     onDismiss = {
                         overlayPinnedRoom = null
                         overlayRequestedDirections = false
@@ -1588,15 +1615,14 @@ private fun HomeScreenContent(
                         onExitNavigation()
                     },
                     onInfoClick = {
-                        if (overlayPinnedRoom != null) {
-                            onNavigateToRoomInfo(
-                                overlayPinnedRoom.buildingId ?: "",
-                                overlayPinnedRoom.floorId ?: "",
-                                overlayPinnedRoom.id,
-                                overlayPinnedRoom.number,
-                                overlayPinnedRoom.name
-                            )
-                        }
+                        val room = overlayPinnedRoom ?: return@RoomInfoPanel
+                        onNavigateToRoomInfo(
+                            room.buildingId ?: "",
+                            room.floorId ?: "",
+                            room.id,
+                            room.number,
+                            room.name
+                        )
                     },
                     headerActions = if (
                         isAdminOfCampus &&
@@ -1894,7 +1920,7 @@ private fun HomeScreenContent(
                     SearchScreen(
                         buildingStates = uiState.buildingStates,
                         landmarks = landmarkViewModel?.uiState?.collectAsState()?.value?.landmarks ?: emptyList(),
-                        roomInfoList = roomInfoUiState.allRoomInfo,
+                        roomInfoList = roomInfoList,
                         onBack = { 
                             showSearch = false 
                             isMorphingToSearch = false
@@ -1928,7 +1954,7 @@ private fun HomeScreenContent(
                     SearchScreen(
                         buildingStates = uiState.buildingStates,
                         landmarks = emptyList(),
-                        roomInfoList = roomInfoUiState.allRoomInfo,
+                        roomInfoList = roomInfoList,
                         includeLandmarks = false,
                         onBack = {
                             showLocationSearch = false

@@ -289,6 +289,8 @@ private fun FloorSliderContent(
                 }
             }
             val guidanceIconRes = when {
+                instructionType == GuidanceType.STAIR && normalizedInstruction.contains("upstairs", ignoreCase = true) -> R.drawable.upstairs
+                instructionType == GuidanceType.STAIR && normalizedInstruction.contains("downstairs", ignoreCase = true) -> R.drawable.downstairs
                 isStraightInstruction -> R.drawable.straight
                 normalizedInstruction == "Turn slightly left" -> R.drawable.turn_slight_left
                 normalizedInstruction == "Turn slightly right" -> R.drawable.turn_slight_right
