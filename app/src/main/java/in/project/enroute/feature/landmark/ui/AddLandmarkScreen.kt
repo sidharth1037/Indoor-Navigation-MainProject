@@ -273,6 +273,7 @@ val landmarkIconOptions = listOf(
     LandmarkIconOption("deck", "Deck", Icons.Default.Deck),
     LandmarkIconOption("yard", "Yard", Icons.Default.Yard),
     LandmarkIconOption("fence", "Fence", Icons.Default.Fence),
+    LandmarkIconOption("extinguisher", "Fire Extinguisher", Icons.Default.FireExtinguisher)
 )
 
 private val commonLandmarkIconIds = setOf(
