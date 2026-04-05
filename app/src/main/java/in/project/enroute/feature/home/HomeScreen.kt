@@ -160,6 +160,12 @@ fun HomeScreen(
         }
     }
 
+    // Bind PDR realtime stream once so NavigationViewModel consumes user motion
+    // internally instead of per-tick composable orchestration.
+    LaunchedEffect(navigationViewModel, pdrViewModel) {
+        navigationViewModel.bindUserPositionStream(pdrViewModel)
+    }
+
     // Load precalculated navigation grids at campus-load time (not when user taps Directions)
     LaunchedEffect(uiState.buildingStates) {
         if (uiState.buildingStates.isNotEmpty()) {
@@ -201,32 +207,7 @@ fun HomeScreen(
         }
     }
 
-    // Feed user position into NavigationViewModel for progressive path consumption
-    // as soon as directions are available (even before Start), so remaining
-    // distance updates live in the room panel.
     val pdrCurrentPosition = pdrUiState.pdrState.currentPosition
-    LaunchedEffect(pdrCurrentPosition, pdrCurrentFloor, navUiState.hasPath) {
-        if (
-            pdrCurrentPosition != null &&
-            pdrCurrentFloor != null &&
-            navUiState.hasPath
-        ) {
-            navigationViewModel.updateUserPosition(pdrCurrentPosition, pdrCurrentFloor)
-        }
-    }
-
-    // Turn-by-turn guidance depends on heading, so this pipeline updates on
-    // heading ticks, but remains gated behind started navigation.
-    LaunchedEffect(pdrCurrentPosition, pdrCurrentFloor, heading, navUiState.hasPath, navUiState.isNavigationStarted) {
-        if (
-            pdrCurrentPosition != null &&
-            pdrCurrentFloor != null &&
-            navUiState.hasPath &&
-            navUiState.isNavigationStarted
-        ) {
-            navigationViewModel.updateTurnByTurn(pdrCurrentPosition, pdrCurrentFloor, heading)
-        }
-    }
 
     // Keep screen on when PDR tracking is active
     DisposableEffect(pdrUiState.pdrState.isTracking) {

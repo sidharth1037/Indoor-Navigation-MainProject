@@ -19,9 +19,16 @@ import `in`.project.enroute.feature.pdr.data.model.PathPoint
 import `in`.project.enroute.feature.pdr.data.model.PdrState
 import `in`.project.enroute.feature.pdr.data.model.StepEvent
 import `in`.project.enroute.feature.pdr.data.model.StrideConfig
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.util.concurrent.Executors
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -51,6 +58,19 @@ class PdrRepository {
     private val constraintProvider = FloorConstraintProvider()
     private var correctionEngine: StepCorrectionEngine? = null
     private var correctionConfig = CorrectionConfig()
+    private data class PrewarmedFloorEngine(
+        val floorId: String,
+        val engine: StepCorrectionEngine
+    )
+    private val prewarmDispatcher = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable).apply {
+            name = "pdr-floor-prewarm"
+            isDaemon = true
+        }
+    }.asCoroutineDispatcher()
+    private val prewarmScope = CoroutineScope(SupervisorJob() + prewarmDispatcher)
+    @Volatile private var requestedPrewarmFloorId: String? = null
+    @Volatile private var prewarmedFloorEngine: PrewarmedFloorEngine? = null
 
     // ── Building / floor detection ─────────────────────────────────────
     private val buildingDetector = BuildingDetector()
@@ -125,6 +145,8 @@ class PdrRepository {
      * engine keeps its committed path and current anchor — no position jump.
      */
     fun setFloorConstraints(data: FloorConstraintData) {
+        requestedPrewarmFloorId = null
+        prewarmedFloorEngine = null
         val existingEngine = correctionEngine
 
         if (existingEngine != null && _pdrState.value.isTracking) {
@@ -202,6 +224,8 @@ class PdrRepository {
      */
     fun loadAllFloorConstraintData(data: Map<String, FloorConstraintData>) {
         allFloorConstraintData = data
+        requestedPrewarmFloorId = null
+        prewarmedFloorEngine = null
     }
 
     /**
@@ -649,6 +673,10 @@ class PdrRepository {
         stairAnimator.startTransition(event)
         stairDetector.reset()
 
+        if (!event.isSameFloor) {
+            prewarmDestinationFloor(event.destinationFloorId)
+        }
+
         // Flush the correction engine buffer before entering stairs
         correctionEngine?.flush()
 
@@ -729,21 +757,31 @@ class PdrRepository {
             currentFloorNumber = destinationFloorId
                 .removePrefix("floor_").toFloatOrNull() ?: currentFloorNumber
 
-            // Load destination floor constraints if available
-            val destConstraints = allFloorConstraintData[destinationFloorId]
-            if (destConstraints != null) {
-                constraintProvider.loadFloor(
-                    destConstraints.floorPlanData,
-                    destConstraints.scale,
-                    destConstraints.rotationDegrees,
-                    destConstraints.offsetX,
-                    destConstraints.offsetY
-                )
-                correctionEngine = StepCorrectionEngine(
-                    config = correctionConfig,
-                    constraintProvider = constraintProvider
-                )
+            val warmed = prewarmedFloorEngine?.takeIf { it.floorId == destinationFloorId }
+            if (warmed != null) {
+                correctionEngine = warmed.engine
+                correctionEngine?.updateConfig(correctionConfig)
                 correctionEngine?.setOrigin(arrivalPosition, _heading.value)
+                prewarmedFloorEngine = null
+                requestedPrewarmFloorId = null
+                Log.d("PdrRepo", "Using prewarmed constraints for $destinationFloorId")
+            } else {
+                // Load destination floor constraints if available
+                val destConstraints = allFloorConstraintData[destinationFloorId]
+                if (destConstraints != null) {
+                    constraintProvider.loadFloor(
+                        destConstraints.floorPlanData,
+                        destConstraints.scale,
+                        destConstraints.rotationDegrees,
+                        destConstraints.offsetX,
+                        destConstraints.offsetY
+                    )
+                    correctionEngine = StepCorrectionEngine(
+                        config = correctionConfig,
+                        constraintProvider = constraintProvider
+                    )
+                    correctionEngine?.setOrigin(arrivalPosition, _heading.value)
+                }
             }
         } else {
             // Same-floor: just re-anchor the correction engine at the
@@ -875,6 +913,8 @@ class PdrRepository {
         // Re-arm the stair detector so the user can attempt the stairwell
         // again if they change their mind.
         stairDetector.reset()
+        requestedPrewarmFloorId = null
+        prewarmedFloorEngine = null
         stairStepBuffer.clear()
         recentHeadings.clear()
     }
@@ -907,6 +947,8 @@ class PdrRepository {
         // Reset stairwell transition
         stairDetector.reset()
         stairAnimator.reset()
+        requestedPrewarmFloorId = null
+        prewarmedFloorEngine = null
         stairStepBuffer.clear()
         lastMotionLabel = null
         currentFloorNumber = 1f
@@ -923,6 +965,42 @@ class PdrRepository {
         _heading.value = 0f
 
         _stepEvents.value = null
+    }
+
+    private fun prewarmDestinationFloor(floorId: String) {
+        if (requestedPrewarmFloorId == floorId && prewarmedFloorEngine?.floorId == floorId) return
+
+        val constraints = allFloorConstraintData[floorId] ?: return
+        requestedPrewarmFloorId = floorId
+
+        prewarmScope.launch {
+            if (requestedPrewarmFloorId != floorId) return@launch
+
+            runCatching {
+                val provider = FloorConstraintProvider()
+                provider.loadFloor(
+                    constraints.floorPlanData,
+                    constraints.scale,
+                    constraints.rotationDegrees,
+                    constraints.offsetX,
+                    constraints.offsetY
+                )
+                val engine = StepCorrectionEngine(
+                    config = correctionConfig,
+                    constraintProvider = provider
+                )
+                if (requestedPrewarmFloorId == floorId) {
+                    prewarmedFloorEngine = PrewarmedFloorEngine(floorId, engine)
+                }
+            }.onFailure { error ->
+                Log.w("PdrRepo", "Floor prewarm failed for $floorId: ${error.message}")
+            }
+        }
+    }
+
+    fun close() {
+        prewarmScope.cancel()
+        prewarmDispatcher.close()
     }
 
     /**

@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import `in`.project.enroute.core.position.UserPositionStream
 import `in`.project.enroute.data.model.Entrance
 import `in`.project.enroute.data.model.FloorPlanData
 import `in`.project.enroute.data.model.Room
@@ -35,11 +36,13 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import java.util.concurrent.Executors
@@ -143,12 +146,24 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         }.asCoroutineDispatcher()
     }
 
+    private val guidanceDispatcher: ExecutorCoroutineDispatcher = Executors.newSingleThreadExecutor { runnable ->
+        Thread {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_MORE_FAVORABLE)
+            runnable.run()
+        }.apply {
+            name = "enroute-guidance-sync"
+            isDaemon = true
+        }
+    }.asCoroutineDispatcher()
+
     private val settingsRepository = SettingsRepository(application.applicationContext)
 
     private val guidanceConfig = GuidanceConfig()
     private val guidanceEngine = TurnByTurnGuidanceEngine(guidanceConfig)
     private var lastGuidanceText: String = ""
     private var lastGuidanceUpdateMs: Long = 0L
+    private var lastGuidanceComputeMs: Long = 0L
+    private var lastGuidanceComputeHeadingRad: Float? = null
     private var pendingRerouteAnnouncement: Boolean = false
     private var lastRerouteAtMs: Long = 0L
 
@@ -211,6 +226,8 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     /** Running reroute job — cancelled if a new reroute or path request comes in. */
     private var rerouteJob: Job? = null
+    private var userStreamJob: Job? = null
+    private var boundUserPositionStream: UserPositionStream? = null
 
     private data class RouteCandidate(
         val entrance: CampusEntrance,
@@ -309,6 +326,39 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         precalculatedGrids.putAll(grids)
         repositoryByFloor.clear()  // force rebuild from precalculated data
         Log.d(TAG, "Supplied ${grids.size} precalculated floor grids: ${grids.keys}")
+    }
+
+    /**
+     * Binds a realtime user-position stream once per screen session.
+     * Navigation consumes movement updates internally so composables don't need
+     * to orchestrate per-tick cross-feature calls.
+     */
+    fun bindUserPositionStream(stream: UserPositionStream) {
+        if (boundUserPositionStream === stream && userStreamJob?.isActive == true) return
+
+        boundUserPositionStream = stream
+        userStreamJob?.cancel()
+        userStreamJob = viewModelScope.launch(guidanceDispatcher) {
+            combine(
+                stream.userPosition,
+                stream.currentFloorId,
+                stream.headingRadians,
+                stream.isTracking
+            ) { position, floorId, heading, tracking ->
+                TrackingSample(position, floorId, heading, tracking)
+            }.collect { sample ->
+                if (!sample.isTracking) return@collect
+                val position = sample.position ?: return@collect
+                val floorId = sample.floorId ?: return@collect
+
+                if (!_uiState.value.hasPath) return@collect
+                updateUserPosition(position, floorId)
+
+                if (_uiState.value.isNavigationStarted) {
+                    updateTurnByTurn(position, floorId, sample.headingRadians)
+                }
+            }
+        }
     }
 
     /**
@@ -454,6 +504,21 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
         val now = System.currentTimeMillis()
         val forceReroute = pendingRerouteAnnouncement
+
+        if (!forceReroute) {
+            val elapsedSinceCompute = now - lastGuidanceComputeMs
+            val headingDeltaDeg = angularDifferenceDegrees(
+                current = headingRadians,
+                previous = lastGuidanceComputeHeadingRad
+            )
+            val shouldSkipCompute = elapsedSinceCompute < guidanceConfig.computeMinIntervalMs &&
+                headingDeltaDeg < guidanceConfig.computeHeadingDeltaDeg
+            if (shouldSkipCompute) return
+        }
+
+        lastGuidanceComputeMs = now
+        lastGuidanceComputeHeadingRad = headingRadians
+
         val guidance = guidanceEngine.compute(
             GuidanceInput(
                 path = state.displayPath,
@@ -489,6 +554,8 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         rerouteJob?.cancel()
         lastGuidanceText = ""
         lastGuidanceUpdateMs = 0L
+        lastGuidanceComputeMs = 0L
+        lastGuidanceComputeHeadingRad = null
         pendingRerouteAnnouncement = false
         lastRerouteAtMs = 0L
         persistSessionSpeedIfAvailable()
@@ -653,6 +720,16 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 )
             }
         }
+    }
+
+    private fun angularDifferenceDegrees(current: Float, previous: Float?): Float {
+        if (previous == null) return Float.MAX_VALUE
+        val currentDeg = Math.toDegrees(current.toDouble()).toFloat()
+        val previousDeg = Math.toDegrees(previous.toDouble()).toFloat()
+        var delta = (currentDeg - previousDeg) % 360f
+        if (delta > 180f) delta -= 360f
+        if (delta < -180f) delta += 360f
+        return abs(delta)
     }
 
     /**
@@ -990,8 +1067,17 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         super.onCleared()
         pathfindingJob?.cancel()
         rerouteJob?.cancel()
+        userStreamJob?.cancel()
         pathfindingDispatcher.close()
+        guidanceDispatcher.close()
     }
+
+    private data class TrackingSample(
+        val position: Offset?,
+        val floorId: String?,
+        val headingRadians: Float,
+        val isTracking: Boolean
+    )
 
     private fun effectiveSpeedMps(): Float {
         val sessionSpeed = if (sessionDistanceM >= USER_SPEED_MIN_DISTANCE_M && sessionActiveTimeS > 0f) {

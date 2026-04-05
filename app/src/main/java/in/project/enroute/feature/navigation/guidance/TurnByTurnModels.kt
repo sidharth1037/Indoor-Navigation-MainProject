@@ -31,6 +31,8 @@ data class GuidanceInput(
 )
 
 data class GuidanceConfig(
+    val computeMinIntervalMs: Long = 180L,
+    val computeHeadingDeltaDeg: Float = 6f,
     val fieldOfViewHalfAngleDeg: Float = 45f,
     val lookaheadPoints: Int = 3,
     val minTurnAngleDeg: Float = 22f,

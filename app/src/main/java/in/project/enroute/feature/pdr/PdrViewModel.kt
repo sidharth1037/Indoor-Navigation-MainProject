@@ -5,10 +5,12 @@ import android.hardware.SensorManager
 import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import `in`.project.enroute.core.position.UserPositionStream
 import `in`.project.enroute.feature.pdr.correction.CampusBuilding
 import `in`.project.enroute.feature.pdr.correction.FloorConstraintData
 import `in`.project.enroute.feature.pdr.correction.StairwellZone
 import `in`.project.enroute.feature.pdr.data.model.PdrState
+import `in`.project.enroute.feature.pdr.data.model.PdrRuntimeMetrics
 import `in`.project.enroute.feature.pdr.data.model.StepDetectionConfig
 import `in`.project.enroute.feature.pdr.data.model.StrideConfig
 import `in`.project.enroute.feature.pdr.data.repository.MotionRepository
@@ -19,6 +21,10 @@ import `in`.project.enroute.feature.settings.data.SettingsRepository
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.Channel.Factory.UNLIMITED
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +32,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * UI state for PDR feature.
@@ -39,7 +47,8 @@ data class PdrUiState(
     val stepDetectionConfig: StepDetectionConfig = StepDetectionConfig(),
     val strideConfig: StrideConfig = StrideConfig(),
     val motionLabel: String? = null,
-    val motionConfidence: Float = 0f
+    val motionConfidence: Float = 0f,
+    val runtimeMetrics: PdrRuntimeMetrics = PdrRuntimeMetrics()
 )
 
 /**
@@ -48,7 +57,7 @@ data class PdrUiState(
  * 
  * IMPORTANT: Step detection only starts after origin is set.
  */
-class PdrViewModel(application: Application) : AndroidViewModel(application) {
+class PdrViewModel(application: Application) : AndroidViewModel(application), UserPositionStream {
 
     private val sensorManager = application.getSystemService(SensorManager::class.java)
     
@@ -70,7 +79,11 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     // (mlActive becomes true), up to [compensationSteps] peaks are
     // replayed to compensate for model startup lag, then subsequent peaks
     // flow through directly.  If ML goes idle, the buffer is cleared.
-    private data class BufferedStep(val intervalMs: Long, val heading: Float)
+    private data class BufferedStep(
+        val intervalMs: Long,
+        val heading: Float,
+        val enqueuedAtMs: Long = System.currentTimeMillis()
+    )
     private val peakBuffer = ArrayDeque<BufferedStep>()
     /** True once the ML model has confirmed activity (≥2 consecutive non-idle). */
     private var mlActive = false
@@ -83,15 +96,41 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     // Sensor callback sends steps here; consumed on Dispatchers.Default
     // so the sensor thread never blocks on heavy processStep() work.
     private val stepChannel = Channel<BufferedStep>(UNLIMITED)
+    private val stepQueueDepth = AtomicInteger(0)
+    private var maxStepQueueDepth = 0
     private val _lastHeadingSampleAtMs = MutableStateFlow(0L)
     private val _sensorsStartedAtMs = MutableStateFlow(0L)
     private val _hasFreshHeadingSinceStart = MutableStateFlow(false)
+    private val _userPosition = MutableStateFlow<Offset?>(null)
+    private val _currentFloorId = MutableStateFlow<String?>(null)
+    private val _isTracking = MutableStateFlow(false)
+
+    private val stepProcessingDispatcher = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable).apply {
+            name = "pdr-step-processing"
+            isDaemon = true
+        }
+    }.asCoroutineDispatcher()
+
+    private val motionProcessingDispatcher = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable).apply {
+            name = "pdr-motion-processing"
+            isDaemon = true
+        }
+    }.asCoroutineDispatcher()
+
+    private val stepProcessingScope = CoroutineScope(SupervisorJob() + stepProcessingDispatcher)
+    private val motionProcessingScope = CoroutineScope(SupervisorJob() + motionProcessingDispatcher)
 
     /**
      * Current heading exposed as a separate flow so compass-only changes
      * don't cause full HomeScreen recomposition.
      */
     val heading: StateFlow<Float> = repository.heading
+    override val headingRadians: StateFlow<Float> = repository.heading
+    override val userPosition: StateFlow<Offset?> = _userPosition.asStateFlow()
+    override val currentFloorId: StateFlow<String?> = _currentFloorId.asStateFlow()
+    override val isTracking: StateFlow<Boolean> = _isTracking.asStateFlow()
     val hasFreshHeadingSinceStart: StateFlow<Boolean> = _hasFreshHeadingSinceStart.asStateFlow()
 
     init {
@@ -281,7 +320,7 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
                 val step = BufferedStep(stepIntervalMs, headingDetector.heading.value)
                 if (mlActive) {
                     // ML already confirmed activity — dispatch directly
-                    stepChannel.trySend(step)
+                    enqueueStep(step)
                 } else {
                     // ML not yet active — buffer the peak
                     peakBuffer.addLast(step)
@@ -296,9 +335,18 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
 
         // Consume step channel on a background thread so heavy
         // processStep() work never blocks the sensor callback.
-        viewModelScope.launch(Dispatchers.Default) {
+        stepProcessingScope.launch {
             for (step in stepChannel) {
+                val queueAgeMs = (System.currentTimeMillis() - step.enqueuedAtMs).coerceAtLeast(0L)
+                val startedAt = System.currentTimeMillis()
                 repository.processStep(step.intervalMs, step.heading)
+                stepQueueDepth.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+                val processingMs = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+                updateRuntimeMetrics(
+                    queueAgeMs = queueAgeMs,
+                    processingMs = processingMs,
+                    queueDepth = stepQueueDepth.get()
+                )
             }
         }
 
@@ -318,6 +366,9 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         // Observe repository PDR state (path, origin, cadence)
         viewModelScope.launch {
             repository.pdrState.collect { pdrState ->
+                _userPosition.value = pdrState.currentPosition
+                _currentFloorId.value = pdrState.currentFloor
+                _isTracking.value = pdrState.isTracking
                 _uiState.update { it.copy(pdrState = pdrState) }
             }
         }
@@ -327,17 +378,25 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         // labels arrive, mlActive flips on and buffered peaks are replayed
         // (up to compensationSteps).  If idle arrives, mlActive is turned
         // off and the peak buffer is cleared.
-        viewModelScope.launch {
+        motionProcessingScope.launch {
             motionRepository.motionEvent.collect { event ->
-                _uiState.update {
-                    it.copy(
-                        motionLabel = event?.classificationName,
-                        motionConfidence = event?.confidence ?: 0f
-                    )
-                }
-                // Forward to repository for stairwell detection
                 if (event != null) {
+                    val lagMs = (System.currentTimeMillis() - event.timestamp).coerceAtLeast(0L)
+                    updateRuntimeMetrics(
+                        motionLagMs = lagMs,
+                        queueDepth = stepQueueDepth.get()
+                    )
+
+                    // Forward to repository for stairwell detection on dedicated motion lane.
                     repository.onMotionLabel(event.classificationName, event.confidence)
+
+                    // Keep UI publication lightweight and decoupled from realtime detection lane.
+                    _uiState.update {
+                        it.copy(
+                            motionLabel = event.classificationName,
+                            motionConfidence = event.confidence
+                        )
+                    }
 
                     if (event.classificationName != LABEL_IDLE) {
                         consecutiveNonIdleCount++
@@ -349,6 +408,12 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     } else {
                         // Idle — deactivate and discard buffered peaks
+                        _uiState.update {
+                            it.copy(
+                                motionLabel = event.classificationName,
+                                motionConfidence = event.confidence
+                            )
+                        }
                         consecutiveNonIdleCount = 0
                         mlActive = false
                         peakBuffer.clear()
@@ -544,9 +609,40 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
         // Take the tail (most recent peaks)
         val start = peakBuffer.size - count
         for (i in start until peakBuffer.size) {
-            stepChannel.trySend(peakBuffer.elementAt(i))
+            enqueueStep(peakBuffer.elementAt(i))
         }
         peakBuffer.clear()
+    }
+
+    private fun enqueueStep(step: BufferedStep) {
+        val result = stepChannel.trySend(step)
+        if (result.isSuccess) {
+            val depth = stepQueueDepth.incrementAndGet()
+            if (depth > maxStepQueueDepth) {
+                maxStepQueueDepth = depth
+            }
+            updateRuntimeMetrics(queueDepth = depth)
+        }
+    }
+
+    private fun updateRuntimeMetrics(
+        motionLagMs: Long? = null,
+        queueAgeMs: Long? = null,
+        processingMs: Long? = null,
+        queueDepth: Int? = null
+    ) {
+        _uiState.update { state ->
+            val current = state.runtimeMetrics
+            state.copy(
+                runtimeMetrics = current.copy(
+                    motionLabelLagMs = motionLagMs ?: current.motionLabelLagMs,
+                    stepQueueDepth = queueDepth ?: current.stepQueueDepth,
+                    maxStepQueueDepth = maxStepQueueDepth,
+                    lastStepQueueAgeMs = queueAgeMs ?: current.lastStepQueueAgeMs,
+                    lastStepProcessingMs = processingMs ?: current.lastStepProcessingMs
+                )
+            )
+        }
     }
 
     /** Resets ML gate state for a new tracking session. */
@@ -583,9 +679,14 @@ class PdrViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         stepChannel.close()
+        stepProcessingScope.cancel()
+        motionProcessingScope.cancel()
+        stepProcessingDispatcher.close()
+        motionProcessingDispatcher.close()
         headingDetector.stop()
         stepDetector.stop()
         motionRepository.stop()
+        repository.close()
     }
 
     companion object {
