@@ -223,7 +223,20 @@ class PdrViewModel(application: Application) : AndroidViewModel(application), Us
                 }
             }
         }
+        fun collectStepIntParam(flow: kotlinx.coroutines.flow.Flow<Int?>, update: StepDetectionConfig.(Int) -> StepDetectionConfig) {
+            viewModelScope.launch {
+                flow.collect { value ->
+                    if (value != null) {
+                        val updated = _uiState.value.stepDetectionConfig.update(value)
+                        _uiState.update { it.copy(stepDetectionConfig = updated) }
+                        stepDetector.updateConfig(updated)
+                    }
+                }
+            }
+        }
         collectStepParam(settingsRepository.stepThreshold)     { copy(threshold = it) }
+        collectStepIntParam(settingsRepository.stepDebounceMs) { copy(debounceMs = it.toLong()) }
+        collectStepIntParam(settingsRepository.stepWindowSize) { copy(windowSize = it.coerceAtLeast(3)) }
         collectStepParam(settingsRepository.highPassAlpha)     { copy(highPassAlpha = it) }
 
         // Load compensation steps setting

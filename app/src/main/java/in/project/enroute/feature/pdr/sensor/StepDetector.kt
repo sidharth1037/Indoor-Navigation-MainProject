@@ -39,6 +39,7 @@ class StepDetector(private val sensorManager: SensorManager) : SensorEventListen
     private var filterWarmup = 0
 
     // ── Peak detection state ────────────────────────────────────────────────
+    private val magnitudeWindow = ArrayDeque<Float>()
     private var lastMagnitude = 0f
     private var isRising = true
     private var lastStepTime = 0L
@@ -72,6 +73,7 @@ class StepDetector(private val sensorManager: SensorManager) : SensorEventListen
     }
 
     private fun resetState() {
+        magnitudeWindow.clear()
         lastMagnitude = 0f
         isRising = true
         prevRawZ = 0f
@@ -92,14 +94,19 @@ class StepDetector(private val sensorManager: SensorManager) : SensorEventListen
         // ── High-pass filter ─────────────────────────────────────────────────
         filteredZ = config.highPassAlpha * (filteredZ + z - prevRawZ)
         prevRawZ = z
-        filterWarmup = (filterWarmup + 1).coerceAtMost(WARMUP_SAMPLES)
-
-        if (filterWarmup < WARMUP_SAMPLES) {
-            lastMagnitude = abs(filteredZ)
-            return
-        }
+        filterWarmup = (filterWarmup + 1).coerceAtMost(config.windowSize)
 
         val magnitude = abs(filteredZ)
+        magnitudeWindow.addLast(magnitude)
+        while (magnitudeWindow.size > config.windowSize) {
+            magnitudeWindow.removeFirst()
+        }
+
+        // Old-simple semantics: wait for a small sample window before peak checks.
+        if (filterWarmup < config.windowSize || magnitudeWindow.size < config.windowSize) {
+            lastMagnitude = magnitude
+            return
+        }
         val currentlyRising = magnitude > lastMagnitude
 
         // ── Peak detection (rising → falling above threshold + debounce) ─────
@@ -121,7 +128,6 @@ class StepDetector(private val sensorManager: SensorManager) : SensorEventListen
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     companion object {
-        private const val WARMUP_SAMPLES = 20
         private const val DEFAULT_FIRST_INTERVAL = 500L
     }
 }

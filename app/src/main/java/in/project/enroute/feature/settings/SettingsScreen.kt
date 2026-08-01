@@ -171,6 +171,28 @@ fun SettingsScreen(
         Slider(value = uiState.stepThreshold, onValueChange = { viewModel.updateStepThreshold(it) }, valueRange = 0.5f..5.0f, steps = 17, modifier = Modifier.fillMaxWidth())
         Text("Min filtered |z| peak to count as a step. Default 2.00.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
 
+        // Debounce
+        Text("Debounce: ${uiState.stepDebounceMs} ms", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(
+            value = uiState.stepDebounceMs.toFloat(),
+            onValueChange = { viewModel.updateStepDebounceMs(it.toInt()) },
+            valueRange = 120f..600f,
+            steps = 24,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text("Minimum time between accepted steps. Higher reduces double-counting. Default 300 ms.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
+        // Window size
+        Text("Window size: ${uiState.stepWindowSize} samples", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Slider(
+            value = uiState.stepWindowSize.toFloat(),
+            onValueChange = { viewModel.updateStepWindowSize(it.toInt()) },
+            valueRange = 3f..16f,
+            steps = 12,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text("Samples required before peak detection starts. Smaller reacts faster, larger is steadier. Default 6.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+
         // High-pass alpha
         Text("High-pass α: ${"%.2f".format(uiState.highPassAlpha)}", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         Slider(value = uiState.highPassAlpha, onValueChange = { viewModel.updateHighPassAlpha(it) }, valueRange = 0.70f..0.98f, steps = 27, modifier = Modifier.fillMaxWidth())

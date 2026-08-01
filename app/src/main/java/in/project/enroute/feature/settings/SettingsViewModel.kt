@@ -28,6 +28,8 @@ data class SettingsUiState(
     val turnSensitivity: Float = 0.5f,
     // Step detection
     val stepThreshold: Float = 2.0f,
+    val stepDebounceMs: Int = 300,
+    val stepWindowSize: Int = 6,
     val highPassAlpha: Float = 0.9f,
     val compensationSteps: Int = 4,
     // ML model & stair detection
@@ -100,6 +102,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
         // Load step detection parameters
         viewModelScope.launch { repository.stepThreshold.collect     { if (it != null) _uiState.update { s -> s.copy(stepThreshold = it) } } }
+        viewModelScope.launch { repository.stepDebounceMs.collect    { if (it != null) _uiState.update { s -> s.copy(stepDebounceMs = it) } } }
+        viewModelScope.launch { repository.stepWindowSize.collect    { if (it != null) _uiState.update { s -> s.copy(stepWindowSize = it) } } }
         viewModelScope.launch { repository.highPassAlpha.collect     { if (it != null) _uiState.update { s -> s.copy(highPassAlpha = it) } } }
         viewModelScope.launch { repository.compensationSteps.collect { if (it != null) _uiState.update { s -> s.copy(compensationSteps = it) } } }
 
@@ -218,6 +222,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun updateStepThreshold(v: Float)       { _uiState.update { it.copy(stepThreshold = v) };        viewModelScope.launch { repository.saveStepThreshold(v) } }
+    fun updateStepDebounceMs(v: Int)        { _uiState.update { it.copy(stepDebounceMs = v) };       viewModelScope.launch { repository.saveStepDebounceMs(v) } }
+    fun updateStepWindowSize(v: Int)        { _uiState.update { it.copy(stepWindowSize = v) };       viewModelScope.launch { repository.saveStepWindowSize(v) } }
     fun updateHighPassAlpha(v: Float)       { _uiState.update { it.copy(highPassAlpha = v) };        viewModelScope.launch { repository.saveHighPassAlpha(v) } }
     fun updateCompensationSteps(v: Int)     { _uiState.update { it.copy(compensationSteps = v) };    viewModelScope.launch { repository.saveCompensationSteps(v) } }
 

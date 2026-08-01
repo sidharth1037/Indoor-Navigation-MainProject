@@ -24,6 +24,8 @@ class SettingsRepository(private val context: Context) {
         val STRIDE_C = floatPreferencesKey("stride_c_value")
         // v2 keys: filtered z domain (0.5–5.0 m/s²), not compatible with old unfiltered values
         val STEP_THRESHOLD    = floatPreferencesKey("step_threshold_v2")
+        val STEP_DEBOUNCE_MS  = intPreferencesKey("step_debounce_ms")
+        val STEP_WINDOW_SIZE  = intPreferencesKey("step_window_size")
         val HIGH_PASS_ALPHA   = floatPreferencesKey("high_pass_alpha")
         val COMPENSATION_STEPS = intPreferencesKey("compensation_steps")
         // Stair detection / model
@@ -130,6 +132,14 @@ class SettingsRepository(private val context: Context) {
     /** Filtered |z| peak threshold (m/s²). Null = default 2.0f. */
     val stepThreshold: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.STEP_THRESHOLD] }
     suspend fun saveStepThreshold(v: Float) = context.dataStore.edit { it[PreferencesKeys.STEP_THRESHOLD] = v }
+
+    /** Hard minimum interval between accepted peaks (ms). Null = default 300. */
+    val stepDebounceMs: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STEP_DEBOUNCE_MS] }
+    suspend fun saveStepDebounceMs(v: Int) = context.dataStore.edit { it[PreferencesKeys.STEP_DEBOUNCE_MS] = v }
+
+    /** Number of samples required before peak checks begin. Null = default 6. */
+    val stepWindowSize: Flow<Int?> = context.dataStore.data.map { it[PreferencesKeys.STEP_WINDOW_SIZE] }
+    suspend fun saveStepWindowSize(v: Int) = context.dataStore.edit { it[PreferencesKeys.STEP_WINDOW_SIZE] = v }
 
     /** High-pass filter alpha (0–1). Null = default 0.9f. */
     val highPassAlpha: Flow<Float?> = context.dataStore.data.map { it[PreferencesKeys.HIGH_PASS_ALPHA] }

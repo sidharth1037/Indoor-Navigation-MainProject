@@ -45,6 +45,7 @@ data class CadenceState(
  *
  * @param threshold         Filtered |z| peak must exceed this (m/s²)
  * @param debounceMs        Hard minimum time between steps (ms)
+ * @param windowSize        Number of samples required before peak checks begin.
  * @param highPassAlpha     High-pass filter coefficient (0–1). Higher = more
  *                          responsive but less gravity rejection.
  * @param compensationSteps How many buffered peaks to replay when the ML model
@@ -53,6 +54,7 @@ data class CadenceState(
 data class StepDetectionConfig(
     val threshold: Float = 2.0f,
     val debounceMs: Long = 300L,
+    val windowSize: Int = 6,
     val highPassAlpha: Float = 0.9f,
     val compensationSteps: Int = 4
 )
